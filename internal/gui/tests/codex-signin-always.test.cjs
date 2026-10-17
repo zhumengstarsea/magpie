@@ -19,8 +19,8 @@ const assets = path.resolve(__dirname, "../assets");
 const models = [{ value: "gpt-5.5", label: "GPT-5.5", ref: "openai/gpt-5.5" }];
 // as internal/agent/codex.go has them
 const ways = [
-  { value: "", label: "ChatGPT", note: "magpie's models join Codex's own; Codex stays signed in to ChatGPT, and while the Codex app blocks its account (out of allowance, no credits left) magpie is Codex's provider, so the app still sends" },
-  { value: "chatgpt", label: "Always ChatGPT", note: "as ChatGPT, and kept so while the Codex app blocks its account: magpie never becomes Codex's provider. The Codex app may then send nothing till the account has room; Codex CLI goes on through magpie" },
+  { value: "", label: "ChatGPT", note: "magpie's models join Codex's own; Codex stays signed in to ChatGPT and magpie never changes it to API automatically. If the account is out of allowance, the Codex app waits; choose magpie API explicitly if you want Codex's provider changed" },
+  { value: "chatgpt", label: "Always ChatGPT", note: "as ChatGPT; magpie never becomes Codex's provider automatically. The Codex app may wait while the account has no allowance; Codex CLI goes on through magpie" },
   { value: "api", label: "magpie API", note: "magpie is Codex's provider; the Codex app is in its API state, with magpie's models only. Codex's Chrome control needs the ChatGPT sign-in, so pick ChatGPT to keep it" },
 ];
 const fresh = () => ({

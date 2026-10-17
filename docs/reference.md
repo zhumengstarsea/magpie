@@ -2039,13 +2039,10 @@ still be opened. Codex won't load its config at all when `model_provider =
 tool leaves that state behind, magpie writes the table back the next time
 it syncs. Signed in to ChatGPT (the sign-in field's default), Codex keeps
 its own provider and sign-in, and magpie's models join its list through
-`openai_base_url`. magpie becomes Codex's provider then only while the
-Codex app holds the account: OpenAI no longer allows it and it has no
-credits left, except a workspace account still within its overage. The
-app sends nothing for a held account, so magpie steps in, and it steps
-back once the account has room again. A window at 100% with credits left
-doesn't count: Codex stays signed in and keeps sending on those. Your
-ChatGPT sign-in is never touched.
+`openai_base_url`. Quota readings never change that sign-in mode or turn
+magpie into Codex's provider; the Codex app waits when the account has no
+allowance. Only an explicit magpie API choice makes magpie Codex's provider.
+Your ChatGPT sign-in is never touched.
 Codex reads its model list at start-up, so restart it after a switch.
 
 **OpenCode, Pi, Crush** get a `magpie` provider entry and `magpie/provider/model`.

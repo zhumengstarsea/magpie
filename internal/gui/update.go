@@ -307,6 +307,10 @@ func (u *updater) run() {
 		}
 		return
 	}
+	if errors.Is(err, update.ErrNoRelease) {
+		u.state, u.err, u.latest = "latest", "", nil
+		return
+	}
 	if err != nil {
 		u.state, u.err = "error", err.Error()
 		return

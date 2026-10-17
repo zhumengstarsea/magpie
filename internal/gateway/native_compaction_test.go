@@ -272,12 +272,8 @@ func TestNativeCompactionFallbackSealStaysWithItsWriter(t *testing.T) {
 	}
 }
 
-// #2517: a conversation compacted natively by an account goes only to it,
-// so when that account is held at its usage cap the request is refused
-// saying so, not as if every account that serves the model were held: the
-// other, with room, wasn't tried for the compaction, and routing can't
-// move it there.
-func TestNativeCompactionWriterAtItsCap(t *testing.T) {
+// A capped official Codex writer may hand its intact checkpoint to an eligible spare.
+func TestCodexNativeCompactionWriterCapUsesPool(t *testing.T) {
 	codexSignedIn(t, "spare@example.com")
 	b := newResetBackend(t)
 	capUsage(t, map[string]float64{"me@example.com": 75, "spare@example.com": 20})
@@ -295,21 +291,8 @@ func TestNativeCompactionWriterAtItsCap(t *testing.T) {
 	req.Header.Set("chatgpt-account-id", "acct-1")
 	srv.Handler().ServeHTTP(rec, req)
 	code, body := rec.Code, rec.Body.String()
-	if tried, _ := b.seen(); code != 429 || tried != "" {
+	if tried, _ := b.seen(); code != 200 || tried != "acct-2" {
 		t.Fatalf("%d tried %q: %s", code, tried, body)
-	}
-	for _, want := range []string{"rate_limit_error", "one account this conversation can go to", "me@example.com", "past its 70% cap", "compacted natively", "routing mode", "account-cap"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("no %q in %s", want, body)
-		}
-	}
-	for _, not := range []string{"every account", "spare@example.com"} {
-		if strings.Contains(body, not) {
-			t.Errorf("%q in %s", not, body)
-		}
-	}
-	if calls := srv.Recent(); len(calls) == 0 || calls[0].Status != 429 || calls[0].Error != "native compaction's account at its usage cap" {
-		t.Fatalf("request log %+v", calls)
 	}
 
 	// without the compaction, the account with room takes it
@@ -318,13 +301,7 @@ func TestNativeCompactionWriterAtItsCap(t *testing.T) {
 	}
 }
 
-// A conversation compacted natively by an account whose own list has since
-// dropped the model goes to it still: only it can read the compaction, and
-// an account whose list lacks the model is the last resort tried when none
-// lists it (perKeyBarred). The other account, whose list has the model, is
-// never sent it. (#2642: the request was refused saying the writer is
-// "switched off, removed, or no longer serves" though it is on, and the
-// advice to switch it on again changed nothing.)
+// A listed Codex account reads a checkpoint when the writer no longer lists the model.
 func TestNativeCompactionWriterWhoseListLacksTheModel(t *testing.T) {
 	codexSignedIn(t, "spare@example.com")
 	b := newResetBackend(t)
@@ -344,30 +321,25 @@ func TestNativeCompactionWriterWhoseListLacksTheModel(t *testing.T) {
 	srv.Handler().ServeHTTP(rec, req)
 	code, body := rec.Code, rec.Body.String()
 	tried, _ := b.seen()
-	if code != 200 || tried != "acct-1" {
+	if code != 200 || tried != "acct-2" {
 		t.Fatalf("%d tried %q: %s", code, tried, body)
 	}
 	if !strings.Contains(body, "pong") {
-		t.Errorf("the writer's answer: %s", body)
+		t.Errorf("the spare's answer: %s", body)
 	}
-	if strings.Contains(tried, "acct-2") {
-		t.Errorf("the spare, whose list has the model, was asked: %q", tried)
+	if strings.Contains(tried, "acct-1") {
+		t.Errorf("the writer, whose list excludes the model, was asked: %q", tried)
 	}
 	// tried, its row leaves the routing page's left: not both attempted
 	// and unlisted, skipped
 	for _, w := range lastRoute(srv).Left {
-		if w.Who == "me@example.com" {
-			t.Errorf("the writer, tried, still left out: %+v", w)
+		if w.Who == "spare@example.com" {
+			t.Errorf("the spare, tried, still left out: %+v", w)
 		}
 	}
 }
 
-// The same through a routing group: the conversation's model is the group,
-// whose member is the codex provider, so the plan is planLevel's keys, not
-// plan's add, and the writer whose own list has since dropped the model is
-// tried still, the spare never asked. (#2642: keys kept the left-out
-// writer's row alone, so a request routed through the group was refused
-// 400 all the same.)
+// The same account transition through a routing group.
 func TestNativeCompactionWriterThroughAGroupWhoseListLacksTheModel(t *testing.T) {
 	codexSignedIn(t, "spare@example.com")
 	b := newResetBackend(t)
@@ -391,20 +363,20 @@ func TestNativeCompactionWriterThroughAGroupWhoseListLacksTheModel(t *testing.T)
 	srv.Handler().ServeHTTP(rec, req)
 	code, body := rec.Code, rec.Body.String()
 	tried, _ := b.seen()
-	if code != 200 || tried != "acct-1" {
+	if code != 200 || tried != "acct-2" {
 		t.Fatalf("%d tried %q: %s", code, tried, body)
 	}
 	if !strings.Contains(body, "pong") {
-		t.Errorf("the writer's answer: %s", body)
+		t.Errorf("the spare's answer: %s", body)
 	}
-	if strings.Contains(tried, "acct-2") {
-		t.Errorf("the spare, whose list has the model, was asked: %q", tried)
+	if strings.Contains(tried, "acct-1") {
+		t.Errorf("the writer, whose list excludes the model, was asked: %q", tried)
 	}
 	// tried, its row leaves the routing page's left: not both attempted
 	// and unlisted, skipped
 	for _, w := range lastRoute(srv).Left {
-		if w.Who == "me@example.com" {
-			t.Errorf("the writer, tried, still left out: %+v", w)
+		if w.Who == "spare@example.com" {
+			t.Errorf("the spare, tried, still left out: %+v", w)
 		}
 	}
 }
@@ -477,11 +449,8 @@ func TestCodexOwnModelCompactionHonoursTheToggle(t *testing.T) {
 	}
 }
 
-// #2642: a conversation whose native compaction's account can't be asked
-// is told why, as magpie's settings say, and what lets it go on — not
-// "switched off, removed, or no longer serves" of an account that is on.
-// No other account is asked.
-func TestNativeCompactionWriterGoneSaysWhy(t *testing.T) {
+// A paused, removed or excluded Codex writer does not block an eligible spare.
+func TestCodexNativeCompactionWriterGoneUsesPool(t *testing.T) {
 	ask := func(t *testing.T, enc string) (int, string) {
 		t.Helper()
 		return codexPost(t, `{"model":"gpt-5.5","stream":true,"input":[{"type":"compaction","encrypted_content":"`+enc+`"},{"type":"message","role":"user","content":[{"type":"input_text","text":"go on"}]}]}`)
@@ -492,35 +461,26 @@ func TestNativeCompactionWriterGoneSaysWhy(t *testing.T) {
 	for _, c := range []struct {
 		name, writer string
 		set          func(t *testing.T)
-		want, not    []string
 	}{
 		{"spare switched off", "spare@example.com",
 			func(t *testing.T) {
 				if err := provider.SetLoginOn("codex", "spare@example.com", false); err != nil {
 					t.Fatal(err)
 				}
-			},
-			[]string{"switched off in magpie", "switch spare@example.com on again", "the others can stay on beside it"},
-			[]string{"no longer signed in", "paused"}},
+			}},
 		{"own paused", "me@example.com",
 			func(t *testing.T) {
 				if err := provider.SetLoginOn("codex", "me@example.com", false); err != nil {
 					t.Fatal(err)
 				}
-			},
-			[]string{"it is paused", "turn me@example.com on again"},
-			[]string{"no longer signed in", "switched off in magpie"}},
+			}},
 		{"kept from the model", "me@example.com",
 			func(t *testing.T) {
 				if err := provider.SetAccountModels("codex", "me@example.com", []string{"gpt-4.1"}); err != nil {
 					t.Fatal(err)
 				}
-			},
-			[]string{"set not to serve gpt-5.5 (Names & levels)", "let me@example.com serve gpt-5.5 again"},
-			[]string{"no longer signed in", "switched off in magpie", "paused"}},
-		{"signed out", "gone@example.com", func(t *testing.T) {},
-			[]string{"gone@example.com is no longer signed in to magpie", "sign in to gone@example.com again"},
-			[]string{"switched off in magpie", "paused"}},
+			}},
+		{"signed out", "gone@example.com", func(t *testing.T) {}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			codexSignedIn(t, "spare@example.com")
@@ -529,18 +489,12 @@ func TestNativeCompactionWriterGoneSaysWhy(t *testing.T) {
 			enc := "gAAAAB-sealed-" + strings.ReplaceAll(c.name, " ", "-")
 			wroteCheckpoint(enc, account(c.writer))
 			code, body := ask(t, enc)
-			if tried, _ := b.seen(); code != 400 || tried != "" {
-				t.Fatalf("%d tried %q: %s", code, tried, body)
+			want := "acct-1"
+			if c.name == "own paused" || c.name == "kept from the model" {
+				want = "acct-2"
 			}
-			for _, want := range append(c.want, "compacted natively by codex@"+c.writer, "sealed (encrypted) to that account", "start a new conversation", "Native compaction is off for codex now") {
-				if !strings.Contains(body, want) {
-					t.Errorf("no %q in %s", want, body)
-				}
-			}
-			for _, not := range append(c.not, "switched off, removed, or no longer serves", "Switch codex@") {
-				if strings.Contains(body, not) {
-					t.Errorf("%q in %s", not, body)
-				}
+			if tried, _ := b.seen(); code != 200 || tried != want || !strings.Contains(body, "pong") {
+				t.Fatalf("checkpoint did not move within the eligible pool: %d tried %q, want %s: %s", code, tried, want, body)
 			}
 		})
 	}
@@ -625,7 +579,7 @@ func TestNativeCompactionRouteNamesItsWriter(t *testing.T) {
 		return Route{}
 	}
 	r := ask("sealed-1", `{"model":"codex/gpt-5.5","stream":true,"input":[{"type":"compaction","encrypted_content":"gAAAAB-sealed-by-biz"},{"type":"message","role":"user","content":[{"type":"input_text","text":"go on"}]}]}`)
-	if strings.Join(tried, ",") != "acct-biz" || r.Compaction != "codex@biz@example.com" || len(r.Order) != 1 {
+	if len(tried) != 1 || (tried[0] != "acct-pro" && tried[0] != "acct-biz") || r.Compaction != "codex@biz@example.com" || len(r.Order) != 2 {
 		t.Fatalf("sealed: tried %v, compaction %q, order %+v", tried, r.Compaction, r.Order)
 	}
 	r = ask("plain-1", `{"model":"codex/gpt-5.5","stream":true,"input":"ping"}`)

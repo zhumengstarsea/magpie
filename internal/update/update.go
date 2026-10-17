@@ -1,6 +1,6 @@
 // Package update keeps magpie current. Builds are published as GitHub
-// releases of yetone/magpie-releases; usemagpie.ai/api/latest describes the
-// newest one: its version, notes, and every file with its SHA-256.
+// releases of zhumengstarsea/magpie. GitHub describes the newest release,
+// its notes and each asset's SHA-256. Custom feeds remain available for tests.
 //
 // The macOS app replaces its own bundle: the new zip is downloaded, checked
 // against its hash, unpacked, and accepted only if it is signed by the same
@@ -35,8 +35,10 @@ import (
 	"github.com/yetone/magpie/internal/source"
 )
 
-// Site is magpie's home; its /api/latest is the update feed.
-const Site = "https://usemagpie.ai"
+// Site is the fork that publishes this build.
+const Site = "https://github.com/zhumengstarsea/magpie"
+
+const releasesAPI = "https://api.github.com/repos/zhumengstarsea/magpie/releases"
 
 // Feed is where the newest release is described. MAGPIE_UPDATE_FEED points
 // it elsewhere, for testing an update against a local server.
@@ -44,7 +46,7 @@ func Feed() string {
 	if f := os.Getenv("MAGPIE_UPDATE_FEED"); f != "" {
 		return f
 	}
-	return Site + "/api/latest"
+	return releasesAPI + "/latest"
 }
 
 // Release is one published version.
@@ -80,6 +82,9 @@ func Latest(ctx context.Context) (*Release, error) { return LatestIn(ctx, "") }
 // LatestIn asks the feed for the newest release, its notes in lang (see
 // InLang): the app's language, which What's new follows.
 func LatestIn(ctx context.Context, lang string) (*Release, error) {
+	if os.Getenv("MAGPIE_UPDATE_FEED") == "" {
+		return latestFork(ctx, lang)
+	}
 	req, err := http.NewRequestWithContext(ctx, "GET", withLang(Feed(), lang), nil)
 	if err != nil {
 		return nil, err

@@ -684,12 +684,14 @@ func codexIn(at place) *Agent {
 	// api: the user wants magpie as Codex's provider even while Codex is
 	// signed in to ChatGPT
 	api := func() bool { return stashLoad()[at.key("codex.login")] == "api" }
-	// out reports whether the Codex app holds the ChatGPT account Codex is
-	// signed in to (codexUsedUp), for magpie to become Codex's provider
-	// while it does (#540): never with the sign-in kept on ChatGPT
-	// (chatgpt), where the user would rather the Codex app wait for the
-	// account than leave its ChatGPT state
-	out := func() bool { return stashLoad()[at.key("codex.login")] != "chatgpt" && codexUsedUp() }
+	// out used to let a quota result silently turn Codex into magpie's
+	// provider. That changes Codex's visible login state and breaks the
+	// official ChatGPT sign-in/API coexistence: the next Sync could write
+	// model_provider = "magpie" even though the user had only connected
+	// magpie. Account failover still works through openai_base_url, and the
+	// user can explicitly choose the magpie API sign-in when that state is
+	// wanted. Quota state must never change the sign-in mode by itself.
+	out := func() bool { return false }
 	dropBase := func() error {
 		forget(at.key("codex.failover"))
 		if !viaBase() {
@@ -1175,6 +1177,12 @@ func codexIn(at place) *Agent {
 		},
 		OwnVia: codexOwnViaMagpie,
 		Sync: func() error {
+			// Older versions left this marker after the automatic provider
+			// switch. It no longer has meaning, and keeping it makes the GUI
+			// look as if Codex is still in the old automatic mode.
+			if stashLoad()[at.key("codex.out")] != "" {
+				forget(at.key("codex.out"))
+			}
 			if err := asyncCompaction(routed()); err != nil {
 				return err
 			}
@@ -1512,8 +1520,8 @@ func codexIn(at place) *Agent {
 				},
 				Options: func(map[string]string) []Option {
 					return []Option{
-						{Value: "", Label: "ChatGPT", Note: "magpie's models join Codex's own; Codex stays signed in to ChatGPT, and while the Codex app blocks its account (out of allowance, no credits left) magpie is Codex's provider, so the app still sends"},
-						{Value: "chatgpt", Label: "Always ChatGPT", Note: "as ChatGPT, and kept so while the Codex app blocks its account: magpie never becomes Codex's provider. The Codex app may then send nothing till the account has room; Codex CLI goes on through magpie"},
+						{Value: "", Label: "ChatGPT", Note: "magpie's models join Codex's own; Codex stays signed in to ChatGPT and magpie never changes it to API automatically. If the account is out of allowance, the Codex app waits; choose magpie API explicitly if you want Codex's provider changed"},
+						{Value: "chatgpt", Label: "Always ChatGPT", Note: "as ChatGPT; magpie never becomes Codex's provider automatically. The Codex app may wait while the account has no allowance; Codex CLI goes on through magpie"},
 						{Value: "api", Label: "magpie API", Note: "magpie is Codex's provider; the Codex app is in its API state, with magpie's models only. Codex's Chrome control needs the ChatGPT sign-in, so pick ChatGPT to keep it"},
 					}
 				},

@@ -5,12 +5,8 @@ import (
 	"testing"
 )
 
-// A ChatGPT account that runs out of its allowance after a magpie model was
-// picked beside its sign-in leaves the Codex app sending nothing, a magpie
-// model's turn included (#540): Sync makes magpie Codex's provider then, as
-// a pick does for an account already out, and puts magpie back beside the
-// sign-in once the allowance is back. A provider the user asked for (api)
-// or one for a Codex not signed in to ChatGPT stays.
+// A quota result never changes Codex's sign-in mode. An official ChatGPT
+// sign-in remains beside magpie, while magpie API is an explicit choice.
 func TestCodexRunsOutAfterPick(t *testing.T) {
 	home, read := codexHome(t, `{"tokens":{"access_token":"x","id_token":"x.e30.x"}}`, "")
 	cx := codex(home)
@@ -24,15 +20,15 @@ func TestCodexRunsOutAfterPick(t *testing.T) {
 	if err := cx.Sync(); err != nil {
 		t.Fatal(err)
 	}
-	if cfg := read(); !strings.Contains(cfg, `model_provider = "magpie"`) || !strings.Contains(cfg, "model_catalog_json") ||
+	if cfg := read(); strings.Contains(cfg, `model_provider = "magpie"`) || strings.Contains(cfg, "model_catalog_json") ||
 		!strings.Contains(cfg, "openai_base_url") || !strings.Contains(cfg, `model = "fake/m1"`) {
-		t.Fatalf("used up:\n%s", cfg)
+		t.Fatalf("quota changed the sign-in mode:\n%s", cfg)
 	}
-	if err := cx.Sync(); err != nil { // still out: stays
+	if err := cx.Sync(); err != nil {
 		t.Fatal(err)
 	}
-	if cfg := read(); !strings.Contains(cfg, `model_provider = "magpie"`) {
-		t.Fatalf("used up, synced again:\n%s", cfg)
+	if cfg := read(); strings.Contains(cfg, `model_provider = "magpie"`) {
+		t.Fatalf("quota changed the sign-in mode on the next sync:\n%s", cfg)
 	}
 	codexUsedUp = func() bool { return false }
 	if err := cx.Sync(); err != nil {
@@ -40,7 +36,7 @@ func TestCodexRunsOutAfterPick(t *testing.T) {
 	}
 	if cfg := read(); strings.Contains(cfg, "model_provider =") || strings.Contains(cfg, "model_catalog_json") ||
 		!strings.Contains(cfg, "openai_base_url") || !strings.Contains(cfg, `model = "fake/m1"`) {
-		t.Fatalf("allowance back:\n%s", cfg)
+		t.Fatalf("allowance recovery changed the sign-in mode:\n%s", cfg)
 	}
 
 	// magpie as the provider because the user asked for it stays so
@@ -58,10 +54,7 @@ func TestCodexRunsOutAfterPick(t *testing.T) {
 	}
 }
 
-// Kept on ChatGPT (Always ChatGPT), a ChatGPT account that runs out leaves
-// magpie beside the sign-in: Codex isn't moved to magpie as its provider,
-// by a pick or by Sync, and one moved before the user chose it is put back
-// beside it at once.
+// The explicit Always ChatGPT choice remains stable across Sync as well.
 func TestCodexKeptOnChatGPT(t *testing.T) {
 	home, read := codexHome(t, `{"tokens":{"access_token":"x","id_token":"x.e30.x"}}`, "")
 	cx := codex(home)
@@ -73,8 +66,8 @@ func TestCodexKeptOnChatGPT(t *testing.T) {
 	if err := cx.Sync(); err != nil {
 		t.Fatal(err)
 	}
-	if cfg := read(); !strings.Contains(cfg, `model_provider = "magpie"`) {
-		t.Fatalf("ChatGPT, used up: magpie its provider:\n%s", cfg)
+	if cfg := read(); strings.Contains(cfg, `model_provider = "magpie"`) {
+		t.Fatalf("ChatGPT, used up: magpie became its provider:\n%s", cfg)
 	}
 
 	beside := func(when string) {
@@ -100,11 +93,9 @@ func TestCodexKeptOnChatGPT(t *testing.T) {
 		t.Fatalf("login %q", got)
 	}
 
-	// back to ChatGPT, it is moved again while the account is out
+	// Switching back to the default ChatGPT mode keeps it beside magpie too.
 	if err := cx.Field("login").Set(""); err != nil {
 		t.Fatal(err)
 	}
-	if cfg := read(); !strings.Contains(cfg, `model_provider = "magpie"`) {
-		t.Fatalf("ChatGPT again, used up:\n%s", cfg)
-	}
+	beside("ChatGPT again, used up")
 }
