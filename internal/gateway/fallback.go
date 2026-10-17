@@ -1405,9 +1405,18 @@ func holds(c candidate, tokens int) bool {
 // request that doesn't parse leaves every one, and so does one no
 // candidate holds: the first is asked, and the agent told it overflowed,
 // to compact.
-func roomy(cs []candidate, pl planned, from provider.Protocol, body []byte) ([]candidate, planned) {
+//
+// Those left out are handed back (small, their rows in smallW when the
+// order has one each), kept for the last resort: when every candidate
+// with room is out of its allowance, a fallback too small is asked all
+// the same (Kai on Discord: both Claude accounts at their limit until
+// the next day, the Claude provider's Fallback a Codex model of 272K
+// under a longer conversation, left out without a word, and Claude Code
+// handed the 429). Its overflow tells the agent to compact, after which
+// the fallback holds it; the 429 told it only to wait for hours.
+func roomy(cs []candidate, pl planned, from provider.Protocol, body []byte) (out []candidate, _ planned, small []candidate, smallW []Weighed) {
 	if len(cs) < 2 {
-		return cs, pl
+		return cs, pl, nil, nil
 	}
 	served := sync.OnceValue(provider.Served) // the catalog, read once
 	least, windows := 0, map[string]int{}
@@ -1425,18 +1434,21 @@ func roomy(cs []candidate, pl planned, from provider.Protocol, body []byte) ([]c
 	// one model has nothing to choose between, and a body shorter than
 	// the least window can't estimate past it: neither is parsed
 	if len(windows) < 2 || least == 0 || len(body)/4 < least {
-		return cs, pl
+		return cs, pl, nil, nil
 	}
 	req, err := parse(from, body)
 	if err != nil {
-		return cs, pl
+		return cs, pl, nil, nil
 	}
 	tokens := estimate(req)
-	var out []candidate
 	var order []Weighed
 	parallel := len(pl.order) == len(cs)
 	for i, c := range cs {
 		if w := windows[key(c)]; w > 0 && tokens >= w {
+			small = append(small, c)
+			if parallel {
+				smallW = append(smallW, pl.order[i])
+			}
 			continue
 		}
 		out = append(out, c)
@@ -1445,12 +1457,12 @@ func roomy(cs []candidate, pl planned, from provider.Protocol, body []byte) ([]c
 		}
 	}
 	if len(out) == 0 || len(out) == len(cs) {
-		return cs, pl
+		return cs, pl, nil, nil
 	}
 	if parallel {
 		pl.order = order
 	}
-	return out, pl
+	return out, pl, small, smallW
 }
 
 // matesFirst puts first, of the candidates left, the other keys or

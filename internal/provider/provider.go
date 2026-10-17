@@ -1508,11 +1508,11 @@ func openAIModel(model string) bool {
 // OpenAI's API or Copilot's; Anthropic's Messages for a Claude model
 // where that is served; Chat where that is served. "" when every
 // request is translated anyway: a sign-in served through its agent's own
-// API (Claude Code's binary, Cursor, Devin, Kiro, Code Assist).
+// API (Claude Code's binary, Devin, Code Assist).
 func (p Provider) Native(model string) Protocol {
 	if p.Account != nil {
 		switch p.Account.Agent {
-		case "claude", "cursor", "devin", "kiro":
+		case "claude", "devin":
 			return ""
 		}
 	}

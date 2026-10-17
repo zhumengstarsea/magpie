@@ -6016,8 +6016,10 @@ function renderMovable() {
   let hid = "";
   try { hid = localStorage.getItem("magpie.deprecatedHidden") || ""; } catch {}
   const ids = ps.map((p) => p.id).join(",");
-  box.hidden = !ps.length || hid === ids;
-  if (box.hidden) return;
+  const unmoved = providers.unmoved || [];
+  box.hidden = (!ps.length || hid === ids) && !unmoved.length;
+  for (const p of unmoved) box.append(unmovedLine(p));
+  if (!ps.length || hid === ids) return;
   const names = ps.map((p) => p.name).join(t(", "));
   // one quiet line over the list, as calm as its rows: an amber dot, what
   // happened and why, and the two answers on the right (the owner: 这个太丑了 —
@@ -6040,6 +6042,49 @@ function renderMovable() {
   acts.append(hide, review);
   card.append(el("span", "dep-dot"), body, acts);
   box.append(card);
+}
+
+// unmovedLine: a retired built-in whose accounts haven't moved to its
+// plugin (a failed install): nothing serves them, so it is never hidden.
+// An amber dot, what happened and why, and the move, tried again here.
+const unmovedSaid = {}; // provider id → { busy } or { why }
+function unmovedLine(p) {
+  const card = el("div", "deprecation unmoved");
+  card.setAttribute("role", "note");
+  card.dataset.id = p.id;
+  const body = el("div", "dep-body");
+  const said = unmovedSaid[p.id];
+  const why = said?.why || moveWhy(p, p);
+  body.append(el("div", "dep-head", t("{name}'s built-in subscription is retired, and its accounts haven't moved to its plugin yet", { name: p.name })),
+    el("p", "dep-why", why ? t("Nothing serves them until they move: {error}", { error: why }) : t("Nothing serves them until they move. Moving keeps your accounts, models and agents as they are.")));
+  const acts = el("div", "dep-acts");
+  const b = el("button", "text action", said?.busy || (why ? t("Try again") : t("Move to the plugin")));
+  b.title = p.package; // the npm package: for the curious, not the sentence
+  b.disabled = b.classList.toggle("busy", !!said?.busy);
+  b.onclick = async () => {
+    unmovedSaid[p.id] = { busy: t("Installing the plugin and checking each account…") };
+    renderMovable();
+    try {
+      providers = await api("provider/move", { id: p.id });
+      delete unmovedSaid[p.id];
+      renderProviders();
+      const now = providers.providers.find((x) => x.id === p.id);
+      const accts = now?.account?.logins?.length || 0, models = (now?.models || []).filter((x) => x.on).length;
+      saidMoved(t("{name} now runs on its plugin — {accounts}, {models}.", {
+        name: p.name,
+        accounts: t(accts === 1 ? "{n} account" : "{n} accounts", { n: accts }),
+        models: t(models === 1 ? "{n} model" : "{n} models", { n: models }),
+      }));
+      state = await api("state");
+      renderAgents();
+    } catch (e) {
+      unmovedSaid[p.id] = { why: moveWhy({ why: e.why, error: e.message }, p) };
+      renderMovable();
+    }
+  };
+  acts.append(b);
+  card.append(el("span", "dep-dot"), body, acts);
+  return card;
 }
 
 // Sign-ins magpie found but leaves alone, so nobody wonders why an agent that

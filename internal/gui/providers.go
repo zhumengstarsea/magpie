@@ -261,7 +261,8 @@ type providerJSON struct {
 
 type moveJSON struct {
 	Package string `json:"package"`
-	// State is "" (built-in, never moved), "plugin", "back" or "failed"
+	// State is "" (built-in, never moved), "plugin", "back" or "failed";
+	// a retired built-in's row is its plugin's, "plugin"
 	State string `json:"state"`
 	Error string `json:"error,omitempty"`
 	// Why is a failed move's reason, which the page says in its language
@@ -366,7 +367,7 @@ func accountLabel(p provider.Provider) (name, icon string) {
 		if name == "" {
 			name = p.Name
 		}
-		if provider.Moved(pp.ID) {
+		if provider.PluginServes(pp.ID) {
 			icon = p.Icon // the built-in's, as it was
 		}
 		return name, icon
@@ -490,6 +491,9 @@ type providersJSON struct {
 	// MovesTo is the plugin each of them goes to, for the add sheet's
 	// offer to install it before signing in
 	MovesTo map[string]string `json:"movesTo,omitempty"`
+	// Unmoved are the retired built-ins whose accounts haven't moved onto
+	// their plugins yet, served by nothing until they do, with why
+	Unmoved []provider.MoveCandidate `json:"unmoved,omitempty"`
 	// Moved is the agents the change moved off models it stopped serving
 	// (agent.Reseat), for the page to say so.
 	Moved []agent.Move `json:"moved,omitempty"`
@@ -639,7 +643,11 @@ func providerInfoWith(p provider.Provider, agents []agentUse, desktop map[string
 	}
 	out.Key.Set = p.Key != ""
 	out.Key.Masked = provider.Mask(p.Key)
-	if provider.Movable(p.ID) {
+	if provider.BuiltinRetired(p.ID) {
+		// only its plugin's row is listed now: built-in accounts not moved
+		// yet are providersJSON.Unmoved's
+		out.Move = &moveJSON{Package: provider.MovePackage(p.ID), State: provider.MovePlugin}
+	} else if provider.Movable(p.ID) {
 		m, _ := provider.MigrationOf(p.ID)
 		out.Move = &moveJSON{Package: provider.MovePackage(p.ID), State: m.State, Error: m.Err, Why: m.Why}
 		if m.State == provider.MoveMoving {
@@ -831,11 +839,23 @@ func providersState() providersJSON {
 	s := providersJSON{Providers: []providerJSON{}, Presets: []presetJSON{}, Excluded: []excludedJSON{}}
 	s.OnPlugins = provider.OnPlugins()
 	s.Movable = provider.MovableIDs()
+	// a retired built-in whose plugin is installed is the plugin's, moved
+	// or not: the add sheet signs in to it through the plugin alone
+	for _, id := range s.Movable {
+		if _, ok := provider.PluginOf(id); ok && provider.BuiltinRetired(id) && !slices.Contains(s.OnPlugins, id) {
+			s.OnPlugins = append(s.OnPlugins, id)
+		}
+	}
 	for _, id := range s.Movable {
 		if s.MovesTo == nil {
 			s.MovesTo = map[string]string{}
 		}
 		s.MovesTo[id] = provider.MovePackage(id)
+	}
+	for _, c := range provider.MoveCandidates() {
+		if provider.BuiltinRetired(c.ID) {
+			s.Unmoved = append(s.Unmoved, c)
+		}
 	}
 	if err := provider.FileError(); err != nil {
 		s.FileError = err.Error()

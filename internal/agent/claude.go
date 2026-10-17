@@ -301,7 +301,8 @@ const claudeExploreEnv = "CLAUDE_CODE_DISABLE_EXPLORE_INHERIT_CAP"
 // magpie has its actions reviewed by Anthropic (gateway.AutoModeReviewed):
 // one shown to the agents in catalogs (Claude Code, Claude Desktop whose
 // Code tab is Claude Code, T3 Code's instance of it), a routing group's
-// member, a provider's fallback, or one of models (those it is set to).
+// member, a provider's fallback, or one of models (those it is set to),
+// judged where it resolves to.
 // Any such keeps the review on, as /model can take a session there.
 func claudeReviewed(catalogs []string, models ...string) bool {
 	var entries []provider.Entry
@@ -331,7 +332,17 @@ func claudeReviewed(catalogs []string, models ...string) bool {
 			return true
 		}
 	}
-	return slices.ContainsFunc(models, func(m string) bool { return gateway.AutoModeReviewed(provider.Provider{}, m) })
+	return slices.ContainsFunc(models, func(id string) bool {
+		if _, ms, ok := find(id); ok {
+			return slices.ContainsFunc(ms, func(m provider.Member) bool { return reviewed(m.Provider, m.Model) })
+		}
+		if p, m, ok := provider.Resolve(id); ok {
+			return reviewed(p, m)
+		}
+		// Not one magpie knows: judged by its name, as the gateway would
+		// judge a request for it.
+		return gateway.AutoModeReviewed(provider.Provider{}, id)
+	})
 }
 
 // claudeCapsMax bounds claudeCapsEnv: the models Claude Code is set to go

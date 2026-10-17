@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -23,6 +24,18 @@ import (
 // a check asked for tries it once more.
 func TestUpdateThatWontStart(t *testing.T) {
 	body := []byte("new magpie")
+	if runtime.GOOS == "windows" {
+		// Installation first probes the download suspended. Use a real PE
+		// so this test reaches the mocked restart refusal below.
+		self, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err = os.ReadFile(self)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	sum := sha256.Sum256(body)
 	var downloads atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

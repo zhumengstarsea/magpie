@@ -77,7 +77,7 @@ var pluginRunsCLI = map[string]bool{"grok": true}
 // through and this machine lacks: a moved built-in's, or one in
 // pluginRunsCLI.
 func pluginCLI(id string) (agentCLI, bool) {
-	if Moved(PluginID(id)) {
+	if PluginServes(PluginID(id)) {
 		return missingCLI(PluginID(id))
 	}
 	if pluginRunsCLI[id] {

@@ -651,6 +651,7 @@ m plugin logout acme</pre>
       <tr><td><a href="https://github.com/magpie-community/plugins/tree/main/packages/system-prompt"><code>system-prompt</code></a></td><td>すべてのリクエスト（または特定のエージェントやモデルのもの）に自分のシステムプロンプトを、各 API の決まった場所に加えます。リクエストに独自のものがあれば、<code>override</code> を有効にしない限りそのままにします。</td></tr>
       <tr><td><a href="https://github.com/magpie-community/plugins/tree/main/packages/word-guard"><code>word-guard</code></a></td><td>New API の禁止語フィルタ：ユーザーが送る内容にある語やパターンを断るか伏せ字にします。応答も伏せ字にできます。</td></tr>
       <tr><td><a href="https://github.com/magpie-community/plugins/tree/main/packages/think-tags"><code>think-tags</code></a></td><td>応答本文の先頭にある <code>&lt;think&gt;…&lt;/think&gt;</code> を取り除くか、Chat の応答の <code>reasoning_content</code> を本文に入れます（New API の <code>thinking_to_content</code>）。</td></tr>
+      <tr><td><a href="https://github.com/magpie-community/plugins/tree/main/packages/antigravity-cloak"><code>antigravity-cloak</code></a></td><td>Antigravity が Claude Code と Agent SDK のシステムプロンプトを断る理由になる語を、Antigravity に送る分だけで分割します。他のプロバイダには元のプロンプトのまま送ります。</td></tr>
     </table></div>
     <div class="code">
       <span class="lang">shell</span>
@@ -673,13 +674,14 @@ magpie plugin options model-map '{"mapping": {"fast": "deepseek/deepseek-chat"}}
     <div class="table-wrap"><table>
       <tr><th>フック</th><th>渡されるもの</th><th>戻り値</th></tr>
       <tr><td><code>onRequest(body, ctx)</code></td><td>ルーティング前のリクエスト本文。<code>model</code> を変えると別の宛先にルーティングされます。</td><td>本文、または何も返さない。<code>ctx.reject(status, message)</code> はリクエストを断り、そのエラーをエージェントの API の形式で返します（ステータスを省くと 403）。</td></tr>
+      <tr><td><code>onProvider(body, ctx)</code></td><td>あるプロバイダに送る直前のリクエスト本文。<code>ctx.provider</code> にはその <code>id</code>、<code>name</code>、<code>account</code>（サブスクリプションの種類。<code>claude</code> や <code>antigravity</code> など。API キーにはありません）と <code>model</code> があります。リクエストを試すプロバイダごとに呼ばれ、毎回 <code>onRequest</code> が残した本文を受け取るので、あるプロバイダ向けの変更は他のプロバイダに届きません。</td><td>本文、または何も返さない。この時点でルーティングは済んでいるので、拒否も行き先の変更もできません。</td></tr>
       <tr><td><code>onEvent(event, ctx)</code></td><td>ストリーム応答の各イベントの <code>data:</code> JSON。</td><td>イベント、何も返さない、またはイベントを落とす <code>null</code>。</td></tr>
       <tr><td><code>onResponse(body, ctx)</code></td><td>ストリームでない応答の全体。<code>ctx.status</code> がそのステータスです。</td><td>本文、または何も返さない。</td></tr>
     </table></div>
     <p><code>export const events = ["content_block_delta"]</code> と書くと、<code>onEvent</code> はその名前のイベントだけで呼ばれます（Anthropic Messages と Responses のイベントには名前があります）。Chat Completions と Gemini のイベントには名前がないので、それらでは <code>events</code> を書かないでください。1 つのイベントは応答の一部なので、1 つの単語が 2 つのイベントに分かれることがあります。<code>data: [DONE]</code> の行とコメントはフックを通らずにそのまま流れます。圧縮された応答もそのまま流れます。</p>
     <p><code>ctx</code> には次のものがあります：<code>protocol</code>（<code>anthropic</code>・<code>chat</code>・<code>responses</code>・<code>gemini</code>）、エージェントが指定した <code>model</code> と <code>stream</code>、<code>path</code>、magpie が把握している場合の <code>agent</code>、<code>options</code>（そのプラグインの<a href="#middleware-options">オプション</a>）、そしてリクエストごとのオブジェクト <code>state</code>。</p>
     <h3>フックが失敗したとき</h3>
-    <p>フックの持ち時間は、リクエストまたは応答全体で 250 ms、1 イベントで 50 ms、読み込みで 1 秒です。例外を投げたフック、時間切れになったフック、想定外の値を返したフックは、なかったものとして扱われます。つまりリクエストやイベントは元のまま送られます。設定 → プラグインには、ミドルウェアごとのフック、呼び出し回数、1 回あたりの平均時間、失敗回数と直近のエラーが表示されます。フックが見るのは、エージェントが送ったものと受け取るものそのものです。送信時は magpie のマスキングより前、受信時はマスク解除の後です。magpie 自身のリクエスト（スレッドのタイトル、ルーターの分類器）はミドルウェアを通りません。</p>
+    <p>フックの持ち時間は、リクエスト、プロバイダへの 1 回の試行、または応答全体で 250 ms、1 イベントで 50 ms、読み込みで 1 秒です。例外を投げたフック、時間切れになったフック、想定外の値を返したフックは、なかったものとして扱われます。つまりリクエストやイベントは元のまま送られます。設定 → プラグインには、ミドルウェアごとのフック、呼び出し回数、1 回あたりの平均時間、失敗回数と直近のエラーが表示されます。フックが見るのは、エージェントが送ったものと受け取るものそのものです。送信時は magpie のマスキングより前、受信時はマスク解除の後です。magpie 自身のリクエスト（スレッドのタイトル、ルーターの分類器）はミドルウェアを通りません。</p>
 
     <h3 id="gateway-points"><a class="anchor" href="#gateway-points">ルーティングと使用量の行</a></h3>
     <p>同じモジュールは <code>strategies</code> と <code>onUsage</code> もエクスポートできます。そのファイルは <code>*.gateway.js</code> と名付けてもよく、パッケージなら <code>"magpie": { "gateway": "./gw.js" }</code> と書けます。</p>

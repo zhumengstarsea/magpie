@@ -155,6 +155,15 @@ func ListedDrawer(ref string) string {
 	return pid + "/" + codexDrawer
 }
 
+// listsCantName is whether p's image models are ones magpie names itself
+// (a ChatGPT account's GPT Image, a Grok subscription's Grok Imagine, a
+// WorkBuddy plan's those its config lists), apart from its chat models:
+// an account's own list of models (#474), picked in the editor from the
+// chat models, can't name them, so it never bars one (heyiwei5 on X).
+func listsCantName(p provider.Provider) bool {
+	return drawsCodex(p) || drawsGrok(p) || drawsWorkBuddy(p)
+}
+
 // codexDrawer is the image model Codex CLI asks a ChatGPT account for, the
 // one Automatic picks there.
 const codexDrawer = "gpt-image-2"
@@ -803,6 +812,17 @@ func (s *Server) drawOnAccounts(ctx context.Context, r *http.Request, p provider
 	// an account whose list lacks the image model is put aside for text
 	// when another's list is unknown; for drawing it is asked last
 	_, _, left, barred := perKeyBarred(q, model, provider.Chat)
+	if listsCantName(q) {
+		// its accounts' own lists of models are picked from its chat
+		// models, which its image models are never among: a list keeps
+		// an account from no drawing, as it couldn't name one
+		for _, c := range barred {
+			if c.capped == nil {
+				left = append(left, c)
+			}
+		}
+		barred = slices.DeleteFunc(barred, func(c candidate) bool { return c.capped == nil })
+	}
 	for _, c := range left {
 		if !slices.ContainsFunc(cs, func(o candidate) bool { return o.p.AccountID() == c.p.AccountID() }) {
 			cs = append(cs, c)

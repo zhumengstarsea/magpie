@@ -1241,6 +1241,9 @@ func scan(path string, off int64, fn func([]byte)) (int64, error) {
 // to is stepped over without being gathered (most of a Codex rollout's
 // bytes are lines no one reads: compactions, tool output). A nil head
 // wants every line.
+// scanHook, when a test sets it, is told where each scan of a file starts.
+var scanHook func(path string, off int64)
+
 func scanHead(path string, off int64, head func([]byte) bool, fn func([]byte)) (int64, error) {
 	return scanAt(path, off, head, func(b []byte, _, _ int64) bool { fn(b); return true })
 }
@@ -1251,6 +1254,9 @@ func scanHead(path string, off int64, head func([]byte) bool, fn func([]byte)) (
 // A compressed file's places are those of its lines decompressed; it is read
 // from its start, what comes before off passed over.
 func scanAt(path string, off int64, head func([]byte) bool, fn func(b []byte, start, end int64) bool) (int64, error) {
+	if scanHook != nil {
+		scanHook(path, off)
+	}
 	f, err := openLines(path)
 	if err != nil {
 		return off, err

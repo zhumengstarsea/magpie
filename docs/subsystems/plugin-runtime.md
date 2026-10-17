@@ -26,7 +26,7 @@ the plugin host) are a different thing; see
 | Manifest | `ID`, `API` (a caret range of the host API, `"^1"`; `pluginrt.API` is `"1.0"`), `Requires` and `Provides` (services), `Essential`, `Name`/`Sub` (English; the window translates them), `One`/`Many` (what is in use, of 1 or `{n}`), `InUse`, `Apply`, `Parts` (`{Slot, Key}`: the window's parts it is), `Defaults` (its config), `Settings` (a struct of its settings, made into `Defaults` and a schema at `Register`) and `Client` (its files in the window, under `internal/gui/assets/plugins/<id>/`: scripts, its `i18n.js` and a `.css`). | [`pluginrt.go`](../../internal/pluginrt/pluginrt.go) |
 | Lifecycle | `Runtime.Reconcile(on, config)`. Off first: every plugin no longer wanted, and every one requiring a service one of those provided, is disposed newest first. Then on: each wanted plugin whose requirements are provided (by `Core`, `settings`, `providers`, `gateway`, `window`, or an active plugin) is applied, again and again until no more can be. States: `off`, `pending` (waiting for a service, logged), `active`, `failed` (Apply returned an error or panicked, or the API range doesn't match; what it registered before is undone), `disposed`. A failed plugin never stops the others. | [`pluginrt.go`](../../internal/pluginrt/pluginrt.go) |
 | Ctx | What `Apply` gets: `OnDispose(f)`, `Contribute(slot, key)`, `Provide(name, v)` (withdrawn when it goes), `Service(name)`, and its composed `Config`. Disposers run in reverse, each one's panic logged and the rest still run. | [`pluginrt.go`](../../internal/pluginrt/pluginrt.go) |
-| plugins.yml | `appdir.Config()/plugins.yml`: `preset` (`essentials` or `all`) and `plugins`, rows of `{id, enabled, config}` holding only what the user set. | [`config.go`](../../internal/pluginrt/config.go) |
+| plugins.yml | `appdir.Config()/plugins.yml`: `preset` (`essentials` or `all`; `all` unless the user picks Essentials), `settled` (the defaults the file was last brought up to) and `plugins`, rows of `{id, enabled, config}` holding only what the user set. | [`config.go`](../../internal/pluginrt/config.go) |
 | Settings schema | `SchemaOf(Settings)` makes a JSON Schema object of the struct, in its fields' order (`x-order`): each exported field with a json name is a setting, of `bool`, an int, `float64` or `string`, with tags `title` (English; the window translates it), `description`, `enum` (comma separated) and `min`/`max`. Its values are the defaults. A field a form can't draw, or a tag that doesn't parse, panics at `Register`. `Schema.Validate` takes a value only as the schema allows it (a JSON float64 or a YAML int for an integer); `SetConfig(id, config)` writes the user's row through it, and `Compose` leaves out a value edited into plugins.yml by hand that it doesn't allow, so the default stands. | [`schema.go`](../../internal/pluginrt/schema.go), [`config.go`](../../internal/pluginrt/config.go) |
 | Built-in plugins | `groups`, `library`, `otel`, `sessions`, `warmups` (P0), `gateway` (P1), the Gateway page, which is Essential and in use while a gateway key is there (`access.List`), and `routing` (P2), the Routing page, Essential and in use while the user has a routing group, since the page is where groups are made and changed. `rotation` (P3), the routings besides Smart, is Essential and in use while a provider or group is routed by one of them. `middleware` (P3), the JS gateway middleware, is Essential and in use while plugins.json has a middleware on (`middleware.On`). `redact` (P3), privacy masking, is Essential and in use while Settings → Privacy asks for any masking (`masking.Wanted`). `search` (P3), magpie's web search, is Essential and in use while a search API is set up or a searcher is picked. `budget` (P3), key limits, is Essential and in use while a gateway key has a limit. `usage` (P2), the Usage page, is Essential too, with no `InUse`: what it shows the gateway counts anyway, and the tray panel's Usage tab still shows the allowances with it off. The Gateway page's one setting, `callsPage` (10, 20, 50 or 100; 20), is how many recent calls the page shows at a time. The other five aren't Essential. Each one's `InUse` counts what the user made with it: routing groups not Auto and not hidden, library items given to agents, a collector sent to, gateway conversations recorded, warm-ups and check-ins on. | [`plugins/`](../../plugins) |
 
@@ -195,7 +195,7 @@ the core. The five other routings are the built-in plugin `rotation`'s.
 The user's own routing groups are the `groups` plugin's on this point. The
 groups magpie finds (a model two providers serve, `auto-<model>`) stay the
 core's, as Smart does: they are how a model several providers serve is one
-model with failover, which a new install has with the Essentials preset,
+model with failover, which a user has with the Essentials preset,
 where `groups` is off. `planGroup` and the walk over a group's members are
 the core's either way: a strategy only orders a pool, and a group off is
 not offered at all.
@@ -282,10 +282,12 @@ remembering its layer (`Source`):
 ## Runtime paths
 
 - **Start** (`internal/cli/main.go`, after `settings.Migrate`):
-  `pluginrt.Settle(!settings.RanBefore())` writes a first plugins.yml when
-  there is none: `essentials` on a new install, `all` on a magpie that ran
-  here before (one of `settings.ranBefore`'s files is there; one that can't
-  be looked at counts as there), so an existing user keeps everything. Then
+  `pluginrt.Settle()` writes a first plugins.yml, `all`, when there is
+  none, on a new install too: a new user sees everything magpie does and
+  turns off what they don't want. A file below `settled: 1` is brought up
+  once: the `essentials` a new install was written from 10-13 to 10-17
+  becomes `all`, the user's own rows kept. Every write sets `settled`, so
+  an Essentials the user picks afterwards stays theirs. Then
   `pluginrt.Refresh` makes the process's runtime and reconciles it. An error
   is printed and magpie starts.
 - **Every read**: `Refresh` loads plugins.yml again, composes it and
@@ -334,7 +336,7 @@ remembering its layer (`Source`):
 
 - `go test ./internal/pluginrt/` (`TestReconcile`, `TestCompatible`,
   `TestPluginsImportOnlyCore`, `TestCompose`, `TestSettleAndSet`,
-  `TestBrokenFileIsKept`), `go test ./internal/settings/ -run TestRanBefore`.
+  `TestSettleBringsUpAnEssentialsInstall`, `TestBrokenFileIsKept`).
 - `go test ./internal/pluginrt/ -run 'TestSchemaOf|TestValidate|TestSetConfig'`.
 - `go test ./internal/gui/ -run 'TestBuiltin|TestBootSaysBuiltinsOff'`
   (`TestBuiltinConfig`, `TestBuiltinClientsLoaded`).

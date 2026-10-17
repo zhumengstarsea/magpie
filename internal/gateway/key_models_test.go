@@ -402,15 +402,22 @@ func TestGatewayKeyModelsHoldTheImageAndVideoLists(t *testing.T) {
 func TestGatewayKeyAccountsHoldTheImageAndVideoLists(t *testing.T) {
 	grokSignedIn(t)
 	newGrokMedia(t)
+	// the plugin's one account, which grokSignedIn signs in, held to a
+	// chat model of its own
+	p, err := provider.Find("grok")
+	if err != nil || len(p.AccountRefs()) != 1 {
+		t.Fatalf("Grok's accounts: %v, %v", p.AccountRefs(), err)
+	}
+	ref := p.AccountRefs()[0]
 	keys, secrets := newCaller(t, "Held", "Free")
-	if _, err := access.Update("accounts-key", access.Change{Key: keys[0].ID, Accounts: []string{"grok/me@x.ai"}}); err != nil {
+	if _, err := access.Update("accounts-key", access.Change{Key: keys[0].ID, Accounts: []string{"grok/" + ref}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := provider.SetAccountModels("grok", "me@x.ai", []string{"grok-4"}); err != nil {
+	if err := provider.SetAccountModels("grok", ref, []string{"fake-1"}); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_ = provider.SetAccountModels("grok", "me@x.ai", nil)
+		_ = provider.SetAccountModels("grok", ref, nil)
 	})
 	h := New().Handler()
 	listed := func(secret string) (image, video []string) {
