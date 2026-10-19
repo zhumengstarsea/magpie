@@ -217,7 +217,7 @@ magpie quota                             <span class="c"># acme · Pro · 5h 37%
       <li><b>Updates.</b>
         <ul>
           <li>The community’s packages (<code>@magpie-community/*</code>) update by themselves a little after magpie starts, then every hour.</li>
-          <li>Any other package with a newer version shows a dot on <span class="ui">Plugins</span>, and the user updates it with a click or <code>magpie plugin update</code>.</li>
+          <li>Any other package with a newer version shows a dot on <span class="ui">Plugins</span>, and in the sidebar <span class="ui">Installed</span> reads “1 update”. Plugins then opens on Installed, which names the plugins with a newer version at the top beside <span class="ui">Update all</span>; the user updates them with a click or <code>magpie plugin update</code>.</li>
           <li>A spec pinned to a version (<code>name@1.2.3</code>) stays on it until the user updates it: <span class="ui">Update to …</span>, <span class="ui">Update all</span> and <code>magpie plugin update</code> install the newest version and unpin it.</li>
           <li>A git repository has no version to compare. It shows an update when its branch or tag (the default branch without <code>#ref</code>) is at another commit than the one Bun installed: GitHub is asked through its API, any other host with <code>git ls-remote</code>, at most every ten minutes, and the hourly check asks again. A spec pinned to a commit never has one. The row shows the commit installed.</li>
         </ul></li>
@@ -808,7 +808,10 @@ claude mcp add --transport http magpie-tools http://127.0.0.1:3425/mcp/magpie/to
   <span class="s">"name"</span>: <span class="s">"magpie-usage-glance"</span>,
   <span class="s">"version"</span>: <span class="s">"0.1.0"</span>,
   <span class="s">"magpie"</span>: {
-    <span class="s">"page"</span>: { <span class="s">"title"</span>: <span class="s">"Usage glance"</span>, <span class="s">"file"</span>: <span class="s">"page/index.html"</span>, <span class="s">"icon"</span>: <span class="s">"page/icon.svg"</span> },
+    <span class="s">"page"</span>: {
+      <span class="s">"title"</span>: <span class="s">"Usage glance"</span>, <span class="s">"file"</span>: <span class="s">"page/index.html"</span>, <span class="s">"icon"</span>: <span class="s">"page/icon.svg"</span>,
+      <span class="s">"titles"</span>: { <span class="s">"zh"</span>: <span class="s">"用量速览"</span>, <span class="s">"ja"</span>: <span class="s">"使用量の概要"</span> }
+    },
     <span class="s">"permissions"</span>: [<span class="s">"usage:summary"</span>]
   }
 }</pre>
@@ -831,7 +834,8 @@ document.getElementById(<span class="s">"calls"</span>).textContent = `${s.calls
 <span class="k">const</span> opts = <span class="k">await</span> magpie.options.get()            <span class="c">// this plugin's own options</span>
 <span class="k">await</span> magpie.options.set({ ...opts, hideCost: <span class="k">true</span> })</pre>
     </div>
-    <p>The Plugins page shows the page, and what it may read, on the plugin’s row before it is turned on. <code>page.file</code> and <code>page.icon</code> are paths inside the plugin. The page’s files are what sits in <code>file</code>’s folder; a path out of it, or a link that leads out, isn’t served. A package can be a page and a provider, middleware or an agent too. A plugin that is only a page doesn’t start the plugin host.</p>
+    <p>The Plugins page shows the page, and what it may read, on the plugin’s row before it is turned on. <code>page.file</code> and <code>page.icon</code> are paths inside the plugin. The page’s files are what sits in <code>file</code>’s folder; a path out of it, or a link that leads out, isn’t served. A package can be a page and a provider, middleware or an agent too. A plugin that is only a page doesn’t start the plugin host. <code>page.titles</code> (and a panel’s <code>titles</code>) names the tab in other languages, by language code (<code>zh</code>, <code>zh-TW</code>, <code>ja</code>, <code>de</code>); <code>title</code> is used for any other.</p>
+    <p>What the page leaves unstyled already looks like magpie: the bridge adds a stylesheet for the font, colours, headings, buttons, fields and tables, with no weight (<code>:where()</code>), so any rule of the page’s own wins. Use the <code>--magpie-*</code> variables to match the window in your own styles.</p>
     <h3>What the page can ask</h3>
     <div class="table-wrap"><table>
       <tr><th>Field / call</th><th>What it gives</th></tr>
@@ -849,6 +853,56 @@ document.getElementById(<span class="s">"calls"</span>).textContent = `${s.calls
       <li>An error the page doesn’t catch shows <span class="ui">This page stopped working</span> in its place, with <span class="ui">Try again</span>. Its own scripts’ errors reach it as “Script error.”, so look in the window’s console for the rest.</li>
     </ul>
 
+    <h3 id="panels"><a class="anchor" href="#panels">Panels in magpie’s own pages</a></h3>
+    <p>A plugin can also put panels into the pages magpie draws itself. Each one is a small page of its own in the plugin’s folder, with the same bridge, reads, options and sandbox as a page. It sits in a card under a heading with its title, as tall as it draws.</p>
+    <div class="code">
+      <span class="lang">package.json</span>
+      <button class="copy" data-copy="pn-pkg">Copy</button>
+      <pre id="pn-pkg">{
+  <span class="s">"name"</span>: <span class="s">"magpie-provider-notes"</span>,
+  <span class="s">"version"</span>: <span class="s">"0.1.0"</span>,
+  <span class="s">"magpie"</span>: {
+    <span class="s">"panels"</span>: [
+      { <span class="s">"slot"</span>: <span class="s">"provider"</span>, <span class="s">"file"</span>: <span class="s">"ui/notes.html"</span>, <span class="s">"title"</span>: <span class="s">"Notes"</span> },
+      { <span class="s">"slot"</span>: <span class="s">"usage"</span>, <span class="s">"file"</span>: <span class="s">"ui/spend.html"</span>, <span class="s">"title"</span>: <span class="s">"Top models today"</span> }
+    ],
+    <span class="s">"permissions"</span>: [<span class="s">"usage:summary"</span>]
+  }
+}</pre>
+    </div>
+    <div class="table-wrap"><table>
+      <tr><th><code>slot</code></th><th>Where the panel goes</th><th><code>magpie.context</code></th></tr>
+      <tr><td><code>agents</code></td><td>The end of the Agents page</td><td><code>{}</code></td></tr>
+      <tr><td><code>usage</code></td><td>The end of Usage’s Overview</td><td><code>{}</code></td></tr>
+      <tr><td><code>settings</code></td><td>A <span class="ui">Plugins</span> tab in Settings, there only while a plugin has a panel in it</td><td><code>{}</code></td></tr>
+      <tr><td><code>provider</code></td><td>Each saved provider’s editor</td><td><code>{ provider: { id, name } }</code></td></tr>
+    </table></div>
+    <p>A plugin has at most 8 panels. A panel’s height follows its <code>&lt;html&gt;</code> (up to 2400px), so let the page size itself and don’t give <code>html</code> or <code>body</code> a fixed height. A panel that throws, or doesn’t answer in 10 seconds, shows <span class="ui">{name} stopped working</span> with <span class="ui">Try again</span> in its own place; the page around it and the panels beside it go on.</p>
+    <h3 id="replaces"><a class="anchor" href="#replaces">Taking a built-in page’s place</a></h3>
+    <p>A page can take the place of one of magpie’s own: add <code>"replaces"</code> to <code>magpie.page</code>, one of <code>sessions</code>, <code>library</code>, <code>routing</code> or <code>usage</code>. Its tab then stands where the built-in’s was, and links to that page open the plugin’s. When two plugins ask for the same page, the first in the Plugins list takes it and the other is a page of its own. Turn the plugin off and the built-in page is back as it was.</p>
+    <div class="code">
+      <span class="lang">package.json</span>
+      <button class="copy" data-copy="pg-replaces">Copy</button>
+      <pre id="pg-replaces"><span class="s">"page"</span>: { <span class="s">"title"</span>: <span class="s">"My library"</span>, <span class="s">"file"</span>: <span class="s">"page/index.html"</span>, <span class="s">"replaces"</span>: <span class="s">"library"</span> }</pre>
+    </div>
+    <h3 id="actions"><a class="anchor" href="#actions">Items in magpie’s menus</a></h3>
+    <p>A plugin with a page can add items to the menus of magpie’s rows: a provider’s (right-click it) and an agent’s (its handle, or right-click). They come after magpie’s own, named in the window’s language like a page’s title. Picking one opens the plugin’s page and tells it which item, and the row’s id and name, nothing else of it. The page handles it with <code>magpie.onAction</code>; an item picked before the page gave its handler waits for it.</p>
+    <div class="code">
+      <span class="lang">package.json</span>
+      <button class="copy" data-copy="pg-actions">Copy</button>
+      <pre id="pg-actions"><span class="s">"page"</span>: { <span class="s">"title"</span>: <span class="s">"Balance"</span>, <span class="s">"file"</span>: <span class="s">"page/index.html"</span> },
+<span class="s">"actions"</span>: [
+  { <span class="s">"id"</span>: <span class="s">"check"</span>, <span class="s">"menu"</span>: <span class="s">"provider"</span>, <span class="s">"title"</span>: <span class="s">"Check balance"</span>, <span class="s">"titles"</span>: { <span class="s">"zh"</span>: <span class="s">"查余额"</span> } }
+]</pre>
+    </div>
+    <div class="code">
+      <span class="lang">page/app.js</span>
+      <button class="copy" data-copy="pg-onaction">Copy</button>
+      <pre id="pg-onaction">magpie.onAction(({ id, provider }) =&gt; {
+  <span class="c">// id: "check"; provider: { id, name }</span>
+});</pre>
+    </div>
+    <p><code>menu</code> is <code>provider</code> or <code>agent</code>. An <code>id</code> is lower-case letters, digits and dashes, up to 40. A plugin has at most 8 items, and an item with no <code>title</code> takes its page’s. A plugin without a page adds no items. The Plugins page says which menus a plugin adds to.</p>
     <h2 id="pi"><a class="anchor" href="#pi">pi packages</a></h2>
     <p>magpie also runs <a href="https://github.com/earendil-works/pi">pi</a>’s packages. A pi extension that registers a provider with <code>pi.registerProvider</code> works in magpie as it does in pi, with nothing to change, and is added like any plugin (<code>magpie plugin add pi-antigravity</code>).</p>
     <ul>

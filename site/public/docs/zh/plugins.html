@@ -217,7 +217,7 @@ magpie quota                             <span class="c"># acme · Pro · 5h 37%
       <li><b>更新。</b>
         <ul>
           <li>社区的包（<code>@magpie-community/*</code>）在 magpie 启动后不久自动更新，之后每小时一次。</li>
-          <li>其他包有新版本时，<span class="ui">插件</span>上会出现一个小圆点，用户点一下或运行 <code>magpie plugin update</code> 更新。</li>
+          <li>其他包有新版本时，<span class="ui">插件</span>上会出现一个小圆点，侧栏里的<span class="ui">已安装</span>显示“1 个更新”。这时打开插件会直接到已安装，顶部列出有新版本的插件和<span class="ui">全部更新</span>；用户点一下或运行 <code>magpie plugin update</code> 更新。</li>
           <li>固定了版本的写法（<code>name@1.2.3</code>）会停在那个版本，直到用户自己更新：<span class="ui">更新到 …</span>、<span class="ui">全部更新</span>和 <code>magpie plugin update</code> 会装上最新版并取消固定。</li>
           <li>git 仓库没有版本号可比。它的分支或标签（不写 <code>#ref</code> 时是默认分支）指向的提交和 Bun 装的那个不一样时，才显示有更新：GitHub 上的通过 GitHub API 查询，其他主机用 <code>git ls-remote</code>，最多每十分钟问一次，每小时的检查也会再问。固定到某个提交的写法不会有更新。这一行会显示已安装的提交。</li>
         </ul></li>
@@ -808,7 +808,10 @@ claude mcp add --transport http magpie-tools http://127.0.0.1:3425/mcp/magpie/to
   <span class="s">"name"</span>: <span class="s">"magpie-usage-glance"</span>,
   <span class="s">"version"</span>: <span class="s">"0.1.0"</span>,
   <span class="s">"magpie"</span>: {
-    <span class="s">"page"</span>: { <span class="s">"title"</span>: <span class="s">"Usage glance"</span>, <span class="s">"file"</span>: <span class="s">"page/index.html"</span>, <span class="s">"icon"</span>: <span class="s">"page/icon.svg"</span> },
+    <span class="s">"page"</span>: {
+      <span class="s">"title"</span>: <span class="s">"Usage glance"</span>, <span class="s">"file"</span>: <span class="s">"page/index.html"</span>, <span class="s">"icon"</span>: <span class="s">"page/icon.svg"</span>,
+      <span class="s">"titles"</span>: { <span class="s">"zh"</span>: <span class="s">"用量速览"</span>, <span class="s">"ja"</span>: <span class="s">"使用量の概要"</span> }
+    },
     <span class="s">"permissions"</span>: [<span class="s">"usage:summary"</span>]
   }
 }</pre>
@@ -831,7 +834,8 @@ document.getElementById(<span class="s">"calls"</span>).textContent = `${s.calls
 <span class="k">const</span> opts = <span class="k">await</span> magpie.options.get()            <span class="c">// this plugin's own options</span>
 <span class="k">await</span> magpie.options.set({ ...opts, hideCost: <span class="k">true</span> })</pre>
     </div>
-    <p>插件打开之前，插件页面就会在它的那一行显示这个页面和它能读什么。<code>page.file</code> 和 <code>page.icon</code> 是插件里面的路径；页面的文件就是 <code>file</code> 所在文件夹里的文件，指向外面的路径或链接不会被提供。一个包可以同时是页面、供应商、中间件或 agent。只有页面的插件不会启动插件宿主。</p>
+    <p>插件打开之前，插件页面就会在它的那一行显示这个页面和它能读什么。<code>page.file</code> 和 <code>page.icon</code> 是插件里面的路径；页面的文件就是 <code>file</code> 所在文件夹里的文件，指向外面的路径或链接不会被提供。一个包可以同时是页面、供应商、中间件或 agent。只有页面的插件不会启动插件宿主。<code>page.titles</code>（以及面板的 <code>titles</code>）按语言代码（<code>zh</code>、<code>zh-TW</code>、<code>ja</code>、<code>de</code>）给出其他语言里的标签名，其余语言用 <code>title</code>。</p>
+    <p>页面没写样式的地方本来就是 magpie 的样子：bridge 会加一份样式表，管字体、颜色、标题、按钮、输入框和表格，权重为零（<code>:where()</code>），页面自己的任何规则都会盖过它。自己写样式时，用 <code>--magpie-*</code> 变量和窗口保持一致。</p>
     <h3>页面能请求什么</h3>
     <div class="table-wrap"><table>
       <tr><th>字段 / 调用</th><th>给出什么</th></tr>
@@ -849,6 +853,56 @@ document.getElementById(<span class="s">"calls"</span>).textContent = `${s.calls
       <li>页面没接住的错误会在它的位置显示<span class="ui">此页面已停止工作</span>和<span class="ui">重试</span>。它自己脚本的错误在页面里只显示为“Script error.”，详细内容看窗口的控制台。</li>
     </ul>
 
+    <h3 id="panels"><a class="anchor" href="#panels">放进 magpie 自己页面里的面板</a></h3>
+    <p>插件还可以往 magpie 自己画的页面里加面板。每个面板是插件文件夹里的一个小页面，桥接脚本、读取、选项和沙盒都跟页面一样。它放在一张卡片里，上面是它的标题，高度随它画出来的内容。</p>
+    <div class="code">
+      <span class="lang">package.json</span>
+      <button class="copy" data-copy="pn-pkg">复制</button>
+      <pre id="pn-pkg">{
+  <span class="s">"name"</span>: <span class="s">"magpie-provider-notes"</span>,
+  <span class="s">"version"</span>: <span class="s">"0.1.0"</span>,
+  <span class="s">"magpie"</span>: {
+    <span class="s">"panels"</span>: [
+      { <span class="s">"slot"</span>: <span class="s">"provider"</span>, <span class="s">"file"</span>: <span class="s">"ui/notes.html"</span>, <span class="s">"title"</span>: <span class="s">"Notes"</span> },
+      { <span class="s">"slot"</span>: <span class="s">"usage"</span>, <span class="s">"file"</span>: <span class="s">"ui/spend.html"</span>, <span class="s">"title"</span>: <span class="s">"Top models today"</span> }
+    ],
+    <span class="s">"permissions"</span>: [<span class="s">"usage:summary"</span>]
+  }
+}</pre>
+    </div>
+    <div class="table-wrap"><table>
+      <tr><th><code>slot</code></th><th>面板放在哪里</th><th><code>magpie.context</code></th></tr>
+      <tr><td><code>agents</code></td><td>「Agent」页面的末尾</td><td><code>{}</code></td></tr>
+      <tr><td><code>usage</code></td><td>用量「概览」的末尾</td><td><code>{}</code></td></tr>
+      <tr><td><code>settings</code></td><td>设置里的「<span class="ui">插件</span>」标签页，有插件在这里放了面板时才出现</td><td><code>{}</code></td></tr>
+      <tr><td><code>provider</code></td><td>每个已保存 Provider 的编辑页</td><td><code>{ provider: { id, name } }</code></td></tr>
+    </table></div>
+    <p>一个插件最多 8 个面板。面板的高度跟随它的 <code>&lt;html&gt;</code>（最高 2400px），所以让页面自己决定高度，不要给 <code>html</code> 或 <code>body</code> 固定高度。面板出错，或 10 秒内没有应答，就在它自己的位置显示「<span class="ui">{name} 已停止工作</span>」和「<span class="ui">重试</span>」；所在的页面和旁边的面板照常运行。</p>
+    <h3 id="replaces"><a class="anchor" href="#replaces">替代一个内置页面</a></h3>
+    <p>页面可以替代 magpie 自己的某个页面：在 <code>magpie.page</code> 里加上 <code>"replaces"</code>，取 <code>sessions</code>、<code>library</code>、<code>routing</code> 或 <code>usage</code> 之一。它的标签就出现在内置页面原来的位置，指向那个页面的链接都会打开插件的页面。两个插件要替代同一个页面时，插件列表里排在前面的那个替代，另一个作为独立页面。关掉插件，内置页面就原样回来。</p>
+    <div class="code">
+      <span class="lang">package.json</span>
+      <button class="copy" data-copy="pg-replaces">复制</button>
+      <pre id="pg-replaces"><span class="s">"page"</span>: { <span class="s">"title"</span>: <span class="s">"My library"</span>, <span class="s">"file"</span>: <span class="s">"page/index.html"</span>, <span class="s">"replaces"</span>: <span class="s">"library"</span> }</pre>
+    </div>
+    <h3 id="actions"><a class="anchor" href="#actions">magpie 菜单里的菜单项</a></h3>
+    <p>有页面的插件可以往 magpie 行的菜单里加菜单项：供应商的（右键点它）和 Agent 的（点它的拖动柄，或右键）。它们排在 magpie 自己的菜单项之后，跟页面标题一样按窗口的语言显示。点一个菜单项会打开插件的页面，并告诉它点的是哪一项，以及那一行的 id 和名字，别的都不给。页面用 <code>magpie.onAction</code> 处理；页面还没注册处理函数时点的菜单项会等它注册后再送到。</p>
+    <div class="code">
+      <span class="lang">package.json</span>
+      <button class="copy" data-copy="pg-actions">复制</button>
+      <pre id="pg-actions"><span class="s">"page"</span>: { <span class="s">"title"</span>: <span class="s">"Balance"</span>, <span class="s">"file"</span>: <span class="s">"page/index.html"</span> },
+<span class="s">"actions"</span>: [
+  { <span class="s">"id"</span>: <span class="s">"check"</span>, <span class="s">"menu"</span>: <span class="s">"provider"</span>, <span class="s">"title"</span>: <span class="s">"Check balance"</span>, <span class="s">"titles"</span>: { <span class="s">"zh"</span>: <span class="s">"查余额"</span> } }
+]</pre>
+    </div>
+    <div class="code">
+      <span class="lang">page/app.js</span>
+      <button class="copy" data-copy="pg-onaction">复制</button>
+      <pre id="pg-onaction">magpie.onAction(({ id, provider }) =&gt; {
+  <span class="c">// id: "check"; provider: { id, name }</span>
+});</pre>
+    </div>
+    <p><code>menu</code> 是 <code>provider</code> 或 <code>agent</code>。<code>id</code> 由小写字母、数字和短横线组成，最长 40 个字符。一个插件最多 8 个菜单项，没写 <code>title</code> 的用它页面的标题。没有页面的插件不加菜单项。「插件」页面会写出插件往哪些菜单里加了菜单项。</p>
     <h2 id="pi"><a class="anchor" href="#pi">pi 扩展包</a></h2>
     <p>magpie 也运行 <a href="https://github.com/earendil-works/pi">pi</a> 的扩展包。用 <code>pi.registerProvider</code> 注册了供应商的 pi 扩展，在 magpie 里和在 pi 里一样工作，不用改任何东西，添加方式和其他插件相同（<code>magpie plugin add pi-antigravity</code>）。</p>
     <ul>

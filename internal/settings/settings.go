@@ -303,6 +303,11 @@ type Settings struct {
 	// "off" turns the video a request that names no model gets off too
 	// (gateway.videomaker).
 	ImageGen string `json:"imageGen,omitempty"`
+	// ImageTimeout is how long, in minutes, a vendor is given to draw an
+	// image and send it (neighbads on X: a slow image endpoint needs more
+	// than 5): from 1 to ImageTimeoutMost, 0 for ImageTimeoutDefault.
+	// ImageWait reads it.
+	ImageTimeout int `json:"imageTimeout,omitempty"`
 	// Searcher is the provider that searches the web for a model that
 	// can't: "<provider>" with the small model magpie picks of it,
 	// "<provider>/<model>", or empty for the one magpie picks
@@ -818,6 +823,25 @@ func Arrange[T any](s Settings, items []T, id func(T) string) (shown, hidden []T
 	return shown, hidden
 }
 
+// ImageTimeoutDefault is the minutes an image is given to be drawn when
+// ImageTimeout is 0, and ImageTimeoutMost the most it can be set to.
+const (
+	ImageTimeoutDefault = 5
+	ImageTimeoutMost    = 60
+)
+
+// ImageWait is how long a vendor is given to draw an image and send it:
+// ImageTimeout's minutes, ImageTimeoutDefault's when it is 0 (or below),
+// and no more than ImageTimeoutMost's when settings.json was written by
+// hand past it.
+func (s Settings) ImageWait() time.Duration {
+	m := s.ImageTimeout
+	if m < 1 {
+		m = ImageTimeoutDefault
+	}
+	return time.Duration(min(m, ImageTimeoutMost)) * time.Minute
+}
+
 // Themes and Langs are the accepted values, in the order the UI offers them.
 var (
 	Themes     = []string{"system", "light", "dark"}
@@ -1224,6 +1248,9 @@ func save(s Settings, recording bool) error {
 		if u, err := url.Parse(m); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
 			return fmt.Errorf("an update mirror is an http(s) address put before the github.com URL, like https://mirror.example/, not %q", m)
 		}
+	}
+	if s.ImageTimeout < 0 || s.ImageTimeout > ImageTimeoutMost {
+		return fmt.Errorf("image generation is given from 1 to %d minutes, or 0 for %d, not %d", ImageTimeoutMost, ImageTimeoutDefault, s.ImageTimeout)
 	}
 	if s.UsageAlert < 0 || s.UsageAlert > 100 {
 		return fmt.Errorf("a usage alert is at a percentage from 1 to 100, or 0 for off, not %d", s.UsageAlert)

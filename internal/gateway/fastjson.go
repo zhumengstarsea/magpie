@@ -6,9 +6,11 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"hash/maphash"
 	"reflect"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -36,7 +38,16 @@ import (
 // of its own (a slice's old elements are decoded over, not replaced).
 func decodeJSON(data []byte, dst any) error {
 	v := reflect.ValueOf(dst)
-	if v.Kind() != reflect.Pointer || v.IsNil() || !v.Elem().IsZero() || !jsonValid(data) {
+	if v.Kind() != reflect.Pointer || v.IsNil() || !v.Elem().IsZero() {
+		return json.Unmarshal(data, dst)
+	}
+	var members []memberSpan
+	if len(data) >= validMemoMin {
+		var valid bool
+		if valid, members = longBody(data); !valid {
+			return json.Unmarshal(data, dst)
+		}
+	} else if !jsonCheck(data) {
 		return json.Unmarshal(data, dst)
 	}
 	start := skipJSONSpace(data, 0)
@@ -47,7 +58,7 @@ func decodeJSON(data []byte, dst any) error {
 		// of the value's opening and its close.
 		return json.Unmarshal(append(data[:start+1:start+1], close), dst)
 	}
-	if err := fillJSON(trimJSON(data), v.Elem()); err != nil {
+	if err := fillJSONIn(trimJSON(data), v.Elem(), members); err != nil {
 		v.Elem().SetZero()
 		return json.Unmarshal(data, dst)
 	}
@@ -168,7 +179,11 @@ func (f *fastFields) field(key []byte) int {
 
 // fillJSON decodes raw, a whole valid JSON value, into v; errSlowJSON or
 // another error leaves it to encoding/json.
-func fillJSON(raw []byte, v reflect.Value) error {
+func fillJSON(raw []byte, v reflect.Value) error { return fillJSONIn(raw, v, nil) }
+
+// fillJSONIn is fillJSON with where raw's members are, when known
+// (longBody): a struct or map at raw's top is filled from them.
+func fillJSONIn(raw []byte, v reflect.Value, members []memberSpan) error {
 	t := v.Type()
 	if t == rawMessageType {
 		v.SetBytes(bytes.Clone(raw)) // a copy, as encoding/json makes
@@ -191,7 +206,7 @@ func fillJSON(raw []byte, v reflect.Value) error {
 		if v.IsNil() {
 			v.Set(reflect.New(t.Elem()))
 		}
-		return fillJSON(raw, v.Elem())
+		return fillJSONIn(raw, v.Elem(), members)
 	case reflect.String:
 		if null {
 			return nil
@@ -229,7 +244,7 @@ func fillJSON(raw []byte, v reflect.Value) error {
 		}
 		var seen []bool
 		var err error
-		eachMember(raw, func(key, val []byte) bool {
+		eachMemberIn(raw, members, func(key, val []byte) bool {
 			name, ok := unquoteJSON(key)
 			if !ok {
 				err = errSlowJSON
@@ -290,7 +305,7 @@ func fillJSON(raw []byte, v reflect.Value) error {
 			v.Set(reflect.MakeMap(t))
 		}
 		var err error
-		eachMember(raw, func(key, val []byte) bool {
+		eachMemberIn(raw, members, func(key, val []byte) bool {
 			name, ok := unquoteJSON(key)
 			if !ok {
 				err = errSlowJSON
@@ -351,6 +366,29 @@ func trimJSON(data []byte) []byte {
 // eachMember calls f with each member of obj, a valid JSON object, its key
 // still quoted, until f returns false.
 func eachMember(obj []byte, f func(key, val []byte) bool) {
+	eachMemberAt(obj, func(k0, k1, v0, v1 int) bool { return f(obj[k0:k1], obj[v0:v1:v1]) })
+}
+
+// eachMemberIn is eachMember, from where its members are when known
+// (longBody), else by splitting obj.
+func eachMemberIn(obj []byte, members []memberSpan, f func(key, val []byte) bool) {
+	if members == nil {
+		if h := topSplit.Load(); h != nil && len(obj) >= validMemoMin {
+			(*h)(obj)
+		}
+		eachMember(obj, f)
+		return
+	}
+	for _, m := range members {
+		if !f(obj[m.k0:m.k1], obj[m.v0:m.v1:m.v1]) {
+			return
+		}
+	}
+}
+
+// eachMemberAt is eachMember by offsets: the key at [k0, k1), the value
+// at [v0, v1).
+func eachMemberAt(obj []byte, f func(k0, k1, v0, v1 int) bool) {
 	i := skipJSONSpace(obj, 1)
 	if obj[i] == '}' {
 		return
@@ -358,12 +396,12 @@ func eachMember(obj []byte, f func(key, val []byte) bool) {
 	for {
 		k := i
 		i = skipJSONString(obj, i)
-		key := obj[k:i]
+		k1 := i
 		i = skipJSONSpace(obj, i)
 		i = skipJSONSpace(obj, i+1) // ':'
 		s := i
 		i = skipJSONValue(obj, i)
-		if !f(key, obj[s:i:i]) {
+		if !f(k, k1, s, i) {
 			return
 		}
 		i = skipJSONSpace(obj, i)
@@ -562,9 +600,122 @@ func hex4(s []byte) rune {
 // jsonMaxDepth is encoding/json's maxNestingDepth.
 const jsonMaxDepth = 10000
 
+// validMemoMin is the size from which jsonValid remembers what it found
+// valid. A request body is decoded a dozen times or more on its way
+// (modelOf, parse, the prompt, the conversation, the effort, the images…),
+// and each decodeJSON checked all of it again: ~2.5ms a time at 2 MB, a
+// fifth of the CPU of serving it.
+const validMemoMin = 32 << 10
+
+// validMemo is the last bodies found valid, by length and a hash under a
+// seed of this process's own.
+var validMemo struct {
+	sync.Mutex
+	sums [8]validEntry
+	next int
+}
+
+type validSum struct {
+	n   int
+	sum uint64
+}
+
+// validEntry is a body remembered valid, and where its top level's
+// members are, once a decode has split it (nil before, and for a body not
+// an object).
+type validEntry struct {
+	validSum
+	members []memberSpan
+}
+
+// memberSpan is a member of a body's top-level object: its key, quoted,
+// at [k0, k1) and its value at [v0, v1), of the body trimmed (trimJSON).
+type memberSpan struct{ k0, k1, v0, v1 int }
+
+// topSplit, when set (tests), is told of each object of validMemoMin or
+// more that decodeJSON splits at its members.
+var topSplit atomic.Pointer[func(data []byte)]
+
+// longBody is what decodeJSON knows of a body of validMemoMin or more:
+// valid or not, and where its top level's members are. The members are
+// remembered with the body, as its validity is: a request's body was split
+// at its top level again by each of the dozen decodes it went through,
+// each a walk over every byte of the conversation.
+func longBody(data []byte) (valid bool, members []memberSpan) {
+	s := validSum{len(data), maphash.Bytes(validSeed, data)}
+	validMemo.Lock()
+	i := slices.IndexFunc(validMemo.sums[:], func(e validEntry) bool { return e.validSum == s })
+	if i >= 0 && validMemo.sums[i].members != nil {
+		members = validMemo.sums[i].members
+		validMemo.Unlock()
+		return true, members
+	}
+	validMemo.Unlock()
+	if i < 0 {
+		if f := validScanned.Load(); f != nil {
+			(*f)(data)
+		}
+		if !jsonCheck(data) {
+			return false, nil
+		}
+	}
+	raw := trimJSON(data)
+	if raw[0] == '{' {
+		if f := topSplit.Load(); f != nil {
+			(*f)(data)
+		}
+		members = []memberSpan{}
+		eachMemberAt(raw, func(k0, k1, v0, v1 int) bool {
+			members = append(members, memberSpan{k0, k1, v0, v1})
+			return true
+		})
+	}
+	validMemo.Lock()
+	if i = slices.IndexFunc(validMemo.sums[:], func(e validEntry) bool { return e.validSum == s }); i >= 0 {
+		validMemo.sums[i].members = members
+	} else {
+		validMemo.sums[validMemo.next] = validEntry{s, members}
+		validMemo.next = (validMemo.next + 1) % len(validMemo.sums)
+	}
+	validMemo.Unlock()
+	return true, members
+}
+
+var validSeed = maphash.MakeSeed()
+
+// validScanned, when set (tests), is told of each body of validMemoMin or
+// more that jsonValid checks byte by byte.
+var validScanned atomic.Pointer[func(data []byte)]
+
 // jsonValid is json.Valid, without stepping through each byte by a call:
 // the grammar, and the depth past which encoding/json gives up, are its.
+// A long body found valid is remembered, and not checked again.
 func jsonValid(data []byte) bool {
+	if len(data) < validMemoMin {
+		return jsonCheck(data)
+	}
+	s := validSum{len(data), maphash.Bytes(validSeed, data)}
+	validMemo.Lock()
+	known := slices.ContainsFunc(validMemo.sums[:], func(e validEntry) bool { return e.validSum == s })
+	validMemo.Unlock()
+	if known {
+		return true
+	}
+	if f := validScanned.Load(); f != nil {
+		(*f)(data)
+	}
+	if !jsonCheck(data) {
+		return false
+	}
+	validMemo.Lock()
+	validMemo.sums[validMemo.next] = validEntry{validSum: s}
+	validMemo.next = (validMemo.next + 1) % len(validMemo.sums)
+	validMemo.Unlock()
+	return true
+}
+
+// jsonCheck is jsonValid's check itself.
+func jsonCheck(data []byte) bool {
 	i := skipJSONSpace(data, 0)
 	i, ok := validJSONValue(data, i, 0)
 	return ok && skipJSONSpace(data, i) == len(data)

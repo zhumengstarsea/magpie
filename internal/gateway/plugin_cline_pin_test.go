@@ -12,10 +12,12 @@ import (
 
 // The Cline plugin's provider has ClinePass's Upstream tick too (ARNO on
 // Discord): saved on it, a DeepSeek model's request reaches the plugin
-// pinned to DeepSeek's own API, on Chat and Anthropic Messages alike, and
-// its other models' requests go as sent.
-func TestClinePluginPinsDeepSeek(t *testing.T) {
+// pinned to DeepSeek's own API and a GLM model's to Z.ai's (sdytman on
+// Discord), on Chat and Anthropic Messages alike, and its other models'
+// requests go as sent.
+func TestClinePluginPinsDeepSeekAndGLM(t *testing.T) {
 	t.Setenv("FAKE_DEEPSEEK", "1")
+	t.Setenv("FAKE_GLM", "1")
 	var mu sync.Mutex
 	var sent []map[string]any
 	pid := besideFake(t, "cline", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -37,8 +39,8 @@ func TestClinePluginPinsDeepSeek(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !p.ClinePinnable() || p.ClinePin("deepseek-v4-pro") != "" {
-		t.Fatalf("the Cline plugin's provider: pinnable %v, pinned unasked %q", p.ClinePinnable(), p.ClinePin("deepseek-v4-pro"))
+	if !p.ClinePinnable() || p.ClinePin("deepseek-v4-pro") != "" || p.ClinePin("glm-5.3") != "" {
+		t.Fatalf("the Cline plugin's provider: pinnable %v, pinned unasked %q %q", p.ClinePinnable(), p.ClinePin("deepseek-v4-pro"), p.ClinePin("glm-5.3"))
 	}
 	ask := func() []map[string]any {
 		mu.Lock()
@@ -47,13 +49,15 @@ func TestClinePluginPinsDeepSeek(t *testing.T) {
 		for _, req := range []struct{ path, body string }{
 			{"/v1/chat/completions", `{"model":"` + pid + `/deepseek-v4-pro","messages":[{"role":"user","content":"hi"}]}`},
 			{"/v1/messages", `{"model":"` + pid + `/deepseek-v4-pro","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}`},
+			{"/v1/chat/completions", `{"model":"` + pid + `/glm-5.3","messages":[{"role":"user","content":"hi"}]}`},
+			{"/v1/messages", `{"model":"` + pid + `/glm-5.3","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}`},
 			{"/v1/chat/completions", `{"model":"` + pid + `/fake-1","messages":[{"role":"user","content":"hi"}]}`},
 		} {
 			postProto(t, New(), req.path, req.body)
 		}
 		mu.Lock()
 		defer mu.Unlock()
-		if len(sent) != 3 {
+		if len(sent) != 5 {
 			t.Fatalf("the plugin sent %d requests", len(sent))
 		}
 		return append([]map[string]any(nil), sent...)
@@ -73,13 +77,17 @@ func TestClinePluginPinsDeepSeek(t *testing.T) {
 		t.Fatalf("the tick wasn't kept: %+v, %v", p, err)
 	}
 	got := ask()
-	for i, q := range got[:2] {
+	for i, q := range got[:4] {
+		want := `{"gateway":{"only":["deepseek"]}}`
+		if i >= 2 {
+			want = `{"gateway":{"only":["zai"]}}`
+		}
 		po, _ := json.Marshal(q["providerOptions"])
-		if string(po) != `{"gateway":{"only":["deepseek"]}}` {
-			t.Fatalf("request %d (DeepSeek) reached the plugin with providerOptions %s", i, po)
+		if string(po) != want {
+			t.Fatalf("request %d reached the plugin with providerOptions %s, want %s", i, po, want)
 		}
 	}
-	if got[2]["providerOptions"] != nil {
-		t.Fatalf("fake-1 pinned: %v", got[2]["providerOptions"])
+	if got[4]["providerOptions"] != nil {
+		t.Fatalf("fake-1 pinned: %v", got[4]["providerOptions"])
 	}
 }

@@ -1,121 +1,577 @@
-name: Release
+name: 发布与同步
+run-name: 同步上游 ${{ inputs.version && format('v{0}', inputs.version) || (github.ref_type == 'tag' && github.ref_name) || '最新版本' }}
 
-# Pushing a v* tag hands off to yetone/magpie-releases, which builds, signs,
-# notarises and publishes magpie there; that repo is where people download
-# from, and the signing secrets live only there. Once its release has every
-# asset, the same release is copied here, so this repo's Releases page has
-# the installers too (PapainTea on X). Self-update, install.sh and the site
-# still read magpie-releases only.
-
+# Build and publish this fork in this repository. Platform build/signing steps
+# follow yetone/magpie-releases (39fe4324c9d00a29531ff605f8d862f79f0d5565).
+# macOS Developer ID signing and notarisation remain optional.
 on:
+  schedule:
+    # Beijing: 00:00, 06:00, 12:00, 18:00 (UTC+8).
+    - cron: '0 4,10,16,22 * * *'
   push:
-    tags:
-      - 'v*'
+    tags: ['v*']
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Version to release (e.g., 0.1.0 — no v prefix; the v tag must exist)'
-        required: true
+      ref:
+        description: '源码标签、分支或提交；留空使用所选分支'
+        required: false
         type: string
+      version:
+        description: '留空检查并同步上游；填写 X.Y.Z 则直接构建指定版本'
+        required: false
+        type: string
+      publish:
+        description: '发布到本仓库；关闭时只生成构建附件'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
 
 jobs:
-  trigger-release:
+  scan:
+    name: 扫描并同步上游
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.version == '')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: write
+    outputs:
+      ref: ${{ steps.sync.outputs.ref }}
+      version: ${{ steps.sync.outputs.version }}
+      build: ${{ steps.sync.outputs.build }}
+    env:
+      GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
+      SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+      GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+      GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+      TARGET_BRANCH: master
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          ref: master
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
+          fetch-depth: 0
+          fetch-tags: false
+      - name: 同步上游对应分支
+        id: branches
+        run: bash scripts/sync-upstream-branches.sh
+      - name: 检查并同步上游发布
+        id: sync
+        run: |
+          export GNUPGHOME="$RUNNER_TEMP/release-gnupg"
+          bash scripts/sync-upstream.sh
+      - name: 清理无更新及过期检查记录
+        run: bash scripts/cleanup-actions-runs.sh
+      - name: 未发现上游更新
+        if: steps.sync.outputs.result == 'no-update' && steps.branches.outputs.changed != 'true'
+        run: echo "未发现上游新版本，本次成功检查记录将在后续扫描中清理。"
+      - name: 清理临时 GPG 密钥
+        if: always()
+        run: |
+          GNUPGHOME="$RUNNER_TEMP/release-gnupg" gpgconf --kill all || true
+          rm -rf "$RUNNER_TEMP/release-gnupg" "$RUNNER_TEMP/release-gpg"
+
+  prepare:
+    name: 准备版本与源码
+    needs: scan
+    if: ${{ !cancelled() && (needs.scan.result == 'skipped' || (needs.scan.result == 'success' && needs.scan.outputs.build == 'true')) }}
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.version.outputs.version }}
-      ref: ${{ steps.version.outputs.ref }}
-
+      ref: ${{ steps.release.outputs.ref }}
+      version: ${{ steps.release.outputs.version }}
+      publish: ${{ steps.release.outputs.publish }}
     steps:
-      - name: Get version
-        id: version
-        env:
-          INPUT_VERSION: ${{ github.event.inputs.version }}
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            REF="$GITHUB_REF_NAME"
-            VERSION="${REF#v}"
-          else
-            VERSION="$INPUT_VERSION"
-            REF="v$INPUT_VERSION"
-          fi
-          # a newline or quote would add outputs or break the JSON below
-          [[ "$VERSION" =~ ^[0-9][0-9A-Za-z.+-]*$ ]] || { echo "bad version: $VERSION" >&2; exit 1; }
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "ref=$REF" >> $GITHUB_OUTPUT
-          echo "Triggering release for version: $VERSION (ref: $REF)"
-
-      - name: Trigger release workflow in magpie-releases
-        uses: peter-evans/repository-dispatch@v3
+      - name: 检出源码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
-          # PAT with contents write on yetone/magpie-releases.
-          token: ${{ secrets.RELEASES_REPO_TOKEN }}
-          repository: yetone/magpie-releases
-          event-type: release
-          client-payload: '{"ref": "${{ steps.version.outputs.ref }}", "version": "${{ steps.version.outputs.version }}"}'
-
-      - name: Output status
-        run: echo "Watch the build at https://github.com/yetone/magpie-releases/actions"
-
-  mirror-release:
-    needs: trigger-release
-    runs-on: ubuntu-latest
-    timeout-minutes: 75
-    permissions:
-      contents: write
-      issues: write # to say a release went out without Chinese notes
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      REF: ${{ needs.trigger-release.outputs.ref }}
-      ASSETS: 16 # what every release carries; a smaller count is still uploading
-    steps:
-      - name: Wait for magpie-releases to publish every asset
-        run: |
-          for i in $(seq 1 120); do
-            n=$(gh release view "$REF" -R yetone/magpie-releases --json assets -q '.assets | length' 2>/dev/null || echo 0)
-            echo "attempt $i: $n of $ASSETS assets"
-            [ "$n" -ge "$ASSETS" ] && exit 0
-            sleep 30
-          done
-          echo "magpie-releases never published $REF with $ASSETS assets" >&2
-          exit 1
-
-      - name: Copy the release here
+          ref: ${{ needs.scan.outputs.ref || inputs.ref || github.ref }}
+          fetch-depth: 0
+      - name: 解析源码与版本号
+        id: release
+        env:
+          INPUT_VERSION: ${{ needs.scan.outputs.version || inputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
+          PUBLISH: ${{ github.event_name != 'workflow_dispatch' || inputs.publish }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p dist
-          gh release download "$REF" -R yetone/magpie-releases -D dist
-          gh release view "$REF" -R yetone/magpie-releases --json body -q .body > notes.md
-          printf '\n\n---\nThe same release, and the feed magpie updates from: https://github.com/yetone/magpie-releases/releases/tag/%s\n' "$REF" >> notes.md
-          if gh release view "$REF" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit "$REF" -R "$GITHUB_REPOSITORY" --notes-file notes.md
-            gh release upload "$REF" dist/* -R "$GITHUB_REPOSITORY" --clobber
-          else
-            gh release create "$REF" dist/* -R "$GITHUB_REPOSITORY" --verify-tag --title "magpie $REF" --notes-file notes.md
+          VERSION="$INPUT_VERSION"
+          if [ "$EVENT_NAME" = push ]; then VERSION="${GITHUB_REF_NAME#v}"; fi
+          [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
+            echo "::error::Version must be X.Y.Z, without a prefix or suffix"; exit 1;
+          }
+          REF=$(git rev-parse HEAD)
+          if [ "$PUBLISH" = true ]; then
+            TAG="v$VERSION"
+            if git show-ref --verify --quiet "refs/tags/$TAG"; then
+              [ "$(git rev-parse "$TAG^{commit}")" = "$REF" ] || {
+                echo "::error::$TAG already points to different source; choose a new version"; exit 1;
+              }
+            fi
+            gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$RUNNER_TEMP/releases.json"
+            if jq -e --arg tag "$TAG" '.[] | select(.tag_name == $tag and .draft == false)' "$RUNNER_TEMP/releases.json" >/dev/null; then
+              echo "::error::$TAG is already public; choose a new version"; exit 1
+            fi
+            LATEST=$(jq -r '[.[] | select(.draft == false and .prerelease == false)][0].tag_name // empty' "$RUNNER_TEMP/releases.json")
+            if [ -n "$LATEST" ]; then
+              NEWEST=$(printf '%s\n' "${LATEST#v}" "$VERSION" | sort -V | tail -1)
+              [ "$NEWEST" = "$VERSION" ] && [ "${LATEST#v}" != "$VERSION" ] || {
+                echo "::error::Choose a version newer than $LATEST"; exit 1;
+              }
+            fi
           fi
-          n=$(gh release view "$REF" -R "$GITHUB_REPOSITORY" --json assets -q '.assets | length')
-          echo "$REF has $n assets here"
-          [ "$n" -ge "$ASSETS" ]
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
+          echo "Building $GITHUB_REPOSITORY at $REF as $VERSION"
 
-      # The Chinese notes are written by magpie-releases' DeepSeek call, and
-      # when that call fails the release goes out in English alone: a spent
-      # balance did so for v0.1.1233 to v0.1.1242, and Chinese apps showed
-      # English for a day until a user said so (#2122). Its warning is in a
-      # log nobody reads, so a release without them is said here, on one
-      # open issue, where the notes get added by hand.
-      - name: Say when the notes have no Chinese
+  mac:
+    name: 构建 macOS（${{ matrix.arch }}）
+    needs: prepare
+    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            arch: arm64
+          - os: macos-15-intel
+            arch: amd64
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: 检出 magpie 源码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+
+      - name: 配置 Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: 检查 macOS 签名配置
+        id: signing
         env:
-          GH_REPO: ${{ github.repository }}
+          P12: ${{ secrets.MAC_CERTIFICATE_P12 }}
         run: |
-          set -uo pipefail
-          if grep -qF '<!-- lang:zh -->' notes.md; then
-            echo "$REF has Chinese notes"
+          if [ -n "$P12" ]; then
+            echo "enabled=true" >> $GITHUB_OUTPUT
+          else
+            echo "enabled=false" >> $GITHUB_OUTPUT
+            echo "::warning::MAC_CERTIFICATE_P12 not set — the mac build will be ad-hoc signed and not notarised."
+          fi
+
+      - name: 导入 macOS 签名证书
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          CERTIFICATE_P12: ${{ secrets.MAC_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          echo "$CERTIFICATE_P12" | base64 --decode > $RUNNER_TEMP/certificate.p12
+          security import $RUNNER_TEMP/certificate.p12 -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain-db
+          rm -f $RUNNER_TEMP/certificate.p12
+
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | awk -F'"' '/Developer ID Application/ {print $2; exit}')
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::No 'Developer ID Application' identity in MAC_CERTIFICATE_P12"
+            security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+            exit 1
+          fi
+          echo "Signing as: $IDENTITY"
+          echo "IDENTITY=$IDENTITY" >> $GITHUB_ENV
+
+      - name: 构建 macOS 应用
+        run: make app VERSION="$VERSION"
+
+      - name: 签名 macOS 应用
+        run: |
+          if [ -n "$IDENTITY" ]; then
+            codesign --force --options runtime --timestamp --sign "$IDENTITY" magpie.app
+          else
+            codesign --force --sign - magpie.app
+          fi
+          codesign --verify --strict --verbose=2 magpie.app
+          codesign -dv --verbose=2 magpie.app 2>&1 | grep -E 'Authority|TeamIdentifier|flags|Identifier'
+
+      - name: 打包 DMG 安装镜像
+        run: |
+          DMG=magpie-darwin-${{ matrix.arch }}.dmg
+          mkdir -p $RUNNER_TEMP/dmg
+          cp -R magpie.app $RUNNER_TEMP/dmg/
+          ln -s /Applications $RUNNER_TEMP/dmg/Applications
+          hdiutil create -volname magpie -srcfolder $RUNNER_TEMP/dmg -ov -format UDZO "$DMG"
+          if [ -n "$IDENTITY" ]; then
+            codesign --force --timestamp --sign "$IDENTITY" "$DMG"
+          fi
+          echo "DMG=$DMG" >> $GITHUB_ENV
+
+      - name: 执行 Apple 公证并附加凭证
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$APPLE_API_KEY_P8" ]; then
+            echo "$APPLE_API_KEY_P8" > $RUNNER_TEMP/AuthKey.p8
+            AUTH=(--key $RUNNER_TEMP/AuthKey.p8 --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER")
+          else
+            AUTH=(--apple-id "$APPLE_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID")
+          fi
+          # The dmg's ticket covers the app inside it too, so one submission
+          # does for both: staple the dmg, and the app for the zip.
+          OUT=$(xcrun notarytool submit "$DMG" "${AUTH[@]}" --wait --timeout 30m --output-format json)
+          echo "$OUT"
+          ID=$(echo "$OUT" | jq -r .id)
+          STATUS=$(echo "$OUT" | jq -r .status)
+          if [ "$STATUS" != "Accepted" ]; then
+            xcrun notarytool log "$ID" "${AUTH[@]}" || true
+            rm -f $RUNNER_TEMP/AuthKey.p8
+            echo "::error::Notarisation $STATUS"
+            exit 1
+          fi
+          rm -f $RUNNER_TEMP/AuthKey.p8
+          # stapler fetches the ticket from Apple's CloudKit, which drops the
+          # connection now and then (error 68): try again before failing
+          staple() {
+            for i in 1 2 3 4 5; do
+              xcrun stapler staple "$1" && return 0
+              echo "staple $1 failed (try $i), retrying in $((i * 20))s"
+              sleep $((i * 20))
+            done
+            return 1
+          }
+          staple "$DMG"
+          staple magpie.app
+          spctl --assess --type execute --verbose=2 magpie.app
+          spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
+
+      - name: 打包 macOS 更新压缩包
+        run: ditto -c -k --keepParent magpie.app magpie-darwin-${{ matrix.arch }}.zip
+
+      - name: 清理临时签名钥匙串
+        if: always() && steps.signing.outputs.enabled == 'true'
+        run: security delete-keychain $RUNNER_TEMP/app-signing.keychain-db || true
+
+      - name: 上传构建附件
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: build-darwin-${{ matrix.arch }}
+          path: |
+            magpie-darwin-*.dmg
+            magpie-darwin-*.zip
+          if-no-files-found: error
+
+  # The terminal-only magpie (no GUI, no cgo) and the Windows app (WebView2,
+  # no cgo either) cross-compile from one runner.
+  cli:
+    name: 构建命令行与 Windows
+    needs: prepare
+    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出 magpie 源码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+
+      - name: 配置 Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: 编译应用
+        run: make release-cli release-windows VERSION="$VERSION"
+
+      - name: 上传构建附件
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: build-cli
+          path: |
+            dist/magpie-cli-*
+            dist/magpie-windows-*.exe
+          if-no-files-found: error
+
+  # Launch the Windows app for real: it has to come up and serve the gateway.
+  windows-check:
+    name: 验证 Windows（${{ matrix.arch }}）
+    needs: [prepare, cli]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.cli.result == 'success' }}
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            arch: amd64
+          - os: windows-11-arm
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: 下载构建文件
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: build-cli
+          path: dist
+
+      - name: 启动并验证网关
+        shell: pwsh
+        run: |
+          $exe = "dist\magpie-windows-${{ matrix.arch }}.exe"
+          $v = (& $exe --version | Out-String).Trim()
+          Write-Output $v
+          if ($v -notlike "magpie $env:VERSION*") { throw "unexpected version: $v" }
+          $log = "$env:RUNNER_TEMP\magpie"
+          $p = Start-Process -FilePath $exe -ArgumentList app -WindowStyle Hidden -PassThru -RedirectStandardOutput "$log.out" -RedirectStandardError "$log.err"
+          function Fail($why) { Get-Content "$log.out", "$log.err" -ErrorAction SilentlyContinue; throw $why }
+          $ok = $false
+          foreach ($i in 1..30) {
+            Start-Sleep -Seconds 2
+            if ($p.HasExited) { Fail "magpie exited with $($p.ExitCode)" }
+            try { Invoke-WebRequest http://127.0.0.1:3425/v1/models -UseBasicParsing | Out-Null; $ok = $true; break } catch {}
+          }
+          if (-not $ok) { Fail "the gateway never answered" }
+          Start-Sleep -Seconds 5
+          if ($p.HasExited) { Fail "magpie exited with $($p.ExitCode)" }
+          Stop-Process -Id $p.Id
+          Write-Output "magpie ran and served the gateway"
+
+  # The Linux app links GTK 3 and WebKitGTK 4.1, so each arch builds on its
+  # own runner. Ubuntu 22.04 keeps the glibc requirement low.
+  linux:
+    name: 构建 Linux（${{ matrix.arch }}）
+    needs: prepare
+    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            arch: amd64
+          - os: ubuntu-22.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: 检出 magpie 源码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+
+      - name: 配置 Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: 安装 GTK 和 WebKitGTK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-3-dev libwebkit2gtk-4.1-dev xvfb dbus-x11
+
+      - name: 编译应用
+        run: make release-linux VERSION="$VERSION"
+
+      - name: 启动并验证网关
+        run: |
+          BIN=dist/magpie-linux-${{ matrix.arch }}
+          $BIN --version | grep -F "magpie $VERSION"
+          xvfb-run -a dbus-launch --exit-with-session $BIN app > $RUNNER_TEMP/magpie.log 2>&1 &
+          for i in $(seq 30); do
+            sleep 2
+            curl -fs -o /dev/null http://127.0.0.1:3425/v1/models && break
+          done
+          sleep 5
+          curl -fs -o /dev/null http://127.0.0.1:3425/v1/models || { cat $RUNNER_TEMP/magpie.log; echo "::error::magpie did not come up"; exit 1; }
+          pkill -f "$BIN" || true
+          echo "magpie ran and served the gateway"
+
+      - name: 上传构建附件
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: build-linux-${{ matrix.arch }}
+          path: dist/magpie-linux-*
+          if-no-files-found: error
+
+  publish:
+    name: 发布版本
+    needs: [prepare, mac, cli, windows-check, linux]
+    if: ${{ !cancelled() && needs.prepare.outputs.publish == 'true' && needs.prepare.result == 'success' && needs.mac.result == 'success' && needs.cli.result == 'success' && needs.windows-check.result == 'success' && needs.linux.result == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      REF: ${{ needs.prepare.outputs.ref }}
+      GH_TOKEN: ${{ github.token }}
+    permissions:
+      contents: write
+
+    steps:
+      - name: 检出 magpie 源码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          ref: ${{ env.REF }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: 下载全部平台构建文件
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          path: dist
+          pattern: build-*
+          merge-multiple: true
+
+      - name: 校验发布文件
+        run: |
+          set -euo pipefail
+          cd dist
+          for arch in amd64 arm64; do
+            for asset in "magpie-darwin-$arch.dmg" "magpie-darwin-$arch.zip" "magpie-windows-$arch.exe" "magpie-linux-$arch"; do
+              test -s "$asset"
+            done
+            for os in darwin linux windows; do
+              ext=""; [ "$os" != windows ] || ext=.exe
+              test -s "magpie-cli-$os-$arch$ext"
+            done
+          done
+          test -s magpie-cli-android-arm64
+          test "$(find . -maxdepth 1 -type f | wc -l)" -eq 15
+          sha256sum magpie-* > SHA256SUMS
+          sha256sum --check SHA256SUMS
+
+      - name: 生成并免费翻译更新日志
+        run: |
+          set -euo pipefail
+          # Prefer the previous release of this fork, not inherited upstream tags.
+          PREV_TAG=""
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$RUNNER_TEMP/releases.json"
+          while IFS= read -r tag; do
+            if git rev-parse --verify --quiet "$tag^{commit}" >/dev/null && git merge-base --is-ancestor "$tag" HEAD; then
+              PREV_TAG="$tag"; break
+            fi
+          done < <(jq -r '.[] | select(.draft == false and .prerelease == false) | .tag_name' "$RUNNER_TEMP/releases.json")
+          # On the first fork release there are no local release tags. Use the
+          # previous upstream release instead of walking the entire history.
+          if [ -z "$PREV_TAG" ]; then
+            gh api repos/yetone/magpie-releases/releases?per_page=100 > "$RUNNER_TEMP/upstream-releases.json"
+            while IFS= read -r tag; do
+              [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+              [ "${tag#v}" != "$VERSION" ] || continue
+              [ "$(printf '%s\n' "${tag#v}" "$VERSION" | sort -V | tail -1)" = "$VERSION" ] || continue
+              source_ref="refs/remotes/upstream/notes/$tag"
+              git fetch --no-tags https://github.com/yetone/magpie.git "refs/tags/$tag:$source_ref"
+              if git merge-base --is-ancestor "$source_ref" HEAD; then
+                PREV_TAG="$source_ref"; break
+              fi
+            done < <(jq -r '.[] | select(.draft == false and .prerelease == false) | .tag_name' "$RUNNER_TEMP/upstream-releases.json")
+          fi
+          if [ -z "$PREV_TAG" ]; then
+            echo "::error::Cannot determine the previous release for the changelog"; exit 1
+          fi
+          git log "$PREV_TAG..HEAD" --pretty=format:"%s" --no-merges > "$RUNNER_TEMP/commits.txt"
+          echo "Release notes since $PREV_TAG"
+
+          python3 scripts/release-notes.py --commits "$RUNNER_TEMP/commits.txt" \
+            --output "$RUNNER_TEMP/changelog.md" --repository "$GITHUB_REPOSITORY" --version "$VERSION" \
+            --compare "https://github.com/$GITHUB_REPOSITORY/compare/$(git rev-parse "$PREV_TAG^{commit}")...$REF"
+
+      - name: 发布完整版本
+        run: |
+          set -euo pipefail
+          TAG="v$VERSION"
+          if gh release view "$TAG" --json isDraft > "$RUNNER_TEMP/release.json" 2>/dev/null; then
+            jq -e '.isDraft == true' "$RUNNER_TEMP/release.json" >/dev/null
+            gh release edit "$TAG" --target "$REF" --title "magpie $TAG" --notes-file "$RUNNER_TEMP/changelog.md"
+          else
+            gh release create "$TAG" --target "$REF" --draft --title "magpie $TAG" --notes-file "$RUNNER_TEMP/changelog.md"
+          fi
+          gh release upload "$TAG" dist/* --clobber
+          # A draft's tag might not exist until publication. Query its release
+          # ID via the CLI's draft-aware lookup instead of the public tag route.
+          RELEASE_API=$(gh release view "$TAG" --json apiUrl --jq .apiUrl)
+          gh api "$RELEASE_API" > "$RUNNER_TEMP/assets.json"
+          # The app verifies GitHub's SHA256 asset digest before installing.
+          while read -r sum asset; do
+            jq -e --arg name "$asset" --arg digest "sha256:$sum" '.assets[] | select(.name == $name and .digest == $digest)' "$RUNNER_TEMP/assets.json" >/dev/null
+          done < dist/SHA256SUMS
+          test "$(jq '.assets | length' "$RUNNER_TEMP/assets.json")" -eq 16
+          gh release edit "$TAG" --draft=false --latest
+          echo "Published https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG" >> "$GITHUB_STEP_SUMMARY"
+
+  homebrew:
+    name: 更新 Homebrew 配方
+    needs: [prepare, publish]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.publish.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAP_RELEASE_REPO: ${{ github.repository }}
+      TAP_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: 生成 Homebrew 配方
+        run: bash scripts/update-tap.sh "$VERSION"
+      - name: 保存 Homebrew 配方附件
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: homebrew-v${{ env.VERSION }}
+          path: |
+            Formula/magpie.rb
+            Casks/magpie-app.rb
+          if-no-files-found: error
+      # Cloud commits must carry the owner's GPG signature. Without a key,
+      # the generated tap is available above for a local signed commit.
+      - name: GPG 签名提交 Homebrew 更新
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          GNUPGHOME: ${{ runner.temp }}/release-gnupg
+        run: |
+          set -euo pipefail
+          if [ -z "$GPG_PRIVATE_KEY" ]; then
+            echo "::notice::GPG_PRIVATE_KEY not set: download the Homebrew artifact and commit it locally with GPG."
+            echo "Homebrew files are in the run artifacts; automatic signed commits need GPG_PRIVATE_KEY (and GPG_PASSPHRASE if protected)." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          title="Release notes without Chinese"
-          msg="$REF went out with English notes alone: magpie-releases' release run got no Chinese from DeepSeek. Its reason is the \`DeepSeek wrote no Chinese notes\` warning in that run's Generate changelog step (https://github.com/yetone/magpie-releases/actions). Until the Chinese is added below a \`<!-- lang:zh -->\` marker, in the release on yetone/magpie-releases and here, apps set to Chinese show its notes in English (#2122)."
-          n=$(gh issue list --state open --search "\"$title\" in:title" --json number,title -q ".[] | select(.title == \"$title\") | .number" | head -1) || n=""
-          if [ -n "$n" ]; then
-            gh issue comment "$n" --body "$msg" || echo "::warning::could not comment on #$n: $msg"
-          else
-            gh issue create --title "$title" --body "$msg" || echo "::warning::could not file an issue: $msg"
-          fi
+          bash scripts/configure-release-gpg.sh
+          git add Formula/magpie.rb Casks/magpie-app.rb
+          if git diff --cached --quiet; then exit 0; fi
+          git -c commit.gpgsign=true commit -S -m "同步上游并发布 $VERSION"
+          git push origin "HEAD:$TAP_BRANCH"
+      - name: 清理临时 GPG 密钥
+        if: always()
+        run: |
+          GNUPGHOME="$RUNNER_TEMP/release-gnupg" gpgconf --kill all || true
+          rm -rf "$RUNNER_TEMP/release-gnupg" "$RUNNER_TEMP/release-gpg"

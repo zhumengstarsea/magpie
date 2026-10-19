@@ -615,12 +615,18 @@ func load() map[string]mdProvider {
 	return mdev
 }
 
-// Reset forgets the loaded catalog so the next call re-reads the cache.
+// Reset forgets the loaded catalog so the next call re-reads the cache,
+// and tells Forget: what the provider package built of the old one (the
+// windows and output limits of its entries) is kept between requests
+// for a moment, and would answer for the old catalog meanwhile.
 func Reset() {
 	loadMu.Lock()
-	defer loadMu.Unlock()
 	loaded = false
 	mdev, images, windows, outputs, efforts, thinks, names, listed, canonical = nil, nil, nil, nil, nil, nil, nil, nil, nil
+	loadMu.Unlock()
+	if Forget != nil {
+		Forget()
+	}
 }
 
 // Sync downloads the models.dev catalog into CachePath. It serializes with
@@ -956,6 +962,14 @@ func fillNames(ms []Model, fallback []string, reserved ...Model) {
 // any provider, as ContextOf and EffortsOf match it.
 func Knows(id string) bool {
 	return ContextOf(id) > 0 || len(EffortsOf(id)) > 0 || Thinks(id)
+}
+
+// Lists reports whether models.dev lists a model by this very id (its
+// last part, any case), not one found by another spelling: claude-opus-5.5
+// only when that is how one of its providers spells it.
+func Lists(id string) bool {
+	load()
+	return listed[bareID(id)]
 }
 
 // SeesImages reports whether models.dev says a model of this id takes

@@ -1,4 +1,4 @@
-name: Test
+name: 代码测试
 
 on:
   push:
@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   test:
-    name: test (${{ matrix.os }})
+    name: 代码测试（${{ matrix.os }}）
     strategy:
       fail-fast: false
       matrix:
@@ -26,9 +26,11 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - name: 检出源码
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
+      - name: 配置 Go
+        uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
 
@@ -36,14 +38,14 @@ jobs:
       # Makefile), so vet and test need their headers and the gtk3 tag.
       # A stuck apt mirror held main's run here for 2.5 hours (b0d456c3), and
       # every later push queued behind it; it takes under a minute.
-      - name: Install GTK and WebKitGTK
+      - name: 安装 GTK 和 WebKitGTK
         if: runner.os == 'Linux'
         timeout-minutes: 15
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
 
-      - name: Tags
+      - name: 设置编译参数
         id: tags
         shell: bash
         run: |
@@ -51,34 +53,35 @@ jobs:
 
       # Unformatted files reached main 8 times from 10-01 to 10-06 and each
       # took a gofmt commit of its own. Linux only: Windows checks out CRLF.
-      - name: Gofmt
+      - name: 检查 Go 代码格式
         if: runner.os == 'Linux'
         shell: bash
         run: |
           bad=$(gofmt -l $(git ls-files '*.go'))
           if [ -n "$bad" ]; then echo "not gofmt'd:"; echo "$bad"; exit 1; fi
 
-      - name: Vet
+      - name: 检查 Go 代码问题
         run: go vet -tags "${{ steps.tags.outputs.tags }}" ./...
 
-      - uses: oven-sh/setup-bun@v2
+      - name: 配置 Bun
+        uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
 
-      - name: Test
+      - name: 运行测试
         if: runner.os != 'Windows'
         run: go test -tags "${{ steps.tags.outputs.tags }}" ./...
 
       # Windows skips the Test step above, so the two plugin stderr tests run
       # here. The end-to-end one needs bun on PATH; without it it skips.
-      - name: Plugin stderr tests (Windows)
+      - name: 测试 Windows 插件错误输出
         if: runner.os == 'Windows'
         shell: bash
         run: |
           bun --version
           go test -v -count=1 ./internal/plugin/ -run '^(TestHostStartsPastAnOverlongStderrLine|TestDrainStderrKeepsTheChildGoing)$'
 
-      - name: Production plugin flow
+      - name: 验证生产插件流程
         if: runner.os == 'Linux'
         timeout-minutes: 10
         env:
@@ -91,7 +94,7 @@ jobs:
       # first-use races, so it must include the race detector. The gateway's
       # tests can't call t.Parallel (t.Setenv), so its suite runs split over
       # one process per core (#923); each process isolates its own home.
-      - name: Race
+      - name: 检查并发竞争
         if: runner.os != 'Windows'
         shell: bash
         run: |
@@ -100,55 +103,55 @@ jobs:
           go test -race -tags "${{ steps.tags.outputs.tags }}" ./internal/redact/
 
       # Account usage mixes cached results with concurrent fetches.
-      - name: Race account usage
+      - name: 检查账号用量并发竞争
         if: runner.os != 'Windows'
         run: go test -race -tags "${{ steps.tags.outputs.tags }}" ./internal/provider/ -run '^Test(LoginUsage|SubscriptionUsageEachAccount)'
 
       # Some tests fake a home through $HOME, which Windows doesn't read
       # (USERPROFILE), or assume Unix file modes. Compile the full suite
       # on Windows and run the isolated native checks below.
-      - name: Compile tests
+      - name: 编译测试
         if: runner.os == 'Windows'
         run: go test -run '^$' ./...
 
       # These checks use in-memory errors and loopback test servers. Run
       # the native Winsock refusal case rather than only compiling it.
-      - name: Windows MCP health
+      - name: 测试 Windows MCP 健康检查
         if: runner.os == 'Windows'
         run: go test -v -count=1 -timeout 2m ./internal/library -run '^(TestNetHealth|TestCheckHTTP)$'
 
       # Usage isolates USERPROFILE and the agent homes; execute its native
       # ChangeTime checks rather than only cross-compiling the Windows API.
-      - name: Windows usage cache
+      - name: 测试 Windows 用量缓存
         if: runner.os == 'Windows'
         run: go test -v -count=1 ./internal/usage -run '^(TestWindows|TestLogChange|TestLogFileInfoPreservesIdentity$|TestUsageSameSizeAndMtimeRewrite$|TestLogGrowingRewriteThenAppend$|TestUsagePageCacheAfterUncachedQuery$)'
 
       # Install tests keep their files in t.TempDir; exercise real Windows
       # executable and held-handle rename/rollback behavior, and the trial
       # start before the install (#2272).
-      - name: Windows update install
+      - name: 测试 Windows 更新安装
         if: runner.os == 'Windows'
         run: go test -v -count=1 -timeout 2m ./internal/update -run '^(TestInstallBinary|TestMoveAside|TestTrialStart)'
 
       # These tests use temporary paths, without the Unix HOME assumptions
       # of the full suite. Run the native link-kind and sharing-error checks,
       # and the Codex copy checks that read NTFS ChangeTime (#1299).
-      - name: Windows session moves
+      - name: 测试 Windows 会话迁移
         if: runner.os == 'Windows'
         run: go test -v -count=1 ./internal/sessions -run '^Test(WindowsSession|Move|CopyAll|CodexArchived|CodexSameTick|CodexPlainTwin)'
 
       # dsh's layered config is read and edited in temporary homes. Run
       # these checks on Windows too, including Desktop's home patch layer.
-      - name: Windows dsh configuration
+      - name: 测试 Windows dsh 配置
         if: runner.os == 'Windows'
         run: go test -v -count=1 ./internal/agent -run '^Test(Dsh|KeepDsh)'
 
-      - name: Windows VS Code detection
+      - name: 测试 Windows VS Code 检测
         if: runner.os == 'Windows'
         run: go test -v -count=1 ./internal/agent -run '^TestVSCodeDetected$'
 
   cli:
-    name: cli (${{ matrix.goos }}/${{ matrix.goarch }}, nogui)
+    name: 命令行编译（${{ matrix.goos }}/${{ matrix.goarch }}）
     strategy:
       fail-fast: false
       matrix:
@@ -159,19 +162,22 @@ jobs:
             goarch: arm64
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: 检出源码
+        uses: actions/checkout@v4
+      - name: 配置 Go
+        uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Build the terminal-only release
+      - name: 构建命令行版本
         env:
           CGO_ENABLED: '0'
         run: make release-cli TARGETS="${{ matrix.goos }}/${{ matrix.goarch }}"
-      - uses: actions/setup-node@v4
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
         if: matrix.goos == 'linux'
         with:
           node-version: 22
-      - name: Test the site and installer
+      - name: 测试网站与安装脚本
         if: matrix.goos == 'linux'
         run: |
           sh -n site/public/install.sh

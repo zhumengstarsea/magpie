@@ -292,6 +292,7 @@ func run(args []string) error {
 		if hasGUI {
 			return runGUI(true, "")
 		}
+		gateway.Serves = "tui"
 		return runTUI()
 	}
 	// a magpie:// link the system handed over (Windows, Linux): the app
@@ -301,6 +302,14 @@ func run(args []string) error {
 			return importCmd(args)
 		}
 		return runGUI(false, args[0])
+	}
+	// how this process was started, for the Routing page of another magpie on
+	// this computer to name the one that serves the gateway (#2606)
+	switch args[0] {
+	case "tui", "web", "serve", "tray":
+		gateway.Serves = args[0]
+	case "app", "gui", "panel", "-Embedding":
+		gateway.Serves = "app"
 	}
 	switch args[0] {
 	case "tui":

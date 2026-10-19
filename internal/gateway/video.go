@@ -58,6 +58,11 @@ var grokVideoAspects = []string{"1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3
 // maxVideoBytes is the most of a video the gateway passes on.
 const maxVideoBytes = 512 << 20
 
+// videoTimeout is how long a video's vendor is given to answer each of its
+// calls: to take the video on, say how it goes, and send it. A video is
+// made between them, so Settings' Image generation timeout isn't it.
+const videoTimeout = 5 * time.Minute
+
 // Videomakers are the models a provider can make videos with: a Grok
 // subscription's, another magpie's, a preset plan's models when magpie
 // implements that vendor's video API, and those a provider's own model list
@@ -743,7 +748,7 @@ func (s *Server) videosCreate(w http.ResponseWriter, r *http.Request) {
 		w, done = restoring(w)
 		defer done()
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), drawTimeout)
+	ctx, cancel := drawWithin(r.Context(), videoTimeout)
 	defer cancel()
 	var (
 		v       videoStart
@@ -957,7 +962,7 @@ func (s *Server) videosGet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, provider.Chat, 403, held)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), drawTimeout)
+	ctx, cancel := drawWithin(r.Context(), videoTimeout)
 	defer cancel()
 	if filmsOpenAI(p) {
 		obj, model, code, err := s.openAIVideo(ctx, p, vendorID, id)
@@ -1001,7 +1006,7 @@ func (s *Server) videosContent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, provider.Chat, 403, held)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), drawTimeout)
+	ctx, cancel := drawWithin(r.Context(), videoTimeout)
 	defer cancel()
 	if filmsOpenAI(p) {
 		if _, models := keyHolds(r); models {

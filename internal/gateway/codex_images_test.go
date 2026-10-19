@@ -2,8 +2,10 @@ package gateway
 
 import (
 	"bytes"
+	"container/list"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -14,6 +16,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tidwall/gjson"
 
@@ -264,4 +267,134 @@ func TestCodexAccountGetsScreenshotAtCodexSize(t *testing.T) {
 		t.Errorf("sent %v, Codex sends 1979x1280", m.Bounds())
 	}
 	t.Logf("%d bytes from the agent, %d to ChatGPT", len(body), len(got))
+}
+
+// freshFitted gives a test a cache of fitted images of its own, with
+// budget bytes, and counts the images made again from here.
+func freshFitted(t *testing.T, budget int) func() int64 {
+	t.Helper()
+	was, wasBudget := fitted, fittedBudget
+	fitted, fittedBudget = &fitCache{m: map[[32]byte]*list.Element{}}, budget
+	t.Cleanup(func() { fitted, fittedBudget = was, wasBudget })
+	from := refits.Load()
+	return func() int64 { return refits.Load() - from }
+}
+
+// computerUseRequest is a Responses turn with each of shots as a
+// Computer Use tool's screenshot, as Codex sends a conversation's every
+// past screenshot again on each turn.
+func computerUseRequest(shots []string) []byte {
+	var input []any
+	for i, shot := range shots {
+		id := fmt.Sprintf("call_%d", i)
+		input = append(input,
+			map[string]any{"type": "function_call", "call_id": id, "name": "computer", "arguments": `{"action":"screenshot"}`},
+			map[string]any{"type": "function_call_output", "call_id": id, "output": []any{
+				map[string]any{"type": "input_image", "image_url": shot}}})
+	}
+	b, _ := json.Marshal(map[string]any{"model": "gpt-5.5", "stream": true, "input": input})
+	return b
+}
+
+// wideShots are n distinct PNGs wider than Codex sends, each made
+// smaller once it is fitted: cheap to make, as a test needs.
+func wideShots(t *testing.T, n int) []string {
+	t.Helper()
+	out := make([]string, n)
+	for i := range out {
+		m := image.NewRGBA(image.Rect(0, 0, 2100, 4))
+		for x := 0; x < 2100; x++ {
+			m.SetRGBA(x, i%4, color.RGBA{byte(i), byte(i >> 8), byte(x), 255})
+		}
+		out[i] = shotURL(t, m, "png")
+	}
+	return out
+}
+
+// A long Computer Use conversation (fflake33, Discord: hundreds of
+// screenshots) sends every past screenshot again on each turn. Each is
+// decoded, resized and written again once; the next turn makes only its
+// new one, past the 64 images the cache held, and sends the others as the
+// same bytes as before, which the prompt cache needs.
+func TestCodexScreenshotsAreNotFittedAgainEachTurn(t *testing.T) {
+	made := freshFitted(t, fittedBudget)
+	shots := wideShots(t, 101)
+	first := codexImagesFit(codexAccount(), provider.Responses, computerUseRequest(shots[:100]))
+	if n := made(); n != 100 {
+		t.Fatalf("the first turn made %d images, want 100", n)
+	}
+	next := codexImagesFit(codexAccount(), provider.Responses, computerUseRequest(shots))
+	if n := made() - 100; n != 1 {
+		t.Errorf("the next turn made %d images again, want only its new one", n)
+	}
+	for i := range 100 {
+		path := fmt.Sprintf("input.%d.output.0.image_url", 2*i+1)
+		was, now := gjson.GetBytes(first, path).String(), gjson.GetBytes(next, path).String()
+		if was == shots[i] || now != was {
+			t.Fatalf("screenshot %d: not the same fitted bytes on the next turn", i)
+		}
+	}
+	m, _ := shotDecode(t, gjson.GetBytes(next, "input.201.output.0.image_url").String())
+	if m.Bounds().Dx() != 2048 {
+		t.Errorf("the new screenshot went at %v", m.Bounds())
+	}
+}
+
+// Past what the cache may hold, each turn still finds the screenshots kept
+// since the last and makes only the rest again. Keeping each image as it
+// is made, in a conversation whose images come in the same order each
+// turn, would drop each one just before it is sent again and find none.
+// What is held stays within the budget.
+func TestCodexFittedImagesPastTheBudget(t *testing.T) {
+	shots := wideShots(t, 30)
+	one := len(fitKeyEntry(t, shots[0]).data)
+	made := freshFitted(t, 10*one+one/2)
+	body := computerUseRequest(shots)
+	was := int64(0)
+	for turn := 1; turn <= 3; turn++ {
+		codexImagesFit(codexAccount(), provider.Responses, body)
+		n := made() - was
+		was += n
+		if turn == 1 && n != 30 || turn > 1 && n != 20 {
+			t.Errorf("turn %d made %d of 30 images, with 10 kept", turn, n)
+		}
+		fitted.Lock()
+		held := fitted.bytes
+		fitted.Unlock()
+		if held > fittedBudget {
+			t.Errorf("turn %d: %d bytes held, past the budget of %d", turn, held, fittedBudget)
+		}
+	}
+}
+
+// fitKeyEntry is shot fitted to Codex's high limits, made directly.
+func fitKeyEntry(t *testing.T, shot string) fitEntry {
+	t.Helper()
+	e := codexImageRefit(shot[strings.IndexByte(shot, ',')+1:], imageLimits{2048, 2500})
+	if e.data == nil {
+		t.Fatal("the screenshot fits as it came")
+	}
+	return e
+}
+
+// What no request has sent for fittedIdle is let go.
+func TestCodexFittedImagesLetGoWhenIdle(t *testing.T) {
+	made := freshFitted(t, fittedBudget)
+	shots := wideShots(t, 2)
+	codexImagesFit(codexAccount(), provider.Responses, computerUseRequest(shots[:1]))
+	fitted.Lock()
+	for el := fitted.order.Front(); el != nil; el = el.Next() {
+		el.Value.(*fitItem).used = time.Now().Add(-fittedIdle - time.Minute)
+	}
+	fitted.Unlock()
+	codexImagesFit(codexAccount(), provider.Responses, computerUseRequest(shots[1:]))
+	fitted.Lock()
+	n, held := len(fitted.m), fitted.bytes
+	fitted.Unlock()
+	if n != 1 || made() != 2 {
+		t.Errorf("%d kept after the first went idle, %d made", n, made())
+	}
+	if want := len(fitKeyEntry(t, shots[1]).data); held != want {
+		t.Errorf("%d bytes held, want %d", held, want)
+	}
 }

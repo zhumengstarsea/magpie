@@ -132,7 +132,7 @@ func (s *signInFlow) pluginBegin(id string, method int, inputs map[string]string
 		return nil
 	}
 	s.st.State, s.st.Installing = "waiting", ""
-	s.st.URL, s.st.Instructions, s.st.Code = a.URL, a.Instructions, codeIn(a.Instructions)
+	s.st.URL, s.st.Instructions, s.st.Code, s.st.Opened = a.URL, a.Instructions, codeIn(a.Instructions), a.Opened
 	s.stop = stop
 	if a.Method == "code" {
 		s.st.PasteCode, s.plugin = true, a.Session

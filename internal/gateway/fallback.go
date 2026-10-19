@@ -1065,7 +1065,7 @@ func modelRefused(status int, body []byte) bool {
 	}
 	// the words are matched decoded, too (#1669)
 	body = wordsOf(body)
-	return unservedWords.Match(body) && !quotaWords.Match(body) && !refusedWords.Match(body)
+	return unservedWords.Match(body) && !quotaWords.Match(body) && !refusedWords.Match(body) && !zdrRefused(status, body)
 }
 
 // codeAssistModelMissing says a Google account's Code Assist — the
@@ -1209,6 +1209,48 @@ func protectionRefused(status int, body []byte) bool {
 	return status >= 400 && protectionWords.Match(body)
 }
 
+// zdrCoded is Command Code's error code for a model no Zero Data
+// Retention upstream serves, as the error's code or type, asked with
+// x-cmd-zdr: 1 (its plugin's switch, magpie-community/plugins#246): the
+// Provider API's 422 {"error":{"message":"This model has no
+// zero-data-retention upstream. Remove the x-cmd-zdr header or choose a
+// different model.","type":"invalid_request_error","code":
+// "cmd_zdr_no_providers"}}, and the 400 the plugin makes of Go's error
+// line, {"error":{…,"type":"cmd_zdr_no_providers","code":400}}. Matched
+// where the error names its code, not in its words: "…a different
+// model.","type":"invalid_request_error" reads as a model unserved
+// (unservedWords) otherwise.
+var zdrCoded = regexp.MustCompile(`\\?"(type|code)\\?"\s*:\s*\\?"cmd_zdr_no_providers\\?"`)
+
+// zdrRefused says Command Code turned the request away for its Zero Data
+// Retention setting: a choice the user made for every request to the
+// provider, not the model or the account failing. Nothing rests for it,
+// so the model answers again as soon as the switch is off; the same
+// model at the same provider, sent the same header, isn't asked again;
+// another member may be.
+func zdrRefused(status int, body []byte) bool {
+	return (status == 400 || status == 422) && zdrCoded.Match(body)
+}
+
+// zdrHeader carries, from keepRetry to the routing loop and restAfter,
+// that a vendor's error was zdrRefused: the error the agent gets keeps
+// Command Code's words but, in Anthropic's shape or for the 400 whose
+// code is a number, not its code.
+const zdrHeader = "X-Magpie-ZDR-Refused"
+
+// notMates is, of the candidates left, those not c's model at c's
+// provider: its other accounts are sent the same Zero Data Retention
+// header, and refuse the same.
+func notMates(left []candidate, c candidate) []candidate {
+	var out []candidate
+	for _, x := range left {
+		if x.p.ID != c.p.ID || x.model != c.model {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
 // elsewhere is, of the candidates left, those not at c's provider, whose
 // every account and model the same request reaches the same backend
 // through.
@@ -1283,7 +1325,7 @@ func tooLongUnsaid(p provider.Provider, model string, tokens, status int, body [
 	// the words are matched decoded, too (#1669)
 	body = wordsOf(body)
 	if overflowed(status, body) || failure(status, body) != failOther || quotaWords.Match(body) ||
-		unservedWords.Match(body) || refusedWords.Match(body) || provider.EdgeBlocked(body) || regionRefused(status, body) {
+		unservedWords.Match(body) || refusedWords.Match(body) || provider.EdgeBlocked(body) || regionRefused(status, body) || zdrRefused(status, body) {
 		return "", false
 	}
 	window := windowOf(p, model)
@@ -1354,7 +1396,7 @@ func passing(status int, header http.Header, body []byte, again int) (time.Durat
 	case wait > longestPause:
 		return 0, false
 	case status == 408, status == 500, status == 502, status == 503, status == 504, status == 529:
-		if strings.Contains(string(body), didNotStream) {
+		if bytes.Contains(body, []byte(didNotStream)) {
 			return 0, false
 		}
 		return wait, again < lastRetries
@@ -1717,7 +1759,7 @@ func (h *holdWriter) pass() {
 	}
 	dst := h.w.Header()
 	for k, v := range h.header {
-		if k != resetsHeader && k != refusedHeader { // magpie's own notes, for restAfter and settle
+		if k != resetsHeader && k != refusedHeader && k != zdrHeader { // magpie's own notes, for restAfter and settle
 			dst[k] = v
 		}
 	}
@@ -2121,7 +2163,7 @@ func (h *holdWriter) keepAlive() {
 		}
 		dst := h.w.Header()
 		for k, v := range src {
-			if k != resetsHeader && k != refusedHeader && k != "Content-Length" {
+			if k != resetsHeader && k != refusedHeader && k != zdrHeader && k != "Content-Length" {
 				dst[k] = slices.Clone(v)
 			}
 		}

@@ -195,12 +195,12 @@ func MoveCodexProvider(id, to string) (CodexMove, error) {
 	if !codexProviderRe.MatchString(to) {
 		return CodexMove{}, fmt.Errorf("%q isn't a provider id", to)
 	}
-	dbReadMu.Lock()
-	defer dbReadMu.Unlock()
+	storeMu.Lock()
+	defer storeMu.Unlock()
 	mu.Lock()
 	defer mu.Unlock()
 	loadCache()
-	defer closeDBs()
+	defer useDBs()()
 	all := allFiles()
 	groups := map[string][]file{}
 	var mine []file

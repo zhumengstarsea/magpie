@@ -89,8 +89,10 @@ func WithMemberEffort(model, effort string) string {
 	return model + ":" + effort
 }
 
-// cleanMember spells a member as it is kept: its effort lowercase.
+// cleanMember spells a member as it is kept: its effort lowercase, a found
+// group by group/auto-<slug> (CanonicalRef).
 func cleanMember(entries []Entry, id string) string {
+	id = CanonicalRef(id) // a found group by the id magpie keeps it by
 	m, e := memberEffortIn(entries, id)
 	return WithMemberEffort(m, e)
 }

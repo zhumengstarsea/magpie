@@ -10,14 +10,14 @@
 Switch any of them from the menu bar. One local gateway serves them all,<br>
 and when a quota runs out, it quietly moves on to the next account.
 
-[![Release](https://img.shields.io/github/v/release/yetone/magpie-releases?label=release&color=111111)](https://github.com/yetone/magpie-releases/releases/latest) [![Stars](https://img.shields.io/github/stars/yetone/magpie?style=flat&color=111111)](https://github.com/yetone/magpie/stargazers) [![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/vGSnD3ZKQF) [![License](https://img.shields.io/badge/license-MIT-111111)](LICENSE)<br>
+[![Release](https://img.shields.io/github/v/release/zhumengstarsea/magpie?label=release&color=111111)](https://github.com/zhumengstarsea/magpie/releases/latest) [![Stars](https://img.shields.io/github/stars/yetone/magpie?style=flat&color=111111)](https://github.com/yetone/magpie/stargazers) [![License](https://img.shields.io/badge/license-MIT-111111)](LICENSE)<br>
 ![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white) ![Windows](https://img.shields.io/badge/Windows-0078D4?logo=windows&logoColor=white) ![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black) ![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white) ![Termux](https://img.shields.io/badge/Termux-000000?logo=android&logoColor=white)
 
 <sub>Sponsors</sub><br>
 <a href="https://usemagpie.ai/go/apinebula/readme"><picture><source media="(prefers-color-scheme: dark)" srcset="site/public/img/sponsor-apinebula-dark.svg"><img src="site/public/img/sponsor-apinebula.svg" height="36" alt="APINEBULA"></picture></a>
 <a href="https://usemagpie.ai/go/zerotoken/readme"><picture><source media="(prefers-color-scheme: dark)" srcset="site/public/img/sponsor-zerotoken-dark.svg"><img src="site/public/img/sponsor-zerotoken.svg" height="36" alt="零词元"></picture></a>
 
-**[Download](https://usemagpie.ai)** &nbsp;·&nbsp; **[Docs](https://usemagpie.ai/docs/start)** &nbsp;·&nbsp; **[Reference](docs/reference.md)** &nbsp;·&nbsp; **[Plugins](https://github.com/magpie-community/plugins)** &nbsp;·&nbsp; **[Discord](https://discord.gg/vGSnD3ZKQF)** &nbsp;·&nbsp; **English** · [简体中文](README.zh-CN.md)
+**[Download](https://github.com/zhumengstarsea/magpie/releases/latest)** &nbsp;·&nbsp; **[Docs](https://usemagpie.ai/docs/start)** &nbsp;·&nbsp; **[Reference](docs/reference.md)** &nbsp;·&nbsp; **[Plugins](https://github.com/magpie-community/plugins)** &nbsp;·&nbsp; **English** · [简体中文](README.zh-CN.md)
 
 <br>
 
@@ -44,13 +44,9 @@ Runs on macOS, Windows and Linux (menu bar app, window, TUI, web UI and CLI), in
 
 ## Quick start
 
-**1 · Install.** Download the app from **[usemagpie.ai](https://usemagpie.ai)**, or run:
+**1 · Install.** Download this fork from **[GitHub Releases](https://github.com/zhumengstarsea/magpie/releases/latest)**. In-app version checks, downloads and release notes use the same repository.
 
-```sh
-curl -fsSL https://usemagpie.ai/install.sh | sh
-```
-
-<sub>Mac builds are signed and notarised, and every build updates itself. Behind a firewall, use `--proxy` or `--mirror`. Or `go install github.com/yetone/magpie@latest`, or the [Docker image](https://usemagpie.ai/docs/docker).</sub>
+<sub>Desktop builds: macOS, Windows and Linux (amd64/arm64). CLI builds also include Android arm64. macOS Developer ID signing and notarisation require your own Apple credentials.</sub>
 
 **2 · Add a provider.** Open magpie and go to **Providers → Add provider**. Pick a preset and paste a key, or sign in with a subscription.
 
@@ -290,3 +286,16 @@ If magpie saved you from editing one more config file, **a ⭐ helps others find
 ## License
 
 [MIT](LICENSE)
+
+## Releasing this fork
+
+To publish this fork, push the source to this repository's `master`, then use **Actions → 发布与同步 → Run workflow** with a new plain version such as `0.1.1294`. Leave `ref` empty to build the selected branch; enable `publish` to publish here, or disable it for build artifacts only. A new `vX.Y.Z` tag also triggers publishing. Existing upstream tags that point at different source cannot be reused. See the [release and signing setup](README.zh-CN.md#发布本改版) for optional macOS signing, keyless release-note translation and GPG-signed Homebrew updates. No second repository or cross-repository token is needed.
+
+
+The release workflow (`发布与同步`) checks upstream stable releases every six hours (00:00, 06:00, 12:00 and 18:00 Asia/Shanghai). It preserves fork commits, GPG-signs merge commits, pushes `master` without force, and continues the full-platform release in the same run. Leave the manual version input empty to check upstream, or specify a version to build directly. Configure `SYNC_TOKEN` (Contents, Workflows and Actions read/write for this repository) and `GPG_PRIVATE_KEY`; `GPG_PASSPHRASE` is needed only for a protected key. Merge conflicts and conflicting existing tags stop the run. See the [automatic release setup](README.zh-CN.md#自动跟进上游发布).
+
+Completed successful checks explicitly marked as no update are removed by the next scan. Runs that found updates, direct builds, failures and active runs are retained; published Releases are unaffected.
+
+Each scan also mirrors all corresponding upstream branches, including new branches, preserving upstream commits. The customized `master` and fork-only branches are excluded. Lease-protected pushes stop on concurrent changes; runs that synchronize branches are retained. First-release notes use the previous merged upstream release as their base. Bilingual notes show up to 100 recent commits within a 120,000-byte limit and link to the full comparison.
+
+Auxiliary Test, Docker and privacy-filter run records are retained for 7 days after success and 30 days after other completed outcomes. Active runs and published release assets are not deleted.

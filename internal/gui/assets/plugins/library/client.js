@@ -2640,7 +2640,7 @@ magpie.plugin("library", (ctx) => {
       rh.append(el("span", "label", t("In the library")));
       const box = el("div", "lib-groups");
       if (lib.skills.length > 8) rh.append(skillFilter(box, all));
-      const fresh = lib.skills.filter((s) => s.kind === "github" || s.origin);
+      const fresh = lib.skills.filter((s) => s.kind === "github" || s.kind === "git" || s.origin);
       rh.append(el("span", "grow"));
       if (lib.skills.length > 1) rh.append(sortBy("libSkills", SKILL_SORTS(), () => { if (box.isConnected) drawSkills(box, all); }));
       if (lib.skills.length > 1) rh.append(foldAllButton(box, all));
@@ -2656,9 +2656,11 @@ magpie.plugin("library", (ctx) => {
       if (lib.skills.length > 1 && all.length) rh.append(pickButton("skills"), ...everyButtons("skills", all));
       if (byAgentRows("skills").length) rh.append(byAgentButton("skills"));
       if (lib.skills.length > 1) rh.append(removeEveryButton("skills"));
-      if (lib.skills.some((s) => s.kind === "github")) {
+      if (lib.skills.some((s) => s.kind === "github" || s.kind === "git")) {
         const c = button(checking ? t("Checking…") : t("Check for updates"), "lib-updall", () => checkSkills());
-        c.title = t("Ask GitHub which skills changed since they were installed");
+        c.title = lib.skills.some((s) => s.kind === "git")
+          ? t("Ask the repositories your skills came from which skills changed since they were installed")
+          : t("Ask GitHub which skills changed since they were installed");
         c.disabled = checking;
         if (checking) c.classList.add("busy");
         rh.append(c);
@@ -2829,6 +2831,9 @@ magpie.plugin("library", (ctx) => {
   try { folds = JSON.parse(localStorage.getItem("magpie.libSkillFolds") || "{}") || {}; } catch {}
   function saveFolds() { try { localStorage.setItem("magpie.libSkillFolds", JSON.stringify(folds)); } catch {} }
   const repoOf = (u) => (u || "").replace(/^https:\/\/github\.com\//, "").split("/").slice(0, 2).join("/");
+  // the repository a skill from another git host (kind "git") came from,
+  // as the page names it: its address, without https:// or a folder in it
+  const gitRepoOf = (s) => (s.kind === "git" ? (s.source || "").replace(/^https?:\/\//, "").replace(/\/-\/tree\/.*$/, "") : "");
   // the repository a skill came from, however it came in: magpie traces
   // one not installed from GitHub too (the skills CLI's lock, the git
   // checkout it's in), so a repository's skills are one group (White
@@ -2934,6 +2939,11 @@ magpie.plugin("library", (ctx) => {
         const m = /^https:\/\/github\.com\/[^/]+\/[^/]+\/tree\/[^/]+\/(.+)$/.exec(s.source || "");
         return m ? m[1].split("/").slice(0, -1).join("/") : "";
       }
+      if (s.kind === "git") {
+        // GitLab's …/-/tree/<ref>/<path to the folder>/<skill>
+        const m = /\/-\/tree\/[^/]+\/(.+)$/.exec(s.source || "");
+        return m ? m[1].split("/").slice(0, -1).join("/") : "";
+      }
       if (s.kind === "folder") return tilde((s.source || "").replace(/[\\/][^\\/]+[\\/]?$/, ""));
       return "";
     };
@@ -2957,7 +2967,7 @@ magpie.plugin("library", (ctx) => {
     if (g.repo) {
       // the folder in the repository is known of those installed from it
       // only: one traced to it goes by its name with the rest
-      let m = g.skills.every((s) => s.kind === "github") ? split(g.skills, folderIn) : null, mono = true;
+      let m = g.skills.every((s) => s.kind === "github" || s.kind === "git") ? split(g.skills, folderIn) : null, mono = true;
       if (!m) { mono = false; m = byStart(); }
       if (!m) return null;
       return [...m].map(([key, skills]) => ({ key, skills, mono, label: label(key, mono) })).sort(order);
@@ -4402,7 +4412,7 @@ magpie.plugin("library", (ctx) => {
     const inp = el("input");
     inp.type = "text";
     inp.dataset.lib = "source";
-    inp.placeholder = t("owner/repo, a GitHub link, or a folder on this computer");
+    inp.placeholder = t("owner/repo, a GitHub or GitLab link, any git repository's address, or a folder on this computer");
     inp.spellcheck = false;
     inp.autocomplete = "off";
     inp.value = probe?.source || "";
@@ -4442,7 +4452,8 @@ magpie.plugin("library", (ctx) => {
     const left = (p.found.left || []).map((x) => el("div", "lib-none lib-left", t("{name} is too big to install: {size}, over the {limit} a skill may be", { name: x.path.split("/").pop() || p.found.source, size: Math.round(x.size / 1048576) + " MB", limit: "200 MB" })));
     if (!c.length) { box.append(...(left.length ? left : [el("div", "lib-none", t("No skills there — a skill is a folder with a SKILL.md in it."))])); return box; }
     const head = el("div", "lib-probehead");
-    const src = p.found.kind === "github" ? "github.com/" + p.found.source.replace(/^https?:\/\/github\.com\//, "") : tilde(p.found.source);
+    const src = p.found.kind === "github" ? "github.com/" + p.found.source.replace(/^https?:\/\/github\.com\//, "")
+      : p.found.kind === "git" ? p.found.source.replace(/^https:\/\//, "") : tilde(p.found.source);
     head.append(el("span", "note", c.length === 1 ? t("1 skill in {src}", { src }) : t("{n} skills in {src}", { n: c.length, src })));
     head.append(el("span", "grow"));
     const fresh = c.filter((x) => !x.have);
@@ -4519,7 +4530,9 @@ magpie.plugin("library", (ctx) => {
     }
     // changed here since it was fetched from GitHub (#1449): an update asks
     // before it replaces that
-    if (s.edited) nm.append(tag(t("Changed here"), "warn lib-edited", t("You changed it since it was fetched from GitHub. Updating asks before it replaces your changes.")));
+    if (s.edited) nm.append(tag(t("Changed here"), "warn lib-edited", gitRepoOf(s)
+      ? t("You changed it since it was fetched from {repo}. Updating asks before it replaces your changes.", { repo: gitRepoOf(s) })
+      : t("You changed it since it was fetched from GitHub. Updating asks before it replaces your changes.")));
     // a copy in an agent that differs from the library's skill (#896): a
     // sync makes it again
     if (s.behind?.length) {
@@ -4544,13 +4557,23 @@ magpie.plugin("library", (ctx) => {
         a.href = s.source;
         a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); browse(s.source); };
         src.append(a);
+      } else if (s.kind === "git" && /^https?:\/\//.test(s.source)) {
+        const a = el("a", "lib-srclink", s.source.replace(/^https:\/\//, ""));
+        a.href = s.source;
+        a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); browse(s.source); };
+        src.append(a);
+      } else if (s.kind === "git") {
+        // an SSH address (git@host:path) or a file:// one: no page to open
+        const a = el("span", "lib-srclink", s.source);
+        a.title = s.source;
+        src.append(a);
       } else {
         src.append(el("span", "", t("linked from")), pathLink(s.source));
       }
       who.append(src);
     }
     const acts = el("div", "lib-rowacts");
-    if (s.kind === "github" || s.origin) {
+    if (s.kind === "github" || s.kind === "git" || s.origin) {
       const u = button("", "lib-icon", async (e, b) => {
         if (s.edited) return confirmUpdateEdited(s);
         b.classList.add("busy");
@@ -4558,8 +4581,10 @@ magpie.plugin("library", (ctx) => {
         b.classList.remove("busy");
       });
       u.append(svg(GLYPH.up, 13, 1.5));
-      u.title = s.origin ? t("Update from GitHub ({repo}, as CC Switch installed it)", { repo: s.origin.replace(/^https:\/\/github\.com\//, "") }) : t("Update from GitHub");
-      if (c?.status === "current") u.title += "\n" + t("Up to date with GitHub") + "\n" + checkLine(c);
+      const gitRepo = gitRepoOf(s);
+      u.title = s.origin ? t("Update from GitHub ({repo}, as CC Switch installed it)", { repo: s.origin.replace(/^https:\/\/github\.com\//, "") })
+        : gitRepo ? t("Update from {repo}", { repo: gitRepo }) : t("Update from GitHub");
+      if (c?.status === "current") u.title += "\n" + (gitRepo ? t("Up to date with {repo}", { repo: gitRepo }) : t("Up to date with GitHub")) + "\n" + checkLine(c);
       else if (c?.status === "update") u.title += "\n" + checkLine(c);
       if (s.edited) u.title += "\n" + t("Changed here: asks before it replaces your changes");
       acts.append(u);
@@ -4580,9 +4605,12 @@ magpie.plugin("library", (ctx) => {
   function confirmUpdateEdited(s) {
     const ed = el("div", "editor lib-editor lib-update-edited");
     const head = el("div", "ehead");
-    head.append(glyph(GLYPH.up), el("b", "", t("Replace your changes to {name}?", { name: s.name })));
+    const repo = gitRepoOf(s);
+    head.append(glyph(GLYPH.up), el("b", "", repo ? t("Replace your changes to {name} with the version in {repo}?", { name: s.name, repo }) : t("Replace your changes to {name}?", { name: s.name })));
     ed.append(head);
-    ed.append(el("p", "lib-confirm", t("You changed {name} here since it was fetched from GitHub. Updating puts GitHub's version in its place. Yours is kept in magpie's backups (Backups, at the top of the Library).", { name: s.name })));
+    ed.append(el("p", "lib-confirm", repo
+      ? t("You changed {name} here since it was fetched from {repo}. Updating puts the version there in its place. Yours is kept in magpie's backups (Backups, at the top of the Library).", { name: s.name, repo })
+      : t("You changed {name} here since it was fetched from GitHub. Updating puts GitHub's version in its place. Yours is kept in magpie's backups (Backups, at the top of the Library).", { name: s.name })));
     const bar = el("div", "bar");
     const go = button(t("Update"), "primary", async () => {
       go.disabled = true;

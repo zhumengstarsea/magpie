@@ -1,4 +1,4 @@
-name: UI preview
+name: 界面预览
 
 # A pull request that changes the UI gets screenshots — and a screen
 # recording, the mouse drawn in, when the change spans pages or needs
@@ -18,7 +18,7 @@ on:
   workflow_dispatch:
     inputs:
       pr:
-        description: Pull request number
+        description: 拉取请求编号
         required: true
 
 concurrency:
@@ -29,6 +29,7 @@ permissions: {}
 
 jobs:
   detect:
+    name: 检测界面变更
     if: github.event.action != 'labeled' || github.event.label.name == 'ui-preview'
     runs-on: ubuntu-latest
     permissions:
@@ -39,7 +40,8 @@ jobs:
       sha: ${{ steps.detect.outputs.sha }}
       number: ${{ steps.detect.outputs.number }}
     steps:
-      - uses: actions/checkout@v4
+      - name: 检出源码
+        uses: actions/checkout@v4
         with:
           ref: ${{ github.event.repository.default_branch }}
           sparse-checkout: .github/ui-preview
@@ -68,6 +70,7 @@ jobs:
           retention-days: 3
 
   record:
+    name: 录制界面预览
     needs: detect
     if: needs.detect.outputs.ui == 'true'
     runs-on: ubuntu-latest
@@ -78,7 +81,8 @@ jobs:
     env:
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.pw
     steps:
-      - uses: actions/checkout@v4
+      - name: 检出源码
+        uses: actions/checkout@v4
         with:
           ref: ${{ github.event.repository.default_branch }}
           path: ci
@@ -86,31 +90,35 @@ jobs:
           persist-credentials: false
       # the fork's code, on purpose: this job is the one meant to run it,
       # with a read-only token and no credentials left in the checkout
-      - uses: actions/checkout@v4
+      - name: 检出源码
+        uses: actions/checkout@v4
         with:
           ref: ${{ needs.detect.outputs.sha }}
           path: pr
           persist-credentials: false
           allow-unsafe-pr-checkout: true
-      - uses: actions/download-artifact@v4
+      - name: 下载任务附件
+        uses: actions/download-artifact@v4
         with:
           name: pr-info
           path: pr-info
-      - uses: actions/setup-go@v5
+      - name: 配置 Go
+        uses: actions/setup-go@v5
         with:
           go-version-file: pr/go.mod
           cache: false
-      - uses: actions/setup-node@v4
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Chromium, ffmpeg and fonts
+      - name: 安装浏览器、ffmpeg 和字体
         working-directory: ci/.github/ui-preview
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg fonts-noto-cjk fonts-noto-color-emoji
           npm install --no-audit --no-fund
           npx playwright install --with-deps chromium
-      - name: Record
+      - name: 录制界面预览
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           DIFF_FILE: ${{ github.workspace }}/pr-info/pr.diff
@@ -125,6 +133,7 @@ jobs:
           if-no-files-found: ignore
 
   publish:
+    name: 发布界面预览
     needs: [detect, record]
     if: always() && needs.detect.outputs.ui == 'true'
     runs-on: ubuntu-latest
@@ -132,12 +141,14 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - name: 检出源码
+        uses: actions/checkout@v4
         with:
           ref: ${{ github.event.repository.default_branch }}
           sparse-checkout: .github/ui-preview
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - name: 下载任务附件
+        uses: actions/download-artifact@v4
         continue-on-error: true
         with:
           name: ui-preview

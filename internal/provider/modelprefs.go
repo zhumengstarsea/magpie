@@ -45,7 +45,7 @@ func modelNameIn(names map[string]string, pid, model string) (string, bool) {
 // and the model.
 func splitRef(ref string) (*Provider, string, error) {
 	r := strings.TrimPrefix(strings.TrimSpace(ref), "magpie/")
-	if strings.HasPrefix(r, GroupPrefix) {
+	if IsGroupRef(r) {
 		return nil, "", errors.New("that is a routing group, not a provider's model")
 	}
 	pid, model, ok := strings.Cut(r, "/")
@@ -213,7 +213,7 @@ func PriceKey(pid, model string) (string, bool) {
 // reset` over a price still in the file would have the user believe it gone.
 func DropModelPrice(key string) (bool, error) {
 	key = strings.TrimPrefix(strings.TrimSpace(key), "magpie/")
-	if strings.HasPrefix(key, GroupPrefix) {
+	if IsGroupRef(key) {
 		return false, errors.New("that is a routing group, not a provider's model")
 	}
 	pid, model, ok := strings.Cut(key, "/")
@@ -1166,7 +1166,7 @@ func SetUpstreamName(ref, name string) error {
 // now.
 func DropUpstreamName(key string) (bool, error) {
 	key = strings.TrimPrefix(strings.TrimSpace(key), "magpie/")
-	if strings.HasPrefix(key, GroupPrefix) {
+	if IsGroupRef(key) {
 		return false, errors.New("that is a routing group, not a provider's model")
 	}
 	pid, model, ok := strings.Cut(key, "/")

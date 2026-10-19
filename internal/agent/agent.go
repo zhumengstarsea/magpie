@@ -591,6 +591,10 @@ func (a *Agent) Spell(key, v string) (string, error) {
 	if r := provider.RenamedRef(ref); r != ref {
 		refs = append(refs, r)
 	}
+	// a found group by its id before (group/auto-<slug>) is its auto/<model>
+	if r := provider.PublicRef(ref); r != ref {
+		refs = append(refs, r)
+	}
 	for _, r := range refs {
 		for _, o := range opts {
 			if o.Ref != "" && o.Ref == r {
@@ -623,7 +627,7 @@ func (a *Agent) notOffered(ref string, opts []Option) error {
 	if slices.ContainsFunc(opts, func(o Option) bool { return Own(o) && strings.HasPrefix(o.Value, pid+"/") }) {
 		return nil
 	}
-	ids := []string{ref, provider.RenamedRef(ref)}
+	ids := []string{ref, provider.RenamedRef(ref), provider.PublicRef(ref)}
 	shown, _ := provider.CatalogFor(a.ListsFor())
 	if slices.ContainsFunc(shown, func(e provider.Entry) bool { return slices.Contains(ids, e.ID) }) {
 		return nil // shown the agent: a field may offer fewer (Claude Desktop's tiers)
@@ -633,7 +637,7 @@ func (a *Agent) notOffered(ref string, opts []Option) error {
 			return fmt.Errorf("%s is one of magpie's models, but %s isn't shown it: magpie models %s says why, and magpie visible %s all shows it every model", ref, a.Name, a.ID, a.ID)
 		}
 	}
-	if pid+"/" == provider.GroupPrefix {
+	if pid+"/" == provider.GroupPrefix || provider.IsGroupRef(ref) {
 		return fmt.Errorf("magpie has no routing group %s (magpie models lists them)", ref)
 	}
 	if p, err := provider.Find(pid); err == nil && (p.ID == pid || slices.Contains(p.Was, pid)) {

@@ -810,6 +810,9 @@ type Authorization struct {
 	URL          string `json:"url"`
 	Instructions string `json:"instructions"`
 	Method       string `json:"method"`
+	// Opened is a page the plugin (its vendor's CLI) opened already, not
+	// to be opened again
+	Opened bool `json:"opened"`
 }
 
 // NewAccount is the account a sign-in goes to when it is a new one: the

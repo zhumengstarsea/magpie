@@ -10,14 +10,14 @@
 在菜单栏一点就能切换。所有 Agent 共用一个本地网关，<br>
 额度用完时，它会悄悄切到下一个账号。
 
-[![Release](https://img.shields.io/github/v/release/yetone/magpie-releases?label=release&color=111111)](https://github.com/yetone/magpie-releases/releases/latest) [![Stars](https://img.shields.io/github/stars/yetone/magpie?style=flat&color=111111)](https://github.com/yetone/magpie/stargazers) [![Discord](https://img.shields.io/badge/Discord-加入社区-5865F2?logo=discord&logoColor=white)](https://discord.gg/vGSnD3ZKQF) [![License](https://img.shields.io/badge/license-MIT-111111)](LICENSE)<br>
+[![Release](https://img.shields.io/github/v/release/zhumengstarsea/magpie?label=release&color=111111)](https://github.com/zhumengstarsea/magpie/releases/latest) [![Stars](https://img.shields.io/github/stars/yetone/magpie?style=flat&color=111111)](https://github.com/yetone/magpie/stargazers) [![License](https://img.shields.io/badge/license-MIT-111111)](LICENSE)<br>
 ![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white) ![Windows](https://img.shields.io/badge/Windows-0078D4?logo=windows&logoColor=white) ![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black) ![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white) ![Termux](https://img.shields.io/badge/Termux-000000?logo=android&logoColor=white)
 
 <sub>赞助商</sub><br>
 <a href="https://usemagpie.ai/go/apinebula/readme"><picture><source media="(prefers-color-scheme: dark)" srcset="site/public/img/sponsor-apinebula-dark.svg"><img src="site/public/img/sponsor-apinebula.svg" height="36" alt="APINEBULA"></picture></a>
 <a href="https://usemagpie.ai/go/zerotoken/readme"><picture><source media="(prefers-color-scheme: dark)" srcset="site/public/img/sponsor-zerotoken-dark.svg"><img src="site/public/img/sponsor-zerotoken.svg" height="36" alt="零词元"></picture></a>
 
-**[下载](https://usemagpie.ai/zh/)** &nbsp;·&nbsp; **[文档](https://usemagpie.ai/docs/zh/start)** &nbsp;·&nbsp; **[完整参考（英文）](docs/reference.md)** &nbsp;·&nbsp; **[插件](https://github.com/magpie-community/plugins)** &nbsp;·&nbsp; **[Discord](https://discord.gg/vGSnD3ZKQF)** &nbsp;·&nbsp; [English](README.md) · **简体中文**
+**[下载](https://github.com/zhumengstarsea/magpie/releases/latest)** &nbsp;·&nbsp; **[文档](https://usemagpie.ai/docs/zh/start)** &nbsp;·&nbsp; **[完整参考（英文）](docs/reference.md)** &nbsp;·&nbsp; **[插件](https://github.com/magpie-community/plugins)** &nbsp;·&nbsp; [English](README.md) · **简体中文**
 
 <br>
 
@@ -44,13 +44,9 @@
 
 ## 快速开始
 
-**1 · 安装**。从 **[usemagpie.ai](https://usemagpie.ai/zh/)** 下载应用，或者运行：
+**1 · 安装**。从**[本仓库的 Releases](https://github.com/zhumengstarsea/magpie/releases/latest)** 下载改版。应用内检查版本、下载更新和“更新内容”均使用本仓库的发布。
 
-```sh
-curl -fsSL https://usemagpie.ai/install.sh | sh
-```
-
-<sub>Mac 版已签名并公证，每个版本都会自动更新。网络受限时可用 `--proxy` 或 `--mirror`。也可以 `go install github.com/yetone/magpie@latest`，或者用 [Docker 镜像](https://usemagpie.ai/docs/zh/docker)。</sub>
+<sub>桌面版包含 macOS、Windows、Linux 的 amd64/arm64；命令行版另含 Android arm64。macOS 的开发者签名与公证需要自行配置 Apple 凭据。</sub>
 
 **2 · 添加 provider**。打开 magpie，进入 **Providers → 添加 provider**。选一个预设、粘贴 key，或者登录一个订阅。
 
@@ -290,3 +286,42 @@ magpie plugin options model-map '{"mapping": {"fast": "deepseek/deepseek-chat"}}
 ## 许可证
 
 [MIT](LICENSE)
+
+## 发布本改版
+
+将源码推送到本仓库的 `master` 后，在 **Actions → 发布与同步 → Run workflow** 选择 `master`，填写纯版本号（例如 `0.1.1294`）可直接构建；版本号留空则检查并同步上游，发现新版后继续构建。`ref` 留空即构建所选分支，也可填写本仓库的提交或标签。勾选 `publish` 会发布到本仓库的 Releases；取消则仅生成 Actions 构建附件。推送指向改版提交的新 `vX.Y.Z` 标签也会触发发布；已有上游标签指向不同代码时，应使用新版本号。
+
+发布包含 15 个桌面/命令行文件和 `SHA256SUMS`，全部上传并校验后才公开。更新日志根据本仓库上次发布以来的提交生成；首次发布以当前版本之前、已合入源码的上游正式发布为基准。正文最多展示最近 100 条提交，并限制为 120,000 UTF-8 字节，完整历史通过比较链接查看，避免超过 GitHub 正文限制。翻译优先使用免 Token 的微软 Edge 接口，失败时使用 Google `client=gtx`；两个接口都失败时保留原文，仍会生成中英文分区。无需注册翻译服务或配置翻译 Secret。应用内更新源与“更新内容”读取本仓库的 Release 版本、附件和正文。
+
+Homebrew 配方由 `scripts/update-tap.sh` 按本次发布的真实校验值生成，保存在 `homebrew-v版本号` Actions 附件中，不复制上游二进制的校验值。若配置仓库 Secret `GPG_PRIVATE_KEY`（有密码时还需 `GPG_PASSPHRASE`），工作流会使用该密钥签名提交 `Formula/magpie.rb` 和 `Casks/magpie-app.rb` 到默认分支；密钥及其邮箱须已在 GitHub 验证。未配置时可下载附件后在本地 GPG 签名提交。首次提交配方后，可执行：
+
+```sh
+brew tap zhumengstarsea/magpie https://github.com/zhumengstarsea/magpie
+brew install zhumengstarsea/magpie/magpie
+brew install --cask zhumengstarsea/magpie/magpie-app
+```
+
+普通构建与发布只使用自带的 `GITHUB_TOKEN`，无需跨仓库 PAT 或部署密钥。macOS 默认使用临时签名；开发者签名需要 `MAC_CERTIFICATE_P12`、`MAC_CERTIFICATE_PASSWORD`，公证另需 `APPLE_API_KEY_P8`、`APPLE_API_KEY_ID`、`APPLE_API_ISSUER`，或 `APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID`。这些均为自己的仓库 Secrets。
+
+### 自动跟进上游发布
+
+扫描、同步和发行统一在 `发布与同步` 工作流中，在北京时间每天 **00:00、06:00、12:00、18:00** 检查一次，也可在 Actions 中手动运行。GitHub 定时任务可能延迟，工作流必须存在于默认分支 `master`。
+
+检测 `yetone/magpie-releases` 的最新正式发布，确认平台附件完整后，将 `yetone/magpie` 对应源码标签合并到自己的 `master`。新合并提交使用 GPG 签名，普通推送成功后在本次运行内继续构建和发行，版本保持纯 `X.Y.Z`，无需再启动另一个工作流。自己的更新日志和更新下载均读取本仓库的 Releases。
+
+每次扫描也同步上游所有同名分支（包括新增分支），保留上游原始提交。定制 `master` 和仅存在于自己仓库的分支不参与镜像同步；上游改写分支时用带租约的推送跟进，若目标分支在扫描后被其他人更新则中止，避免覆盖并发修改。仅分支更新也会保留本次运行记录。
+
+在 **Settings → Secrets and variables → Actions** 配置两个 Repository secrets：
+
+| 名称 | 内容 |
+| --- | --- |
+| `SYNC_TOKEN` | 只授权本仓库的 fine-grained PAT；Contents、Workflows、Actions 均为 Read and write |
+| `GPG_PRIVATE_KEY` | 完整 ASCII 格式 GPG 私钥，公钥及对应邮箱已在 GitHub 验证 |
+
+私钥有密码时另加 `GPG_PASSPHRASE`；无密码则不需要创建。Actions 需启用并允许工作流使用的公共 Actions。Token 或分支规则还需允许向 `master` 普通推送；签名不会绕过要求 PR 等分支保护规则。
+
+已发布的相同或更高版本不会重复构建；所有扫描和发行串行运行，当前发行结束后才开始排队的检查。构建失败但尚未发布时，下次检查可重试。合并冲突会中止并还原本次合并，不会推送冲突内容；并发推送导致分支变化时普通推送会失败，不会强推。已有同名标签指向上游原版或无关提交时会明确报错，需要手动处理；自动同步不会移动现有标签。上游标签仅拉到远程引用，自己的 `vX.Y.Z` 发布标签指向含定制改动的源码。
+
+每次扫描会自动清理以前已完成且成功、明确标记为“未发现上游更新”的发布与同步运行记录。发现更新、手动指定版本构建、附件未齐、失败及运行中的记录均保留。当前检查结束前不能删除自己的运行记录，因此最近一次无更新检查会保留到下一次扫描时清理。清理只删除对应 Actions 运行，不删除 GitHub Releases 和发布附件。
+
+`Test`（代码测试）、`Docker`（镜像构建）、`privacy-filter`（隐私过滤专项检查）等辅助任务的已完成记录也会在扫描时清理：成功保留 7 天，其余结束状态保留 30 天。清理依据最后更新时间，跳过正在运行的任务，不删除容器镜像或已发布安装包。历史记录名称保持原样，清理同时识别中英文名称。

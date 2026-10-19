@@ -12,6 +12,7 @@ import (
 	"encoding/binary"
 	"math"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 	"unsafe"
@@ -78,6 +79,27 @@ func (c *rowChunk) pack() *rowChunk {
 }
 
 func (c *rowChunk) unpack() *rowChunk { return c.unpackInto(nil) }
+
+// keptStrings copies out the strings that a result kept after a read takes
+// from the rows it visited. An unpacked block's strings are cut from one
+// allocation (unpackInto), so a cache holding one session id from a block
+// holds every string of that block: its request and response ids and its
+// errors. The Sessions and Routing caches kept a session id from nearly
+// every block, and so the decoded text of the whole history: ~200 MB at
+// rest for 600k calls.
+type keptStrings map[string]string
+
+func (k keptStrings) of(s string) string {
+	if s == "" {
+		return ""
+	}
+	if kept, ok := k[s]; ok {
+		return kept
+	}
+	kept := strings.Clone(s)
+	k[kept] = kept
+	return kept
+}
 
 // unpackInto is unpack decoding the rows into rows when it is large enough:
 // every field of a row is written, so a reused slice needs no clearing.

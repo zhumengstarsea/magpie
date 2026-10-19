@@ -201,6 +201,36 @@ func TestSettingsRefusalRetries(t *testing.T) {
 	}
 }
 
+// How long an image is given to be drawn (neighbads on X) is set by the
+// Settings page, 0 for the default 5 minutes, kept by a save from a page
+// that doesn't send it, and refused past 60 with the saved value kept.
+func TestSettingsImageTimeout(t *testing.T) {
+	h := t.TempDir()
+	t.Setenv("HOME", h)
+	t.Setenv("USERPROFILE", h)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(h, ".config"))
+	handler := Handler(nil, nil)
+	for _, x := range []struct {
+		body string
+		code int
+		want int
+	}{
+		{`{"theme":"dark","imageTimeout":30}`, http.StatusOK, 30},
+		{`{"theme":"light"}`, http.StatusOK, 30},
+		{`{"theme":"light","imageTimeout":61}`, http.StatusBadRequest, 30},
+		{`{"theme":"light","imageTimeout":0}`, http.StatusOK, 0},
+	} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest("POST", "/api/settings", strings.NewReader(x.body)))
+		if rec.Code != x.code {
+			t.Fatalf("%s: %d %s", x.body, rec.Code, rec.Body)
+		}
+		if got := settings.Load().ImageTimeout; got != x.want {
+			t.Fatalf("%s: imageTimeout %d", x.body, got)
+		}
+	}
+}
+
 func TestSettingsColorblindMode(t *testing.T) {
 	h := t.TempDir()
 	t.Setenv("HOME", h)

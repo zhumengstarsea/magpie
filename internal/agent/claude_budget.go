@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"cmp"
 	"encoding/json"
 	"strconv"
 	"strings"
@@ -25,6 +26,10 @@ type claudeBudget struct {
 	id     string // as Claude Code is handed it: its key under modelSettings
 	window int    // its window, 0 when unknown
 	long   bool   // Claude Code takes it for 1M by its id ("[1m]")
+	// Claude Code's main model: a long one's window is the one told too,
+	// so the main runs to its own should Claude Code stop taking it for
+	// 1M, and nothing written reads as holding it to a smaller tier's
+	main bool
 	// the auto-compact window magpie gives it: 0 for the top-level one
 	// (base), below 0 for none, its whole window
 	compact int
@@ -58,8 +63,11 @@ func budgetPath(id string) string {
 // top to its own window, as magpie can't put theirs right.
 func claudePlan(models []claudeBudget, base int, theirs map[string]string) (top int, entries map[string]int) {
 	for _, m := range models {
-		if !m.long && m.window > top {
+		switch {
+		case !m.long && m.window > top:
 			top = m.window
+		case m.long && m.main:
+			top = max(top, cmp.Or(m.window, claudeLong))
 		}
 	}
 	for _, m := range models {

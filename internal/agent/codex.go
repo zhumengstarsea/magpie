@@ -1673,7 +1673,7 @@ func codexOwnViaMagpie(model string) string {
 // codexOwnOf is the model of Codex's own a catalog id serves on a ChatGPT
 // account (codexOwnViaMagpie's way back); "" for any other.
 func codexOwnOf(id string) string {
-	if !isMagpie(id) || strings.HasPrefix(id, provider.GroupPrefix) {
+	if !isMagpie(id) || provider.IsGroupRef(id) {
 		return ""
 	}
 	p, model, ok := provider.Resolve(id)

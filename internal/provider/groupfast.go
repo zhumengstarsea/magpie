@@ -182,7 +182,7 @@ func cleanFast(entries []Entry, g *Group) error {
 			continue // taken out of the group
 		}
 		model, _ := memberEffortIn(entries, f)
-		if strings.HasPrefix(model, GroupPrefix) {
+		if IsGroupRef(model) {
 			return fmt.Errorf("%s is a group: its models are sent as it says, so it takes no :%s", model, FastWord)
 		}
 		if p, m, ok := resolveIn(entries, model); ok && !CanFast(p, m) {

@@ -634,10 +634,14 @@ button.rt-session { cursor: pointer; }
 .rt-addc.wide { width: auto; height: 26px; padding: 0 10px 0 8px; border: 1px dashed var(--line); }
 .rt-addc:hover, .rt-addc.open, .rt-addc:focus-visible { color: var(--fg); background: var(--card-2); }
 .rt-addc.wide:hover, .rt-addc.wide.open { border-color: var(--muted); }
-/* the rule's ⋯: on hover, as the usage rows' */
-.rt-rule > .rt-rmore { align-self: start; opacity: 0; transition: opacity .12s, background .12s, color .12s; }
-.rt-rule:hover > .rt-rmore, .rt-rule > .rt-rmore:focus-visible, .rt-rule > .rt-rmore.open { opacity: 1; }
-@media (hover: none) { .rt-rule > .rt-rmore { opacity: 1; } }
+/* the rule's ⋯, always drawn, in the icons' quiet grey: it is the only
+   way to move or remove a rule, and drawn on hover alone nobody found it
+   (ppBruce on Discord: "a rule added has no delete button") */
+.rt-rule > .rt-rmore { align-self: start; }
+.rt-rule > .rt-rmore.open { background: var(--pill); color: var(--fg); }
+/* why Save refused the rule, under it until it has a condition */
+.rt-rule > .rt-rneed { grid-column: 2 / -1; color: var(--amber, var(--muted)); font-size: 11.5px; }
+.rt-rule > .rt-rneed[hidden] { display: none; }
 /* how a part works, under an ⓘ beside it */
 .rt-info { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; color: var(--muted); cursor: help; outline: none; }
 .rt-info:hover, .rt-info:focus-visible { color: var(--fg); }

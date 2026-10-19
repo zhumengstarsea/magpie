@@ -135,6 +135,10 @@ type SubscriptionQuota struct {
 	// its provider hasn't (accessKeyCard, #1821): the Usage page offers
 	// the provider's settings to give it in.
 	NeedsAccessKey bool `json:"needsAccessKey,omitempty"`
+	// SeeAt is the vendor's page that shows what its API tells no key:
+	// OpenCode Zen's credits, on its console (errOpenCodeNoBalance). The
+	// Usage page offers to open it.
+	SeeAt string `json:"seeAt,omitempty"`
 	// AsOf is when an allowance shown in place of one that couldn't be
 	// read was read (see keepLast); nil for a reading just made.
 	AsOf *time.Time `json:"asOf,omitempty"`

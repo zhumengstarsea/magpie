@@ -217,7 +217,7 @@ magpie quota                             <span class="c"># acme · Pro · 5h 37%
       <li><b>更新。</b>
         <ul>
           <li>コミュニティのパッケージ（<code>@magpie-community/*</code>）は、magpie の起動から少し後に自動で更新され、その後は 1 時間ごとに更新されます。</li>
-          <li>そのほかのパッケージは、新しいバージョンがあると <span class="ui">プラグイン</span> にドットが表示され、ユーザーがクリックか <code>magpie plugin update</code> で更新します。</li>
+          <li>そのほかのパッケージは、新しいバージョンがあると <span class="ui">プラグイン</span> にドットが表示され、サイドバーの <span class="ui">インストール済み</span> に「1 件のアップデート」と出ます。このときプラグインを開くとインストール済みが開き、新しいバージョンのあるプラグインが上部に <span class="ui">すべてアップデート</span> と並んで表示されます。ユーザーはクリックか <code>magpie plugin update</code> で更新します。</li>
           <li>バージョンを固定した指定（<code>name@1.2.3</code>）は、ユーザーが更新するまでそのバージョンのままです。<span class="ui">… にアップデート</span>、<span class="ui">すべてアップデート</span>、<code>magpie plugin update</code> は最新版をインストールし、固定を外します。</li>
           <li>git リポジトリには比べるバージョンがありません。ブランチやタグ（<code>#ref</code> がなければデフォルトブランチ）が Bun のインストールしたコミットと違うときだけ、アップデートが表示されます。GitHub のものは GitHub の API に、ほかのホストは <code>git ls-remote</code> で、最大 10 分に 1 回問い合わせ、1 時間ごとのチェックでも問い合わせます。コミットに固定した指定にはアップデートはありません。行にはインストールしたコミットが表示されます。</li>
         </ul></li>
@@ -808,7 +808,10 @@ claude mcp add --transport http magpie-tools http://127.0.0.1:3425/mcp/magpie/to
   <span class="s">"name"</span>: <span class="s">"magpie-usage-glance"</span>,
   <span class="s">"version"</span>: <span class="s">"0.1.0"</span>,
   <span class="s">"magpie"</span>: {
-    <span class="s">"page"</span>: { <span class="s">"title"</span>: <span class="s">"Usage glance"</span>, <span class="s">"file"</span>: <span class="s">"page/index.html"</span>, <span class="s">"icon"</span>: <span class="s">"page/icon.svg"</span> },
+    <span class="s">"page"</span>: {
+      <span class="s">"title"</span>: <span class="s">"Usage glance"</span>, <span class="s">"file"</span>: <span class="s">"page/index.html"</span>, <span class="s">"icon"</span>: <span class="s">"page/icon.svg"</span>,
+      <span class="s">"titles"</span>: { <span class="s">"zh"</span>: <span class="s">"用量速览"</span>, <span class="s">"ja"</span>: <span class="s">"使用量の概要"</span> }
+    },
     <span class="s">"permissions"</span>: [<span class="s">"usage:summary"</span>]
   }
 }</pre>
@@ -831,7 +834,8 @@ document.getElementById(<span class="s">"calls"</span>).textContent = `${s.calls
 <span class="k">const</span> opts = <span class="k">await</span> magpie.options.get()            <span class="c">// this plugin's own options</span>
 <span class="k">await</span> magpie.options.set({ ...opts, hideCost: <span class="k">true</span> })</pre>
     </div>
-    <p>プラグインページの行には、オンにする前からページと読めるものが表示されます。<code>page.file</code> と <code>page.icon</code> はプラグイン内のパスです。ページのファイルは <code>file</code> のフォルダにあるものだけで、外を指すパスやリンクは配信されません。1 つのパッケージがページとプロバイダ、ミドルウェア、エージェントを兼ねることもできます。ページだけのプラグインはプラグインホストを起動しません。</p>
+    <p>プラグインページの行には、オンにする前からページと読めるものが表示されます。<code>page.file</code> と <code>page.icon</code> はプラグイン内のパスです。ページのファイルは <code>file</code> のフォルダにあるものだけで、外を指すパスやリンクは配信されません。1 つのパッケージがページとプロバイダ、ミドルウェア、エージェントを兼ねることもできます。ページだけのプラグインはプラグインホストを起動しません。<code>page.titles</code>（パネルでは <code>titles</code>）は、言語コード（<code>zh</code>、<code>zh-TW</code>、<code>ja</code>、<code>de</code>）ごとのタブ名です。ほかの言語では <code>title</code> を使います。</p>
+    <p>ページがスタイルを付けていないところは、最初から magpie の見た目になります。bridge がフォント、色、見出し、ボタン、入力欄、表のスタイルシートを重みなし（<code>:where()</code>）で加えるので、ページ自身のルールが常に勝ちます。自分のスタイルでは <code>--magpie-*</code> 変数を使うとウィンドウに揃います。</p>
     <h3>ページが頼めること</h3>
     <div class="table-wrap"><table>
       <tr><th>フィールド / 呼び出し</th><th>返すもの</th></tr>
@@ -849,6 +853,56 @@ document.getElementById(<span class="s">"calls"</span>).textContent = `${s.calls
       <li>ページが捕まえなかったエラーは、その場所に<span class="ui">このページは動作を停止しました</span>と<span class="ui">再試行</span>を表示します。ページ自身のスクリプトのエラーはページには「Script error.」としか届かないので、詳しくはウィンドウのコンソールを見てください。</li>
     </ul>
 
+    <h3 id="panels"><a class="anchor" href="#panels">magpie 自身のページに入るパネル</a></h3>
+    <p>プラグインは、magpie 自身が描くページにパネルを加えることもできます。パネルはそれぞれプラグインのフォルダーにある小さなページで、ブリッジ、読み取り、オプション、サンドボックスはページと同じです。タイトルの見出しの下のカードに収まり、高さは描いた内容に合わせて決まります。</p>
+    <div class="code">
+      <span class="lang">package.json</span>
+      <button class="copy" data-copy="pn-pkg">コピー</button>
+      <pre id="pn-pkg">{
+  <span class="s">"name"</span>: <span class="s">"magpie-provider-notes"</span>,
+  <span class="s">"version"</span>: <span class="s">"0.1.0"</span>,
+  <span class="s">"magpie"</span>: {
+    <span class="s">"panels"</span>: [
+      { <span class="s">"slot"</span>: <span class="s">"provider"</span>, <span class="s">"file"</span>: <span class="s">"ui/notes.html"</span>, <span class="s">"title"</span>: <span class="s">"Notes"</span> },
+      { <span class="s">"slot"</span>: <span class="s">"usage"</span>, <span class="s">"file"</span>: <span class="s">"ui/spend.html"</span>, <span class="s">"title"</span>: <span class="s">"Top models today"</span> }
+    ],
+    <span class="s">"permissions"</span>: [<span class="s">"usage:summary"</span>]
+  }
+}</pre>
+    </div>
+    <div class="table-wrap"><table>
+      <tr><th><code>slot</code></th><th>パネルが入る場所</th><th><code>magpie.context</code></th></tr>
+      <tr><td><code>agents</code></td><td>「エージェント」ページの末尾</td><td><code>{}</code></td></tr>
+      <tr><td><code>usage</code></td><td>使用量の「概要」の末尾</td><td><code>{}</code></td></tr>
+      <tr><td><code>settings</code></td><td>設定の「<span class="ui">プラグイン</span>」タブ（プラグインがそこにパネルを置いているときだけ表示）</td><td><code>{}</code></td></tr>
+      <tr><td><code>provider</code></td><td>保存した各プロバイダーの編集画面</td><td><code>{ provider: { id, name } }</code></td></tr>
+    </table></div>
+    <p>パネルは 1 つのプラグインにつき 8 個まで。パネルの高さは <code>&lt;html&gt;</code> に合わせて決まる（最大 2400px）ので、ページ自身に高さを任せ、<code>html</code> や <code>body</code> に固定の高さを付けないでください。パネルがエラーを出すか 10 秒以内に応答しないと、その場所に「<span class="ui">{name} は動作を停止しました</span>」と「<span class="ui">再試行</span>」が表示されます。周りのページと隣のパネルはそのまま動き続けます。</p>
+    <h3 id="replaces"><a class="anchor" href="#replaces">組み込みページの代わりになる</a></h3>
+    <p>ページは magpie 自身のページの代わりになれます。<code>magpie.page</code> に <code>"replaces"</code> を加え、<code>sessions</code>、<code>library</code>、<code>routing</code>、<code>usage</code> のどれかを指定します。そのタブが組み込みページのあった場所に入り、そのページへのリンクはプラグインのページを開きます。2 つのプラグインが同じページを指定したときは、プラグイン一覧で先にあるほうが代わりになり、もう一方は独立したページになります。プラグインをオフにすると、組み込みページが元どおりに戻ります。</p>
+    <div class="code">
+      <span class="lang">package.json</span>
+      <button class="copy" data-copy="pg-replaces">コピー</button>
+      <pre id="pg-replaces"><span class="s">"page"</span>: { <span class="s">"title"</span>: <span class="s">"My library"</span>, <span class="s">"file"</span>: <span class="s">"page/index.html"</span>, <span class="s">"replaces"</span>: <span class="s">"library"</span> }</pre>
+    </div>
+    <h3 id="actions"><a class="anchor" href="#actions">magpie のメニューに入る項目</a></h3>
+    <p>ページを持つプラグインは、magpie の行のメニューに項目を加えられます。プロバイダの行（右クリック）とエージェントの行（ハンドル、または右クリック）です。項目は magpie 自身の項目のあとに並び、ページのタイトルと同じくウィンドウの言語で表示されます。項目を選ぶとプラグインのページが開き、どの項目か、その行の id と名前だけが伝えられます。ページは <code>magpie.onAction</code> で受け取ります。ハンドラーを渡す前に選ばれた項目は、渡されるまで待ちます。</p>
+    <div class="code">
+      <span class="lang">package.json</span>
+      <button class="copy" data-copy="pg-actions">コピー</button>
+      <pre id="pg-actions"><span class="s">"page"</span>: { <span class="s">"title"</span>: <span class="s">"Balance"</span>, <span class="s">"file"</span>: <span class="s">"page/index.html"</span> },
+<span class="s">"actions"</span>: [
+  { <span class="s">"id"</span>: <span class="s">"check"</span>, <span class="s">"menu"</span>: <span class="s">"provider"</span>, <span class="s">"title"</span>: <span class="s">"Check balance"</span>, <span class="s">"titles"</span>: { <span class="s">"zh"</span>: <span class="s">"查余额"</span> } }
+]</pre>
+    </div>
+    <div class="code">
+      <span class="lang">page/app.js</span>
+      <button class="copy" data-copy="pg-onaction">コピー</button>
+      <pre id="pg-onaction">magpie.onAction(({ id, provider }) =&gt; {
+  <span class="c">// id: "check"; provider: { id, name }</span>
+});</pre>
+    </div>
+    <p><code>menu</code> は <code>provider</code> か <code>agent</code> です。<code>id</code> は小文字、数字、ハイフンで、40 文字まで。項目はプラグインごとに最大 8 個で、<code>title</code> のない項目はページのタイトルを使います。ページのないプラグインは項目を加えません。「プラグイン」ページには、プラグインがどのメニューに項目を加えるかが表示されます。</p>
     <h2 id="pi"><a class="anchor" href="#pi">pi パッケージ</a></h2>
     <p>magpie は <a href="https://github.com/earendil-works/pi">pi</a> のパッケージも動かします。<code>pi.registerProvider</code> でプロバイダを登録する pi 拡張は、何も変えずに pi と同じように magpie で動き、ほかのプラグインと同じ方法で追加できます（<code>magpie plugin add pi-antigravity</code>）。</p>
     <ul>

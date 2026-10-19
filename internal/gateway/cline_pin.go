@@ -8,8 +8,8 @@ import (
 	"github.com/yetone/magpie/internal/provider"
 )
 
-// clinePin is body with its DeepSeek model pinned to DeepSeek's own API
-// on the Cline API, when the provider asks it (provider.PinUpstream):
+// clinePin is body with its DeepSeek or GLM model pinned to its maker's
+// own API (DeepSeek's, Z.ai's) on the Cline API, when the provider asks it (provider.PinUpstream):
 // providerOptions.gateway.only, which Cline's AI gateway reads to serve
 // the model from that host alone, as ClinePass + ProviderPin set it
 // (linux.do/t/topic/2918145). A body naming providerOptions itself is

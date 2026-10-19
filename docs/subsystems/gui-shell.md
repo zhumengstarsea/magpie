@@ -397,6 +397,38 @@ leaving suggested plugin cards in place so a click begun before the answer still
 opens the intended plugin. `plugin-market.test.cjs` holds the search response
 between pointerdown and pointerup to check this in Chromium and WebKit.
 
+### Routing shown by the magpie that serves the gateway
+
+A magpie on this computer that does not serve the gateway shows the serving
+one's routing in its Routing page, instead of the notice that its routing
+cannot be watched here (#2606). The trigger is `served.Load()` being nil while
+a magpie answers at the gateway's address. Then `/api/gateway/trace` reads
+the serving magpie's `GET /v1/magpie/trace` over loopback
+([`OwnerTrace`](../../internal/gateway/trace.go)) and answers with it as its
+own (`mine` true, so the page plays it), and `/api/lanes` reads
+`GET /v1/magpie/concurrency` ([`OwnerLanes`](../../internal/gateway/trace.go))
+so a provider's rows show the same pills. Both are read on loopback alone
+(`ownerURL`): a gateway address on another interface or host is never asked,
+whatever `MAGPIE_ADDR` says, and one listening everywhere is read at
+127.0.0.1. `OwnerTrace` lets a hung magpie go 5s past the 25s long poll, or
+when the page stops asking; `OwnerLanes` waits 700ms, as `ServedBy` does, and
+is asked only when a magpie answers. The state read carries the serving
+magpie's `serves` and `pid` ([`gatewayJSON`](../../internal/gui/providers.go)),
+and the trace carries them as `by`. The Routing page's heading names the
+magpie from `by` ("serve (pid 49217) is routing · 127.0.0.1:3525"), so the
+name goes with the trace: when the page's trace comes from another magpie
+than before (a takeover, either way), it drops the routes it had and reads
+the new one's whole trace. Nothing is written; serving and takeover are
+unchanged. A
+magpie that serves the gateway keeps its own trace, and one older than the
+endpoint keeps the notice as before (a refused or unreadable read is unknown,
+never empty: `OwnerTrace` says so with its second result). See
+`TestConsoleShowsTheServingMagpiesRouting` and
+`TestConsoleKeepsTheNoticeFromAnOlderGateway` in
+[`trace_peer_test.go`](../../internal/gui/trace_peer_test.go), and
+`TestGatewayTraceIsLoopbackOnly` in
+[`trace_peer_test.go`](../../internal/gateway/trace_peer_test.go).
+
 ## Verification
 
 The session readers include Cursor CLI chat stores, Cursor editor project

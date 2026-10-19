@@ -75,6 +75,9 @@ type SignInState struct {
 	PasteKey     bool   `json:"pasteKey,omitempty"`
 	KeysURL      string `json:"keysURL,omitempty"`
 	Instructions string `json:"instructions,omitempty"` // a plugin's words for its page
+	// Opened is a page the plugin's own CLI opened already (Grok Build's
+	// `grok login`), shown but not opened a second time
+	Opened bool `json:"opened,omitempty"`
 	// Installing is the CLI being installed before the sign-in can start
 	Installing string `json:"installing,omitempty"`
 	User       string `json:"user,omitempty"`  // the account, once done

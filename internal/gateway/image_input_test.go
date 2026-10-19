@@ -357,7 +357,7 @@ func TestGroupWithUnknownImageCapabilityReachesUpstream(t *testing.T) {
 		}
 	}
 	for _, e := range provider.Catalog() {
-		if e.ID == "group/auto-claude-sonnet-4-5" {
+		if e.ID == "auto/claude-sonnet-4-5" {
 			if !e.Images || e.ImageInput == nil || !*e.ImageInput {
 				t.Fatalf("group image capability: %+v", e)
 			}

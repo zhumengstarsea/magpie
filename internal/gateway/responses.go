@@ -196,6 +196,62 @@ func unsealed(schema json.RawMessage) json.RawMessage {
 	return out
 }
 
+// asksSealing is a Responses request whose tools mark a parameter
+// "encrypted" (MultiAgentV2's spawn_agent message): an upstream that
+// honours the mark answers the call with that argument sealed.
+func asksSealing(body []byte) bool {
+	if !bytes.Contains(body, []byte(`"encrypted"`)) {
+		return false
+	}
+	var q struct {
+		Tools []struct {
+			Parameters json.RawMessage `json:"parameters"`
+			Tools      []struct {
+				Parameters json.RawMessage `json:"parameters"`
+			} `json:"tools"`
+		} `json:"tools"`
+	}
+	if decodeJSON(body, &q) != nil {
+		return false
+	}
+	var mark func(any) bool
+	mark = func(v any) bool {
+		switch x := v.(type) {
+		case map[string]any:
+			if b, ok := x["encrypted"].(bool); ok && b {
+				return true
+			}
+			for _, c := range x {
+				if mark(c) {
+					return true
+				}
+			}
+		case []any:
+			for _, c := range x {
+				if mark(c) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	marked := func(schema json.RawMessage) bool {
+		var v any
+		return bytes.Contains(schema, []byte(`"encrypted"`)) && decodeJSON(schema, &v) == nil && mark(v)
+	}
+	for _, t := range q.Tools {
+		if marked(t.Parameters) {
+			return true
+		}
+		for _, nt := range t.Tools {
+			if marked(nt.Parameters) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func flatName(namespace, name string) string {
 	return provider.FlatName(namespace, name)
 }
@@ -1270,32 +1326,95 @@ func (u Usage) responses() map[string]any {
 
 // responsesDecoder turns a Responses stream into events.
 //
-// A function call's arguments are given once the call is done, not as
-// their deltas come: the deltas can leave out what the finished call holds
-// (#613: Codex's spawn_agent came back with arguments {} where the request
-// was translated, though the upstream's finished call had them), and what
-// was sent of a call's arguments can't be taken back.
+// A function call's arguments are given as their deltas come: a model
+// writing a patch or a command for minutes is seen writing it (echo_ts on
+// Discord: Codex on Copilot, translated for its web_search, saw nothing
+// until the call was done). The deltas can leave out what the finished
+// call holds (#613: Codex's spawn_agent came back with arguments {} where
+// the request was translated, though the upstream's finished call had
+// them), and what was sent of a call's arguments can't be taken back. So
+// the deltas that would make the arguments whole JSON wait for the call's
+// done events (jsonWhole), and the call is given what they add to it.
 type responsesDecoder struct {
 	started bool
 	called  bool            // a function call was streamed
 	calling bool            // a function call is open
-	args    strings.Builder // the open call's argument deltas
+	sent    strings.Builder // the open call's argument deltas given so far
+	held    string          // its deltas since they made whole JSON, not given yet
+	whole   jsonWhole       // where its deltas stand in their JSON
 	full    string          // the open call's arguments as its done events give them
 }
 
-// endCall gives the open call's arguments: the deltas, or what its done
-// events give where that holds more.
+// argsDelta gives an open call's argument delta, or holds it when with
+// it the deltas are whole JSON, which the done events may yet replace.
+func (d *responsesDecoder) argsDelta(delta string, emit func(Event)) {
+	if d.whole.feed(delta) {
+		d.held += delta
+		return
+	}
+	text := d.held + delta
+	d.held = ""
+	d.sent.WriteString(text)
+	if text != "" {
+		emit(Event{Kind: KToolArgs, Text: text})
+	}
+}
+
+// endCall gives the rest of the open call's arguments: what was held, or
+// what its done events give past what was sent where they hold more.
 func (d *responsesDecoder) endCall(emit func(Event)) {
 	if !d.calling {
 		return
 	}
 	d.calling = false
-	args := pickArgs(d.args.String(), d.full)
-	d.args.Reset()
-	d.full = ""
-	if args != "" {
-		emit(Event{Kind: KToolArgs, Text: args})
+	sent := d.sent.String()
+	rest := d.held
+	if args := pickArgs(sent+d.held, d.full); strings.HasPrefix(args, sent) {
+		rest = args[len(sent):]
 	}
+	d.sent.Reset()
+	d.held, d.full, d.whole = "", "", jsonWhole{}
+	if rest != "" {
+		emit(Event{Kind: KToolArgs, Text: rest})
+	}
+}
+
+// jsonWhole follows a stream of JSON text, a piece at a time, for whether
+// what came so far is a whole object or array.
+type jsonWhole struct {
+	depth    int
+	str, esc bool
+	began    bool
+}
+
+// feed reads the next piece and says whether the text is whole after it.
+func (j *jsonWhole) feed(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case j.esc:
+			j.esc = false
+		case j.str:
+			if c == '\\' {
+				j.esc = true
+			} else if c == '"' {
+				j.str = false
+			}
+		case c == '"':
+			j.str = true
+			if j.depth == 0 {
+				j.began = false
+			}
+		case c == '{' || c == '[':
+			j.depth++
+			j.began = true
+		case c == '}' || c == ']':
+			j.depth--
+		case c != ' ' && c != '\t' && c != '\n' && c != '\r' && j.depth == 0:
+			j.began = false // a value that isn't one, or after one
+		}
+	}
+	return j.began && j.depth == 0 && !j.str
 }
 
 // pickArgs is the fuller of a call's arguments as streamed and as its done
@@ -1369,7 +1488,7 @@ func (d *responsesDecoder) decode(data string, emit func(Event)) error {
 		emit(Event{Kind: KThink, Text: ev.Delta})
 	case "response.function_call_arguments.delta":
 		if d.calling {
-			d.args.WriteString(ev.Delta)
+			d.argsDelta(ev.Delta, emit)
 		} else {
 			emit(Event{Kind: KToolArgs, Text: ev.Delta})
 		}
@@ -1502,6 +1621,9 @@ type responsesEncoder struct {
 	// collector's last part isn't it once a hidden thinking block (signed
 	// with no text, or redacted) has come after the call (#1786)
 	call Part
+	// input reads a custom tool's input out of its call's arguments as
+	// they come
+	input customStream
 	// a message's output_item.done, and the events after it, wait here
 	// until its phase is known (phase.go, #2437)
 	heldMsg map[string]any
@@ -1661,10 +1783,15 @@ func (e *responsesEncoder) closeAs(sealed json.RawMessage) {
 			args = "{}"
 		}
 		p := e.call
-		if q := e.named[p.Name]; !q.Search && !q.Custom {
+		item = callTo(map[string]any{"id": e.itemID, "type": "function_call", "status": "completed", "call_id": p.ID, "arguments": args}, p.Name, e.named)
+		switch q := e.named[p.Name]; {
+		case q.Custom:
+			// as OpenAI ends a custom tool's input deltas
+			input, _ := item.(map[string]any)["input"].(string)
+			e.send("response.custom_tool_call_input.done", map[string]any{"item_id": e.itemID, "output_index": e.item, "input": input})
+		case !q.Search:
 			e.send("response.function_call_arguments.done", callTo(map[string]any{"item_id": e.itemID, "output_index": e.item, "call_id": p.ID, "arguments": args}, p.Name, e.named))
 		}
-		item = callTo(map[string]any{"id": e.itemID, "type": "function_call", "status": "completed", "call_id": p.ID, "arguments": args}, p.Name, e.named)
 	}
 	e.send("response.output_item.done", map[string]any{"output_index": e.item, "item": item})
 	e.output = append(e.output, item)
@@ -1759,14 +1886,21 @@ func (e *responsesEncoder) event(ev Event) {
 		item := callTo(map[string]any{"type": "function_call", "call_id": ev.ID, "arguments": ""}, ev.Name, e.named)
 		e.openItem(ToolCall, itemPrefix(item), item)
 		e.call = Part{Kind: ToolCall, ID: ev.ID, Name: ev.Name}
+		e.input = customStream{}
 		e.col.add(ev)
 		return
 	case KToolArgs:
 		if e.open == ToolCall && ev.Text != "" {
 			e.text.WriteString(ev.Text)
-			// a custom tool's input is whole only once its arguments are:
-			// it goes in the item when that is done
-			if !e.named[e.call.Name].Custom {
+			switch q := e.named[e.call.Name]; {
+			case q.Custom:
+				// a custom tool's input, as it is read out of the
+				// arguments: what the model writes of a patch is seen as
+				// it writes it, as from OpenAI
+				if in := e.input.feed(ev.Text); in != "" {
+					e.send("response.custom_tool_call_input.delta", map[string]any{"item_id": e.itemID, "output_index": e.item, "delta": in})
+				}
+			default:
 				e.send("response.function_call_arguments.delta", map[string]any{"item_id": e.itemID, "output_index": e.item, "delta": ev.Text})
 			}
 		}

@@ -1,10 +1,10 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/yetone/magpie/internal/provider"
@@ -59,7 +59,7 @@ func busy(status int, body []byte) bool {
 	switch status {
 	case 408, 500, 502, 503, 504, 529:
 		return failure(status, body) == failOther && !protectionRefused(status, body) &&
-			!strings.Contains(string(body), didNotStream)
+			!bytes.Contains(body, []byte(didNotStream))
 	case 429:
 		return failure(status, body) == failRate && !creditWords.Match(wordsOf(body))
 	}

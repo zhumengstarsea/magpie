@@ -3,6 +3,9 @@ package gui
 import (
 	"runtime"
 	"testing"
+	"time"
+
+	"github.com/yetone/magpie/internal/sessions"
 )
 
 // The warm-up's garbage goes back to the system when it ends, not over the
@@ -25,4 +28,37 @@ func TestWarmUpReturnsItsGarbage(t *testing.T) {
 		t.Fatalf("after the warm-up %d MB of heap is still in use", m.HeapAlloc>>20)
 	}
 	runtime.KeepAlive(keep)
+}
+
+// With Codex sessions on this computer the warm-up also reads Codex's
+// per-thread effort, which a first Codex page after a start otherwise read
+// from the whole ledger while it waited (#2776); without any it doesn't.
+func TestWarmUpReadsCodexEffort(t *testing.T) {
+	statsMemo.Lock()
+	saved := statsMemo.m
+	statsMemo.Unlock()
+	old := warmCodexEffort
+	t.Cleanup(func() {
+		statsMemo.Lock()
+		statsMemo.m = saved
+		statsMemo.Unlock()
+		warmCodexEffort = old
+	})
+	for _, c := range []struct {
+		keys []string
+		want int
+	}{{[]string{"claude:a", "codex:b"}, 1}, {[]string{"claude:a"}, 0}} {
+		statsMemo.Lock()
+		statsMemo.m = map[int]*statsKept{}
+		for _, d := range []int{0, 30} {
+			statsMemo.m[d] = &statsKept{at: time.Now(), st: sessions.Stats{Keys: c.keys}}
+		}
+		statsMemo.Unlock()
+		read := 0
+		warmCodexEffort = func() { read++ }
+		warmUp(warmSteps()...)
+		if read != c.want {
+			t.Fatalf("with sessions %v Codex's effort was read %d times, want %d", c.keys, read, c.want)
+		}
+	}
 }

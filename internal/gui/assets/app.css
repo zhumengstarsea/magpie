@@ -391,6 +391,8 @@ body.side-nav #nav button.has-dot::after { top: 50%; right: 10px; margin-top: -3
 .nav-sub > button { position: relative; z-index: 1; flex: none; display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 6px; font-size: 12.5px; color: var(--ctl-fg); text-align: left; white-space: nowrap; transition: color .2s var(--ease); }
 .nav-sub > button > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .nav-sub > button > em { margin-left: auto; font-style: normal; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* an update waiting, in the sidebar's dot colour, as the words the dot means */
+.nav-sub > button > em.up { color: var(--accent); font-weight: 500; }
 /* the selection (.nav-hl) is the only shape in the list: a row hovered or
    pressed has no ground of its own, which would show where the finger is
    before the selection slides there */
@@ -2060,6 +2062,7 @@ body.window .foot { padding-left: 18px; }
 .pop li .option-words { display: flex; align-items: center; min-width: 0; flex: 1 1 auto; gap: 9px; }
 .pop li .v { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 .pop li .badge.free, .pop li .badge.ctx, .pop li .badge.rate, .pop li .badge.path { flex: none; margin-left: -4px; padding: 0 4px; font-size: 9px; line-height: 14px; align-self: center; }
+.pop li .mtell { flex: none; margin-left: -4px; font-size: 11px; color: var(--muted); }
 .pop li .n { flex: 1 1 0; min-width: 0; font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
 .pop li .favorite { display: none; align-items: center; justify-content: center; color: var(--faint); width: 24px; height: 24px; border-radius: 6px; flex: none; }
 .pop li:hover .favorite, .pop li .favorite.on { display: inline-flex; }
@@ -2678,8 +2681,10 @@ body.window .ag-sk-icon { width: 22px; height: 22px; border-radius: 6px; }
 /* the sign-in link, one line, selected whole with a click */
 .signing .signlink { display: flex; align-items: center; gap: 4px; margin: 5px 0 1px; min-width: 0; }
 .signing .signlink code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--code-style, normal) var(--code-weight, 400) 11px/1.3 var(--code-font, var(--code)); font-stretch: var(--code-stretch, 100%); color: var(--fg-2); padding: 4px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); user-select: all; -webkit-user-select: all; cursor: text; }
-.signing .callback-form { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 6px; }
-.signing .callback-form input { flex: 1; min-width: 120px; width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--card); color: var(--fg); font-size: 12px; }
+.signing .callback-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
+.signing .callback-form input { flex: 1; min-width: 120px; width: 100%; height: 28px; padding: 0 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--card); color: var(--fg); font-size: 12px; }
+/* the field's button: as tall as the field, with the same corners */
+.signing .callback-form > button { height: 28px; padding: 0 12px; border-radius: 7px; }
 .signing .why { color: var(--red); }
 /* a plugin's ways to sign in: the question keeps the row, the choices
    wrap beneath it at whatever length the plugin names them */
@@ -3033,7 +3038,7 @@ body.window .ag-sk-icon { width: 22px; height: 22px; border-radius: 6px; }
 .mbulk { display: flex; align-items: center; gap: 6px; }
 .mbulk > input { max-width: 260px; flex: 1; }
 /* a long list scrolls on its own, not the editor with it past its ends */
-.mchips { display: flex; flex-wrap: wrap; gap: 4px; max-height: min(132px, 28vh); overflow-y: auto; overscroll-behavior: contain; padding: 1px; }
+.mchips { display: flex; flex-wrap: wrap; gap: 4px; max-height: min(240px, 40vh); overflow-y: auto; overscroll-behavior: contain; padding: 1px; }
 .mchips::-webkit-scrollbar { width: 0; }
 /* let out to its full height (#833): the editor's body scrolls instead */
 .mchips.open { max-height: none; overflow-y: visible; }
@@ -3059,6 +3064,18 @@ body.window .ag-sk-icon { width: 22px; height: 22px; border-radius: 6px; }
 .mchip:hover { color: var(--fg); border-color: var(--muted); }
 .mchip.on { color: var(--accent); background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); font-weight: 500; }
 .mchip.on::before { content: "✓"; font-size: 10px; }
+/* a chip a click picks and unpicks keeps its size either way (frankdeng on
+   Discord: the tick, and the bolder name, widened a chip as it was picked,
+   and every chip after it moved under the pointer). Its tick has a place
+   of its own, as a menu's check column has, held empty while unpicked, and
+   a pick is said by the tick and the colour, the weight left as it is. */
+.mchip.pick { padding-left: 7px; }
+.mchip.pick::before { content: "✓"; font-size: 10px; margin-right: -1px; visibility: hidden; }
+.mchip.pick.on { font-weight: inherit; }
+.mchip.pick.on::before { visibility: visible; }
+/* what tells a model from others of the same name (modelTells): quiet,
+   after the name, never in the accent of a pick */
+.mchip .mtell { color: var(--muted); font-weight: 400; font-size: 10.5px; }
 .mchip.own.on::before { content: "＋"; }
 /* served with none picked: the vendor's list stands in for the picks. Drawn
    apart from a pick (no tick, no accent): a click picks it alone (#681) */
@@ -3192,6 +3209,18 @@ body:not(.side-nav) #view-settings .set-head.stuck::before { box-shadow: 0 1px 0
 .view.plugin-page { padding: 0; }
 .plugin-frame { flex: 1; display: block; width: 100%; min-height: 240px; border: 0; background: transparent; }
 .view.plugin-page > .slot-error { margin: 0 12px; }
+/* a plugin's panels in magpie's own pages (P5): each a card, as tall as
+   what its frame draws, under its title */
+.plugin-slot { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
+.plugin-slot[hidden] { display: none; }
+.plugin-panel > .row-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.plugin-panel > .row-head .note { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.plugin-panel-body { border: 1px solid var(--line); border-radius: 10px; background: var(--card); overflow: hidden; }
+.plugin-panel-frame { flex: none; min-height: 0; height: 48px; }
+.plugin-panel-broke { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 12px 14px; }
+.plugin-panel-broke .note { flex: 1 1 200px; color: var(--muted); overflow-wrap: anywhere; }
+/* a built-in page a plugin's page replaces steps aside in the sidebar */
+#nav button[data-replaced] { display: none !important; }
 img.nav-ic { border-radius: 3px; object-fit: contain; }
 .row.pref { min-height: 50px; padding: 8px 12px 8px 14px; gap: 14px; }
 .row.pref .who { flex: 1 1 auto; }
@@ -4113,7 +4142,8 @@ input[type="checkbox"]:disabled { opacity: .45; }
 .ag-manager .ag-manage-search { width: 100%; box-sizing: border-box; }
 .ag-manage-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
 .ag-manage-count, .ag-manage-state { color: var(--fg-2); font-size: 12px; }
-.ag-manage-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; }
+/* a row is a <label>: .editor label (a form field's, right-aligned) is not this */
+.modal .editor label.ag-manage-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; text-align: left; font-size: 13px; color: var(--fg); cursor: pointer; }
 .ag-manage-row > input { flex: none; }
 .ag-manage-row > .ic { width: 22px; height: 22px; flex: none; }
 .ag-manage-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
