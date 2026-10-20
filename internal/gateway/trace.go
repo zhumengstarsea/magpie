@@ -249,6 +249,7 @@ type Weighed struct {
 	Pace     float64           `json:"pace,omitempty"`   // remaining allowance per hour until its window resets
 	Due      *time.Time        `json:"due,omitempty"`    // when the allowance window used for pace resets
 	Tokens   float64           `json:"tokens,omitempty"` // least used: tokens it served lately
+	Free     bool              `json:"free,omitempty"`   // its model costs nothing there (free first)
 	Turn     bool              `json:"turn,omitempty"`   // in turn: it was this one's turn
 	Fit      int               `json:"fit,omitempty"`    // keyFit
 	Speaks   provider.Protocol `json:"speaks,omitempty"` // a key made for one protocol only
@@ -443,6 +444,9 @@ func weighed(c candidate, p provider.Provider, wg weighing, fallback bool, from 
 	}
 	if wg.tokens != nil {
 		w.Tokens = wg.tokens[c.rest]
+	}
+	if wg.free != nil {
+		w.Free = wg.free[c.rest]
 	}
 	if sinks(p.Sink, p.Routing) {
 		markSunk(&w, c)

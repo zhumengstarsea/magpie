@@ -186,7 +186,7 @@ The router strategy point says the order a pool of routes is tried in: a
 provider's accounts or keys, or the heads of a group's members. The gateway
 still lists the pool, and keeps rests, affinity, rules, pins and the walk
 over the order itself; a strategy only orders. Smart, the default, stays in
-the core. The five other routings are the built-in plugin `rotation`'s.
+the core. The six other routings are the built-in plugin `rotation`'s.
 
 | Part | What it does | Source |
 | --- | --- | --- |

@@ -1196,6 +1196,10 @@ type weighing struct {
 	lefts map[allowanceKey]left // the allowance of each account and model
 
 	tokens map[string]float64 // least used: tokens each served lately
+
+	// free is each seat's model costing nothing there, by rest key: filled
+	// only when the routing weighs by it (routes.Strategy.ByFree)
+	free map[string]bool
 }
 
 type allowanceKey struct {
@@ -1324,6 +1328,15 @@ func weighRouted(p provider.Provider, cs []candidate, model string, from provide
 		wg.tokens = map[string]float64{}
 		for i, c := range cs {
 			wg.tokens[c.rest] = seats[i].Tokens
+		}
+	}
+	if st.ByFree {
+		// only a routing that weighs by it pays for working it out: it
+		// reads each candidate's provider list (provider.FreeModel)
+		wg.free = map[string]bool{}
+		for i, c := range cs {
+			free := c.p.FreeModel(c.model)
+			seats[i].Free, wg.free[c.rest] = free, free
 		}
 	}
 	order := routes.Apply(st, p.ID, seats)
