@@ -13,6 +13,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
+	satomic "sync/atomic"
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
@@ -1877,13 +1879,72 @@ func codexChatGPT(dir string) bool {
 // newest day of it at most — from the log database the Codex app and the
 // TUI share: the address it opened, and whether that was refused (nothing
 // listening there). Zero when none is logged.
+//
+// Every Drift asks it, so it is read again only when the database or its
+// -wal changed, or the day it covers moved past what it found (#1665: a
+// read per ask was ~2,500 opens of logs_2.sqlite in 25s of a start, each
+// one file system work a Windows filter driver adds its own to).
 func codexReached(dir string, since time.Time) (at time.Time, to string, refused bool) {
 	logs, _ := filepath.Glob(filepath.Join(dir, "logs_*.sqlite"))
 	if len(logs) == 0 {
 		return
 	}
 	slices.Sort(logs)
-	db, err := provider.OpenReadOnly(logs[len(logs)-1])
+	path := logs[len(logs)-1]
+	key := reachedKey{path: path, since: since.Unix(), db: stampOf(path), wal: stampOf(path + "-wal")}
+	reachedMu.Lock()
+	if c, ok := reachedMemo[dir]; ok && c.key == key && time.Since(c.read) < reachedFor &&
+		(c.at.IsZero() || time.Since(c.at) < 24*time.Hour) {
+		reachedMu.Unlock()
+		return c.at, c.to, c.refused
+	}
+	reachedMu.Unlock()
+	at, to, refused = codexReachedRead(path, since)
+	reachedMu.Lock()
+	reachedMemo[dir] = reachedRead{key: key, read: time.Now(), at: at, to: to, refused: refused}
+	reachedMu.Unlock()
+	return
+}
+
+// reachedFor is how long a read of Codex's log stands while its files say
+// nothing changed: a file system whose times are coarse can miss a write
+// that kept the size.
+const reachedFor = 15 * time.Second
+
+type reachedKey struct {
+	path    string
+	since   int64
+	db, wal fileStamp
+}
+
+type fileStamp struct{ size, mod int64 }
+
+func stampOf(path string) fileStamp {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return fileStamp{size: -1}
+	}
+	return fileStamp{size: fi.Size(), mod: fi.ModTime().UnixNano()}
+}
+
+type reachedRead struct {
+	key     reachedKey
+	read    time.Time
+	at      time.Time
+	to      string
+	refused bool
+}
+
+var (
+	reachedMu   sync.Mutex
+	reachedMemo = map[string]reachedRead{}
+	// reachedOpens counts the reads of the database, for the tests
+	reachedOpens satomic.Int64
+)
+
+func codexReachedRead(path string, since time.Time) (at time.Time, to string, refused bool) {
+	reachedOpens.Add(1)
+	db, err := provider.OpenReadOnly(path)
 	if err != nil {
 		return
 	}

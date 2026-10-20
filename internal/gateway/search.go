@@ -451,6 +451,38 @@ func smallModel(p provider.Provider, keep func(catalog.Model) bool) string {
 // recognition kept describing with an account out of its allowance, each
 // image refused 429).
 func smallReady(p provider.Provider, keep func(catalog.Model) bool, from provider.Protocol) (string, bool) {
+	c, ready := smallReadyOf(p, smallCands(p, keep), from)
+	return c.id, ready
+}
+
+// smallReadyOf is smallReady of cs, ranked as rankSmall ranks them: the
+// first with allowance left, each asked in turn, else the first.
+// spentModel weighs every account and key of the provider, and was asked
+// of each of its models before one was picked: a quarter of
+// AutoVision's allocations.
+func smallReadyOf(p provider.Provider, cs []smallCand, from provider.Protocol) (smallCand, bool) {
+	if len(cs) == 0 {
+		return smallCand{}, false
+	}
+	now := time.Now()
+	for _, c := range cs {
+		if _, spent := spentModel(p, c.id, from, now); !spent {
+			return c, true
+		}
+	}
+	return cs[0], false
+}
+
+// smallCand is a model smallModel may pick, and what it costs: input and
+// output a million tokens, 1e9 when it has no price.
+type smallCand struct {
+	id   string
+	cost float64
+}
+
+// smallCands is the provider's models smallModel picks among, of those
+// keep holds, in the order it picks them (rankSmall).
+func smallCands(p provider.Provider, keep func(catalog.Model) bool) []smallCand {
 	var ms []catalog.Model
 	for _, m := range p.Exposed() {
 		if keep != nil && !keep(m) {
@@ -464,48 +496,77 @@ func smallReady(p provider.Provider, keep func(catalog.Model) bool, from provide
 		}
 		ms = append(ms, m)
 	}
-	now := time.Now()
-	ready := slices.DeleteFunc(slices.Clone(ms), func(m catalog.Model) bool {
-		_, spent := spentModel(p, m.ID, from, now)
-		return spent
-	})
-	if id := pickSmall(ready); id != "" {
-		return id, true
-	}
-	return pickSmall(ms), false
+	return rankSmall(ms)
 }
 
-// pickSmall is smallModel's pick of ms.
-func pickSmall(ms []catalog.Model) string {
-	// on a router, a model of the big vendors
-	if big := slices.DeleteFunc(slices.Clone(ms), func(m catalog.Model) bool {
+// smallKept is the providers' smallCands, kept by provider.StampNow:
+// AutoVision and the searcher's pick built every provider's list again
+// each time they were asked, for every agent's list of models.
+var smallKept stamped[smallKey, []smallCand]
+
+// smallKey is what smallCands are of: a provider (an account's, by who is
+// signed in) and which keep.
+type smallKey struct {
+	kind, id, agent, user, plan, home string
+}
+
+// keptSmallCands is smallCands, kept (smallKept); kind names keep, which
+// must hold of a model by the model and the provider alone.
+func keptSmallCands(p provider.Provider, kind string, keep func(catalog.Model) bool) []smallCand {
+	k := smallKey{kind: kind, id: p.ID}
+	if a := p.Account; a != nil {
+		k.agent, k.user, k.plan, k.home = a.Agent, a.User, a.Plan, a.Home
+	}
+	return smallKept.get(k, func() []smallCand { return smallCands(p, keep) })
+}
+
+// rankSmall is ms in the order smallModel picks them, each one's pick of
+// those after it: on a router, a model of the big vendors first; then a
+// small one; then the cheaper; then the one listed first.
+func rankSmall(ms []catalog.Model) []smallCand {
+	type ranked struct {
+		smallCand
+		router, large bool // of a vendor not big; not small
+	}
+	rs := make([]ranked, len(ms))
+	for i, m := range ms {
 		v, _, ok := strings.Cut(m.ID, "/")
-		return ok && !slices.Contains([]string{"anthropic", "openai", "google", "x-ai"}, v)
-	}); len(big) > 0 {
-		ms = big
-	}
-	cost := func(m catalog.Model) float64 {
-		if m.Price == nil {
-			return 1e9
-		}
-		return m.Price.Input + m.Price.Output
-	}
-	cheapest := func(ms []catalog.Model) string {
-		if len(ms) == 0 {
-			return ""
-		}
-		return slices.MinFunc(ms, func(a, b catalog.Model) int { return cmp.Compare(cost(a), cost(b)) }).ID
-	}
-	small := slices.DeleteFunc(slices.Clone(ms), func(m catalog.Model) bool {
 		// "gemini" has a "mini" in it, which made every Gemini small and
 		// the first of them, a Pro, the one picked (#757)
 		l := strings.ReplaceAll(strings.ToLower(m.ID), "gemini", "")
-		return !strings.Contains(l, "haiku") && !strings.Contains(l, "mini") && !strings.Contains(l, "flash")
-	})
-	if id := cheapest(small); id != "" {
-		return id
+		cost := 1e9
+		if m.Price != nil {
+			cost = m.Price.Input + m.Price.Output
+		}
+		rs[i] = ranked{smallCand{m.ID, cost},
+			ok && !slices.Contains([]string{"anthropic", "openai", "google", "x-ai"}, v),
+			!strings.Contains(l, "haiku") && !strings.Contains(l, "mini") && !strings.Contains(l, "flash")}
 	}
-	return cheapest(ms)
+	slices.SortStableFunc(rs, func(a, b ranked) int {
+		if c := falseFirst(a.router, b.router); c != 0 {
+			return c
+		}
+		if c := falseFirst(a.large, b.large); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.cost, b.cost)
+	})
+	out := make([]smallCand, len(rs))
+	for i, r := range rs {
+		out[i] = r.smallCand
+	}
+	return out
+}
+
+// falseFirst orders false before true.
+func falseFirst(a, b bool) int {
+	switch {
+	case a == b:
+		return 0
+	case a:
+		return 1
+	}
+	return -1
 }
 
 // searcherModel is the model p searches with when none is named: its
@@ -518,10 +579,14 @@ func searcherModel(p provider.Provider) string {
 // searcherReady is searcherModel, and whether it has allowance left
 // (smallReady).
 func searcherReady(p provider.Provider) (string, bool) {
+	// what searchableModel says of a model is the model's and the
+	// provider's list's, which keptSmallCands is kept by
+	var keep func(catalog.Model) bool
 	if googleAccount(p) || p.IsRemoteMagpie() {
-		return smallReady(p, func(m catalog.Model) bool { return searchableModel(p, m.ID) }, provider.Anthropic)
+		keep = func(m catalog.Model) bool { return searchableModel(p, m.ID) }
 	}
-	return smallReady(p, nil, provider.Anthropic)
+	c, ready := smallReadyOf(p, keptSmallCands(p, "search", keep), provider.Anthropic)
+	return c.id, ready
 }
 
 // searchTool is the tool a model that can't search is given, under a name

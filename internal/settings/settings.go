@@ -240,6 +240,15 @@ type Settings struct {
 	// real Claude Code, its billing line and identity line kept; off, as by
 	// default, the run is the shape every Claude Code run has.
 	ClaudeLeanPrompt bool `json:"claudeLeanPrompt,omitempty"`
+	// ClaudeRunsMost is how many Claude Code processes a Claude
+	// subscription may have running at once: conversations' runs, those
+	// waiting for a next turn or on tool results, and one-off tests and
+	// allowance reads alike. 0, as by default, has magpie size it from
+	// this machine's memory on Linux (its cgroup's limit, else MemTotal),
+	// and leaves it unbounded elsewhere: each Claude Code holds about
+	// 100 MiB of its own, and a 512 MiB service was OOM-killed (#2956).
+	// It is this machine's, not taken from another's settings.
+	ClaudeRunsMost int `json:"claudeRunsMost,omitempty"`
 	// RefusalRetries is how many more times a request the vendor's safety
 	// filter refused, with nothing said, is asked of another account or
 	// routing group member (#248), unset for every one left. 0 hands the
@@ -359,8 +368,9 @@ type Settings struct {
 	// Lightweight lets the webview of a window closed — the tray panel or
 	// the main window — go once it has stayed closed a while, and makes it
 	// again when it is opened (#580): less memory, a moment's wait. This
-	// computer's own (KeepOwn).
-	Lightweight bool `json:"lightweight,omitempty"`
+	// computer's own (KeepOwn). Nil is on: a user who never chose has it,
+	// one who turned it off keeps it off (LightweightOn).
+	Lightweight *bool `json:"lightweight,omitempty"`
 	// KeepAwake keeps this computer from going to sleep by itself while
 	// agents work through the gateway and for a while after (xiao_wang24004
 	// on X; internal/awake). This computer's own (KeepOwn).
@@ -955,6 +965,12 @@ func CarryPerModel(in, cur *Settings) {
 // models that can take more.
 const WorkingWindow = 272000
 
+// LightweightOn says whether lightweight mode is on: unless the user
+// turned it off. A hidden webview kept for good holds what its page drew
+// while hidden, which grew ~20 MB a minute on Windows under steady
+// requests (#2515).
+func (s Settings) LightweightOn() bool { return s.Lightweight == nil || *s.Lightweight }
+
 // Working is the context window an agent is told for a model with one of
 // n tokens (see FullContext).
 func (s Settings) Working(n int) int {
@@ -984,7 +1000,8 @@ func (s Settings) Compact() int {
 // Dock, gateway mode, whether WSL is looked in, whether agents' sign-ins
 // are read, when allowances are read, the terminal app a session resumes
 // in, whether the local masking model is on (it is downloaded on this
-// computer alone), and what the menu bar or tray shows beside magpie's icon (yoooo on
+// computer alone), how many Claude Code processes may run (its memory),
+// and what the menu bar or tray shows beside magpie's icon (yoooo on
 // Discord: usage turned off on a Mac came back from a Windows box that
 // shows it; Lullaby: sharing turned on at home came on at work).
 func (s *Settings) KeepOwn(cur Settings) {
@@ -1001,6 +1018,7 @@ func (s *Settings) KeepOwn(cur Settings) {
 	s.FetchPrivate = cur.FetchPrivate
 	s.SessionTerminal = cur.SessionTerminal
 	s.RedactModel = cur.RedactModel
+	s.ClaudeRunsMost = cur.ClaudeRunsMost
 }
 
 // RenamePerModel moves what the user said of a provider's models to the id

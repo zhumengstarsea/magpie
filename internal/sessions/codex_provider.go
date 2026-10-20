@@ -214,7 +214,7 @@ func MoveCodexProvider(id, to string) (CodexMove, error) {
 	var fs []file
 	price := pricer()
 	for _, g := range groups {
-		if one, _ := assemble(g, price); one.ID == id && !one.ReadOnly {
+		if one, _ := assembleListed(g, price); one.ID == id && !one.ReadOnly {
 			fs = g
 			break
 		}

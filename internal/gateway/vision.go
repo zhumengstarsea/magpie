@@ -228,7 +228,7 @@ func autoVision() (string, bool) {
 		if bestReady && t > bestTier {
 			continue
 		}
-		m, cost, ready := smallModelWhere(p, sees)
+		m, cost, ready := smallModelWhere(p, "sees", sees)
 		if m == "" {
 			continue
 		}
@@ -468,16 +468,11 @@ func (s *Server) seenBody(ctx context.Context, proto provider.Protocol, body []b
 
 // smallModelWhere is smallModel among the provider's models that keep
 // holds, what it costs, and whether it has allowance left (smallReady);
-// "" when there is none.
-func smallModelWhere(p provider.Provider, keep func(catalog.Model) bool) (string, float64, bool) {
-	id, ready := smallReady(p, keep, provider.Chat)
-	if id == "" {
+// "" when there is none. kind names keep (keptSmallCands).
+func smallModelWhere(p provider.Provider, kind string, keep func(catalog.Model) bool) (string, float64, bool) {
+	c, ready := smallReadyOf(p, keptSmallCands(p, kind, keep), provider.Chat)
+	if c.id == "" {
 		return "", 0, false
 	}
-	for _, m := range p.Exposed() {
-		if m.ID == id && m.Price != nil {
-			return id, m.Price.Input + m.Price.Output, ready
-		}
-	}
-	return id, 1e9, ready
+	return c.id, c.cost, ready
 }

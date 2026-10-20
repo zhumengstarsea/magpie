@@ -30,6 +30,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/maphash"
 	"log"
 	"os"
 	"path/filepath"
@@ -1824,8 +1825,9 @@ func KeepDshWired(ctx context.Context) {
 // that could not write something is said once rather than every round.
 func keepDshWired(ctx context.Context, every time.Duration) {
 	var said dshSaidOnce
+	var rounds dshRounds
 	for {
-		if trouble := dshWiredOnce(); said.first(trouble) {
+		if trouble := rounds.once(); said.first(trouble) {
 			log.Print(trouble)
 		}
 		select {
@@ -1850,9 +1852,91 @@ func (s *dshSaidOnce) first(trouble string) bool {
 	return trouble != ""
 }
 
+// dshModelsFor is how long a round takes magpie's models as built before
+// while provider.StampNow says nothing changed: what the stamp can't see
+// (another app rewriting an account's file, a model retired by its date)
+// reaches dsh's lists within it.
+const dshModelsFor = 5 * time.Minute
+
+// dshRounds is what keepDshWired's last round read, so that a round with
+// nothing changed since does nothing. Every 30 seconds a round built
+// magpie's whole catalog and every route again to write nothing: 12 GB of
+// the 35.7 GB a user's magpie allocated in 48 minutes, with ~157 MB live.
+// A round is done again when dsh's files it reads, the gateway's address
+// or magpie's models are other than when the last one found nothing to
+// write. The zero dshRounds does every round.
+type dshRounds struct {
+	// the models, and the stamp and time they were built at
+	models []catalog.Model
+	stamp  provider.Stamp
+	at     time.Time
+	built  bool
+	// what the last round went by, and whether it wrote nothing, nothing
+	// else wrote while it ran, and nothing troubled it
+	last dshRoundKey
+	done bool
+}
+
+// dshRoundKey is what a round goes by: dsh's files it reads, the gateway's
+// address and magpie's models, each as a sum.
+type dshRoundKey struct {
+	files  uint64
+	gw     string
+	models uint64
+}
+
+var dshSumSeed = maphash.MakeSeed()
+
+// dshFilesSum sums the files a round reads, by path and bytes: each
+// profile's patch list, the home layer, and the settings, keys and old
+// config dsh reads beside them. A file that can't be read for another
+// reason than not being there sums differently every time: unknown, never
+// taken for what it was last round.
+func dshFilesSum(dir string, files []string) uint64 {
+	var h maphash.Hash
+	h.SetSeed(dshSumSeed)
+	sum := func(f string) {
+		h.WriteString(f)
+		h.WriteByte(0)
+		switch b, err := os.ReadFile(f); {
+		case err == nil:
+			h.WriteByte(1)
+			h.Write(b)
+		case errors.Is(err, os.ErrNotExist):
+			h.WriteByte(2)
+		default:
+			h.WriteString(time.Now().String())
+		}
+		h.WriteByte(0)
+	}
+	for _, f := range files {
+		sum(f)
+	}
+	for _, name := range []string{"cordis.patch.yml", "settings.yaml", ".env", ".credentials.yaml", "config.yaml"} {
+		sum(filepath.Join(dir, name))
+	}
+	return h.Sum64()
+}
+
+// dshModelsSum sums the models a round writes the route from.
+func dshModelsSum(models []catalog.Model) uint64 {
+	b, err := json.Marshal(models)
+	if err != nil {
+		return uint64(time.Now().UnixNano()) // unknown: done again
+	}
+	return maphash.Bytes(dshSumSeed, b)
+}
+
 // dshWiredOnce writes magpie's route again in every patch list whose route
 // is not what magpie would write now, and says what could not be written.
 func dshWiredOnce() string {
+	var r dshRounds
+	return r.once()
+}
+
+// once is dshWiredOnce, done only when something the round reads changed
+// since r's last round that found nothing to write.
+func (r *dshRounds) once() string {
 	dshWrites.Lock()
 	defer dshWrites.Unlock()
 	dir := dshHome()
@@ -1863,10 +1947,29 @@ func dshWiredOnce() string {
 	if len(files) == 0 {
 		// no dsh: the catalog isn't built for nothing every round, ~34 MB
 		// of garbage a minute in a magpie at rest
+		r.done = false
 		return ""
 	}
+	key := dshRoundKey{files: dshFilesSum(dir, files), gw: gateway.URL(), models: r.last.models}
+	// the stamp is read before the models are built: a change while they
+	// are moves it past the one kept, and the next round builds them again
+	if stamp := provider.StampNow(); !r.built || stamp != r.stamp || time.Since(r.at) >= dshModelsFor {
+		r.models, r.stamp, r.at, r.built = magpieModels("dsh"), stamp, time.Now(), true
+		key.models = dshModelsSum(r.models)
+	}
+	if r.done && key == r.last {
+		return ""
+	}
+	trouble := dshWiredWith(dir, files, r.models)
+	// kept only when the round wrote nothing and nothing else wrote while
+	// it ran: a file written by either is read again next round
+	r.last, r.done = key, trouble == "" && dshFilesSum(dir, dshProfiles(dir)) == key.files
+	return trouble
+}
+
+// dshWiredWith is a round's work, with the models it writes the route from.
+func dshWiredWith(dir string, files []string, models []catalog.Model) string {
 	var trouble []string
-	models := magpieModels("dsh")
 	// a profile dsh has just made — the desktop app's, opened for the first
 	// time while magpie runs — is its empty template: given magpie's route
 	// and start as the catalog sync would, rather than left listing dsh's

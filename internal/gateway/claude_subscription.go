@@ -142,6 +142,10 @@ type subscriptionRun struct {
 	exit   error
 	killed bool
 	tmp    string
+	// room frees the process's place in claudeRoom once it has exited,
+	// roomLeft telling it magpie ended it (abort)
+	room     func(left bool)
+	roomLeft bool
 	// schema says the client asked for an answer fitting a JSON schema,
 	// which Claude Code gives as its StructuredOutput call
 	schema bool
@@ -590,7 +594,8 @@ const claudeMCPPath = "/_magpie/claude-mcp/"
 // (FrierenF on Discord).
 func (b *subscriptionBridge) start(ctx context.Context, req *Request, model, configDir, owner string, from *savedSession) (*subscriptionRun, <-chan Event, error) {
 	run, events, err := b.startRun(ctx, req, model, configDir, owner, from)
-	if err != nil && from != nil {
+	var full *claudeFull
+	if err != nil && from != nil && !errors.As(err, &full) && ctx.Err() == nil {
 		log.Printf("claude: Claude Code could not go on from the conversation's saved session (%v); a new one is told the whole conversation", err)
 		return b.startRun(ctx, req, model, configDir, owner, nil)
 	}
@@ -607,6 +612,18 @@ func (b *subscriptionBridge) startRun(ctx context.Context, req *Request, model, 
 	if err != nil {
 		return nil, nil, err
 	}
+	// a place among the Claude Code processes this machine holds (#2956),
+	// freed as the process exits, or here if it never starts
+	room, err := claudeRoom.take(ctx, "a Claude Code run on "+model)
+	if err != nil {
+		return nil, nil, err
+	}
+	launched := false
+	defer func() {
+		if !launched {
+			room(false)
+		}
+	}()
 	b.sweep.Do(func() {
 		go func() {
 			sweepBridgeProjects(claudeConfigDir(), os.TempDir())
@@ -761,7 +778,9 @@ func (b *subscriptionBridge) startRun(ctx context.Context, req *Request, model, 
 
 	run.outputs = []*os.File{stdout, stderr}
 	run.reading.Add(2)
+	run.room = room
 	err = run.launch()
+	launched = err == nil
 	_, _ = stdoutW.Close(), stderrW.Close() // Claude Code has its own
 	if err != nil {
 		_, _ = stdout.Close(), stderr.Close()
@@ -1372,6 +1391,7 @@ func (b *subscriptionBridge) keepIdle(r *subscriptionRun, key, conv string) bool
 	for _, run := range drop {
 		run.abortFor("another run was kept in its place (" + strconv.Itoa(idleMost) + " wait at most)")
 	}
+	claudeRoom.nudge() // an ask waiting for room may let it go
 	return true
 }
 
@@ -3638,10 +3658,17 @@ func (r *subscriptionRun) launch() error {
 	go func() {
 		err := t.Wait()
 		r.drain()
+		// exited closes under mu, which abort reads it under: a run it
+		// counts as leaving the room is one whose room is freed here
 		r.mu.Lock()
 		r.exit = err
-		r.mu.Unlock()
 		close(exited)
+		room, left := r.room, r.roomLeft
+		r.room = nil
+		r.mu.Unlock()
+		if room != nil {
+			room(left)
+		}
 		r.finish()
 	}()
 	return nil
@@ -3753,6 +3780,11 @@ func (r *subscriptionRun) abort() <-chan struct{} {
 		select {
 		case <-r.exited:
 		default:
+			if !r.killed && r.room != nil {
+				// asks waiting for room count it as ending
+				r.roomLeft = true
+				claudeRoom.leave()
+			}
 			r.killed = true
 		}
 	}
@@ -4182,7 +4214,14 @@ func (s *Server) serveSubscription(w http.ResponseWriter, r *http.Request, from 
 		}
 	}
 	if err != nil {
-		return writeError(w, from, 502, name+": "+err.Error()), err.Error()
+		// no room for another Claude Code on this machine is no fault of
+		// the account: a 503 passes it to the next (#2956)
+		code := 502
+		var full *claudeFull
+		if errors.As(err, &full) {
+			code = 503
+		}
+		return writeError(w, from, code, name+": "+err.Error()), err.Error()
 	}
 	cacheDropped(w, req)
 	run.heard(req.Messages)

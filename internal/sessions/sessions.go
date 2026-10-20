@@ -1144,6 +1144,26 @@ func sessionID(fs []file) string {
 
 // assemble puts a session together from its files' parses.
 func assemble(fs []file, price func(string) *catalog.Price) (Session, bool) {
+	s, ok := assembleListed(fs, price)
+	if !ok {
+		return s, false
+	}
+	if !s.ReadOnly {
+		s.Resume = resumeCommand(s.WSL, s.Agent, s.ID, s.Cwd, s.Path)
+	}
+	s.Carry, s.Transcript = carries(s), HasTranscript(s.Agent)
+	if s.Transcript {
+		s.Subagents = subagentsOf(s, fs)
+	}
+	return s, true
+}
+
+// assembleListed is assemble without what only a listed session's row shows (how
+// to resume it, its subagents): whether List lists the session, and its
+// agent, id, title and usage. The stats ask it of every session on each
+// poll, and building every session's subagents there read each Claude Code
+// subagent's file again (3.5 GB of a live magpie's 6.3 GB of scans).
+func assembleListed(fs []file, price func(string) *catalog.Price) (Session, bool) {
 	sortSessionFiles(fs)
 	s := Session{Agent: fs[0].agent, Path: fs[0].path, Models: []Model{}, WSL: fs[0].wsl}
 	for _, f := range fs {
@@ -1226,13 +1246,6 @@ func assemble(fs []file, price func(string) *catalog.Price) (Session, bool) {
 	}
 	if s.Title == "" && s.Tokens.zero() {
 		return s, false // nothing was said in it
-	}
-	if !s.ReadOnly {
-		s.Resume = resumeCommand(s.WSL, s.Agent, s.ID, s.Cwd, s.Path)
-	}
-	s.Carry, s.Transcript = carries(s), HasTranscript(s.Agent)
-	if s.Transcript {
-		s.Subagents = subagentsOf(s, fs)
 	}
 	return s, true
 }
@@ -1371,7 +1384,8 @@ func scanAt(path string, off int64, head func([]byte) bool, fn func(b []byte, st
 		}
 		return off, err
 	}
-	r := bufio.NewReaderSize(f, scanBuffer(f, off))
+	r, release := lineReader(f, scanBuffer(f, off))
+	defer release()
 	var long []byte
 	var n int64 // bytes of the line so far
 	skip, seen := false, false
@@ -1382,6 +1396,15 @@ func scanAt(path string, off int64, head func([]byte) bool, fn func(b []byte, st
 			if !seen && head != nil {
 				seen = true
 				skip = skip || !head(chunk)
+			}
+			if pf, ok := f.(*os.File); ok && !skip && len(long) == 0 {
+				// gathered in one buffer of the line's own size, not grown a
+				// chunk at a time (~5 times the line allocated, #2515)
+				if l := lineLen(pf, off, maxLine+r.Size()); l > maxLine+r.Size() {
+					skip = true
+				} else if l > cap(long) {
+					long = make([]byte, 0, l)
+				}
 			}
 			if !skip && len(long)+len(chunk) <= maxLine {
 				long = append(long, chunk...)
@@ -1413,6 +1436,25 @@ func scanAt(path string, off int64, head func([]byte) bool, fn func(b []byte, st
 	}
 }
 
+// lineLen is the length, its newline included, of the line at off in f,
+// read ahead without moving f: 0 when it has no end yet, and past most
+// (but no further) for a longer one.
+func lineLen(f *os.File, off int64, most int) int {
+	buf := make([]byte, 64<<10)
+	n := 0
+	for n <= most {
+		k, err := f.ReadAt(buf, off+int64(n))
+		if i := bytes.IndexByte(buf[:k], '\n'); i >= 0 {
+			return n + i + 1
+		}
+		n += k
+		if err != nil {
+			return 0
+		}
+	}
+	return n
+}
+
 // scanBuffer is the read buffer a reader of f needs for what is left of it
 // from off: 1 MiB at most, and no more than that rest of a plain file.
 // Every line reader of a session file sizes its buffer by it. Every scan
@@ -1428,6 +1470,51 @@ func scanBuffer(f io.Reader, off int64) int {
 		}
 	}
 	return most
+}
+
+// lineReaders keep scanAt's read buffers between scans, one pool per
+// power-of-two size from scanBuffer's 16 KiB to its 1 MiB. Every scan
+// allocated its own: a live magpie's start read ~3,200 Claude Code subagent
+// files for their first lines (ccTask), most over 1 MiB, and with the
+// session and call reads scanAt allocated 6.3 GB in 48 minutes, 3.8 GB of
+// it these buffers, while ~157 MB was live. A pool keeps about one buffer
+// per reader running at once, and lets idle ones go at the next GCs.
+var lineReaders [7]sync.Pool
+
+// poisonReleased, set by the tests, fills a buffer given back with 0xFF, so
+// a reader that kept a line past its scan reads garbage and fails.
+var poisonReleased = false
+
+// lineReader is a reader of f with a buffer of at least size bytes (at
+// most 1 MiB); release gives the buffer back. A line handed out from it is
+// only good until release: one kept longer is copied.
+func lineReader(f io.Reader, size int) (*bufio.Reader, func()) {
+	class := 0
+	for class < len(lineReaders)-1 && 16<<10<<class < size {
+		class++
+	}
+	r, _ := lineReaders[class].Get().(*bufio.Reader)
+	if r == nil {
+		r = bufio.NewReaderSize(nil, 16<<10<<class)
+	}
+	r.Reset(f)
+	return r, func() {
+		if poisonReleased {
+			r.Reset(poison{})
+			r.Peek(r.Size())
+		}
+		r.Reset(nil)
+		lineReaders[class].Put(r)
+	}
+}
+
+type poison struct{}
+
+func (poison) Read(b []byte) (int, error) {
+	for i := range b {
+		b[i] = 0xFF
+	}
+	return len(b), nil
 }
 
 // packed says whether a session file is compressed: a Codex rollout the
@@ -1722,7 +1809,7 @@ func Titles(keys []string) map[string]string {
 	identities := codexIdentitySnapshot(fs)
 	price := pricer()
 	for k, g := range groups {
-		if s, ok := assemble(g, price); ok {
+		if s, ok := assembleListed(g, price); ok {
 			setSessionCodexIdentity(&s, identities)
 			setSessionCodexTaskTitle(&s, taskTitles)
 			if s.Title == "" {

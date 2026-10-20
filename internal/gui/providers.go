@@ -1030,7 +1030,20 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 		if r.URL.Query().Has("wait") {
 			provider.FetchNew(8 * time.Second)
 		}
-		writeJSON(rw, providersState())
+		// ?last=1: the list kept from the last read, at once (#1519);
+		// null when none is kept
+		if r.URL.Query().Get("last") == "1" {
+			if b, ok := lastKnownProviders(); ok {
+				rw.Header().Set("Content-Type", "application/json")
+				rw.Write(b)
+			} else {
+				writeJSON(rw, nil)
+			}
+			return
+		}
+		s := providersState()
+		writeJSON(rw, s)
+		keepProviders(s)
 	})
 	// Recent-call bodies are read only when their row is opened, not with
 	// every Providers or Gateway refresh (#1521): forty calls' bodies made

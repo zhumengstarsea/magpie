@@ -319,7 +319,7 @@ func Delete(agent, id string) (Trashed, error) {
 	var s Session
 	price := pricer()
 	for _, g := range groups {
-		if one, _ := assemble(g, price); one.ID == id {
+		if one, _ := assembleListed(g, price); one.ID == id {
 			fs, s = g, one
 			break
 		}

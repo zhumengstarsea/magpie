@@ -2158,8 +2158,9 @@ WebKit, in English and Chinese:
 node --test internal/gui/tests/plugin-progressive.test.cjs
 
 `lightweight.test.cjs` checks Settings → General's Lightweight mode row
-(#580): off by default, On and Off saved as `lightweight` true and false
-without the page moving, another setting's save keeping it, no left-border
+(#580): on for a user who never chose, Off and On saved as `lightweight`
+false and true without the page moving, another setting's save keeping the
+choice or leaving it unchosen (no `lightweight` posted), no left-border
 accent, and no such row on a browser's page (`web`). English and Chinese,
 Chromium and WebKit, with `/api/settings` faked:
 node --test internal/gui/tests/lightweight.test.cjs

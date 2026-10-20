@@ -921,7 +921,7 @@ func addLogin(l savedLogin) (using bool, err error) {
 		// agent's own is an older sign-in, and gives way
 		forgetClaudeDir(l.User)
 	}
-	loginsSeenAt = time.Time{}
+	loginsSeenAt.Store(0)
 	forgetAccountCaches()
 	return using, nil
 }

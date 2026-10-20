@@ -720,6 +720,7 @@ func install(ctx context.Context, spec string) error {
 	}
 	if err == nil {
 		pruneDist()
+		pruneInstallCache()
 	}
 	return err
 }

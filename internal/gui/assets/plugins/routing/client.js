@@ -283,7 +283,7 @@ function routingPage(part) {
   const metaFit = () => { if (!metaFitting) metaFitting = requestAnimationFrame(() => {
     metaFitting = 0;
     if (colA.classList.contains("max760") || !reqs.offsetParent) return;
-    const kept = [];
+    const kept = [], under = colA.classList.contains("meta-under");
     for (let p = reqs; p; p = p.parentElement) if (p.scrollTop) kept.push([p, p.scrollTop]);
     colA.classList.remove("meta-under");
     const wraps = [...reqs.querySelectorAll(".rt-req .meta:not([hidden])")].some((m) => {
@@ -292,8 +292,13 @@ function routingPage(part) {
     });
     colA.classList.toggle("meta-under", wraps);
     for (const [p, top] of kept) if (p.scrollTop !== top) p.scrollTop = top;
+    if (colA.classList.contains("meta-under") !== under) redrawList(); // the rows' heights changed
   }); };
-  new ResizeObserver(metaFit).observe(colA);
+  // only a new width can make the numbers wrap or fit: measured on its
+  // height too, the mark it sets made the rows taller and measured them
+  // again, flipping back and forth (#2524: 8 times in 8s, ~200ms each)
+  let metaW = -1;
+  new ResizeObserver(() => { const w = colA.clientWidth; if (w !== metaW) { metaW = w; metaFit(); } }).observe(colA);
 
   const path = () => { const p = document.createElementNS(NS, "path"); wires.appendChild(p); return p; };
   const setText = (e, s) => { if (e.textContent !== s) e.textContent = s; };
@@ -1116,6 +1121,21 @@ function routingPage(part) {
     for (const [dot, row] of holds) pose({ dot, legs: wiresTo(row).map((p) => ({ p })) }, 1);
   }
   let capQ = [], capAt = -1e9, capLo = false, flipUntil = 0;
+  // the frame loop's own state; see frame below
+  let seen = false, lastFrame = 0, ticking = 0;
+  // busy: something on the stage still moves — a flight, a caption waiting
+  // its turn, rows sliding to their new places. Only then does the loop
+  // ask for frames; an idle stage asks for none (#2827: a frame every
+  // vsync, nothing drawn, cost a renderer without a GPU a core and more)
+  const busy = () => trips.length > 0 || capQ.length > 0 || performance.now() < flipUntil;
+  // kick wakes the loop for new motion. Waking from idle is not a gap in
+  // the frames — the page was in sight and still — so the gap resume()
+  // looks for counts from now
+  function kick() {
+    if (ticking || !shown()) return;
+    if (seen) lastFrame = performance.now();
+    ticking = requestAnimationFrame(frame);
+  }
 
   // fly carries a dot along paths one after another, as one flight — and
   // the magpie holding it in its beak, if there is one
@@ -1124,6 +1144,7 @@ function routingPage(part) {
     const tr = { dot, bird, legs, t0: performance.now(), ms: still() ? 0 : ms, res, g: gen };
     pose(tr, 0);
     trips.push(tr);
+    kick();
   }).finally(() => { for (const l of legs) if (l.j) l.p.remove(); });
 
   // measured is a path's length, and the tips of it flights met, for the d
@@ -1180,9 +1201,14 @@ function routingPage(part) {
     const p = document.createElementNS(NS, "path");
     p.setAttribute("class", "via");
     sky.appendChild(p);
+    // j runs each frame a flight is on it: the arc is laid again only when
+    // a wire's end moved, not made anew sixty times a second (#1481)
+    let ax = NaN, ay = NaN, atx = NaN, aty = NaN, bx = NaN, by = NaN, btx = NaN, bty = NaN;
     const j = () => {
       const a = from(), b = to();
-      if (!a || !b) { p.removeAttribute("d"); return; }
+      if (!a || !b) { p.removeAttribute("d"); ax = NaN; return; }
+      if (a.x === ax && a.y === ay && a.tx === atx && a.ty === aty && b.x === bx && b.y === by && b.tx === btx && b.ty === bty) return;
+      ax = a.x; ay = a.y; atx = a.tx; aty = a.ty; bx = b.x; by = b.y; btx = b.tx; bty = b.ty;
       const dx = b.x - a.x, dy = b.y - a.y, dist = Math.hypot(dx, dy);
       let c1, c2;
       if (dist < 4) {
@@ -1211,6 +1237,7 @@ function routingPage(part) {
     if (!lo) capQ = capQ.filter((c) => !c.lo);
     capQ.push({ s, lo });
     if (capQ.length > 3) capQ.shift();
+    kick();
   }
   function show(c) { capLo = !!c.lo; cap.textContent = c.s; cap.classList.remove("in"); void cap.offsetWidth; cap.classList.add("in"); capAt = performance.now(); }
 
@@ -1649,6 +1676,7 @@ function routingPage(part) {
       void list.offsetWidth;
       for (const [, li] of placed) { li.style.transition = ""; li.style.transform = ""; }
       flipUntil = performance.now() + 520;
+      kick();
     }
     header(cur, ags.length);
     layout();
@@ -2607,58 +2635,223 @@ function routingPage(part) {
         t("Each request an agent sends through magpie shows up here: who answered it, why, and each try."));
       if (!day && days.length) p.append(" " + t("Earlier ones are kept by day, in the bar above."));
       reqs.replaceChildren(p);
+      reqs.classList.remove("win");
+      listItems = [];
+      probes.clear();
       reqRows.clear();
       sessionRows.clear();
       closedSessions.clear();
       renderActs(rs);
       return;
     }
-    const lang = document.documentElement.lang, ids = new Set();
-    let redrawn = false; // a row made anew, or the rows moved: metaFit measures them again
-    const rowEls = rs.map((r) => {
-      const [said, how, tr] = outcome(r);
-      const sel = String(pinned ? pinned.id === r.id : cur?.id === r.id);
-      const ag = agentOf(r.agent);
-      const meta = [];
-      if (r.tries.length > 1) meta.push(t("{n} tries", { n: r.tries.length }));
-      const metrics = requestMetrics(r, how);
-      // all the row says, and its titles
-      const title = reqTitle(r, how, tr);
-      const sig = JSON.stringify([lang, said, how, title, r.time, r.agent, agentName(r.agent), ag?.icon, r.model, r.provider, tagKind(r), r.effort,
-        tr?.effort, tr?.picked, tr?.fixed, tr?.fast, tr?.swapped && tr.done && tryOk(tr) ? [tr.model, tr.served] : 0, tr?.routed && tr.done && tryOk(tr) ? tr.served : 0, tr?.done && tryOk(tr) ? tr.upstream : 0, meta, metrics, routeCost(r)]);
-      ids.add(r.id);
-      let x = reqRows.get(r.id);
-      if (!x || x.sig !== sig) {
-        const row = x = { sig, b: reqRow(r, said, how, tr, ag, meta, metrics, title) };
-        row.b.onclick = () => pick(row.r); // the request as it is when clicked
-        reqRows.set(r.id, x);
-        redrawn = true;
-      }
-      x.r = r;
-      if (x.b.getAttribute("aria-pressed") !== sel) x.b.setAttribute("aria-pressed", sel);
-      return x.b;
-    });
+    const ids = new Set(rs.map((r) => r.id));
     for (const id of reqRows.keys()) if (!ids.has(id)) reqRows.delete(id);
-    const els = bySession && rs.some((r) => r.session) ? groupedRows(rs, rowEls) : rowEls;
-    // the rows moved only where they changed; the list scrolls on its own,
-    // and WebKit, a row taken out for a moment, would send it back to its
-    // top from under the row just picked
-    const kids = reqs.children;
-    if (kids.length !== els.length || els.some((e, i) => kids[i] !== e)) {
-      const listTop = reqs.scrollTop;
-      els.forEach((e, i) => { if (kids[i] !== e) reqs.insertBefore(e, kids[i] || null); });
-      while (kids.length > els.length) reqs.lastElementChild.remove();
-      if (reqs.scrollTop !== listTop) reqs.scrollTop = listTop;
-      redrawn = true;
-    }
-    // measuring every row's line forces a layout: only when one changed
-    // (a resize measures them through the ResizeObserver)
-    if (redrawn) metaFit();
+    // the requests, with their sessions' heads between them when grouped:
+    // a request's row is made only when it is drawn
+    listItems = bySession && rs.some((r) => r.session) ? groupedRows(rs, rs) : rs;
+    rowsMoved = false;
+    drawList();
+    // measuring the rows' lines forces a layout: only when a row was made
+    // anew or the rows moved (a resize measures them through the
+    // ResizeObserver)
+    if (rowsMoved) metaFit();
     renderActs(rs);
   }
+  // rowSays: what a request's row says, worked out once for each route the
+  // trace sends. A trace update replaces only the routes that changed
+  // (poll's routes.set), yet every update worked out again every row in
+  // sight: its outcome, metrics, token breakdown, title and a JSON
+  // signature, ~150 MB of garbage a minute at a request a second, which
+  // WebKit let pile up to a gigabyte while the window sat on Routing
+  // (#1481). Kept by the route object, it is worked out again only for a
+  // new route, or when the language, the metrics shown, the agent's name
+  // or icon, or the cost's wording changes.
+  const rowSaid = new WeakMap(); // route → { lang, shows, name, icon, cost, said, how, tr, ag, meta, metrics, title, sig }
+  function rowSays(r) {
+    const lang = document.documentElement.lang, shows = visibleMetrics.join();
+    const ag = agentOf(r.agent), name = agentName(r.agent), icon = ag?.icon, cost = routeCost(r);
+    let s = rowSaid.get(r);
+    if (s && s.lang === lang && s.shows === shows && s.name === name && s.icon === icon && s.cost === cost) { s.ag = ag; return s; }
+    const [said, how, tr] = outcome(r);
+    const meta = [];
+    if (r.tries.length > 1) meta.push(t("{n} tries", { n: r.tries.length }));
+    const metrics = requestMetrics(r, how);
+    // all the row says, and its titles
+    const title = reqTitle(r, how, tr);
+    const sig = JSON.stringify([lang, said, how, title, r.time, r.agent, name, ag?.icon, r.model, r.provider, tagKind(r), r.effort,
+      tr?.effort, tr?.picked, tr?.fixed, tr?.fast, tr?.swapped && tr.done && tryOk(tr) ? [tr.model, tr.served] : 0, tr?.routed && tr.done && tryOk(tr) ? tr.served : 0, tr?.done && tryOk(tr) ? tr.upstream : 0, meta, metrics, cost]);
+    s = { lang, shows, name, icon, cost, said, how, tr, ag, meta, metrics, title, sig };
+    rowSaid.set(r, s);
+    return s;
+  }
+  // rowOf: a request's row, kept while what it says is the same
+  function rowOf(r) {
+    const sel = String(pinned ? pinned.id === r.id : cur?.id === r.id);
+    const { said, how, tr, ag, meta, metrics, title, sig } = rowSays(r);
+    let x = reqRows.get(r.id);
+    if (!x || x.sig !== sig) {
+      const row = x = { sig, b: reqRow(r, said, how, tr, ag, meta, metrics, title) };
+      row.b.onclick = () => pick(row.r); // the request as it is when clicked
+      reqRows.set(r.id, x);
+      rowsMoved = true;
+    }
+    x.r = r;
+    if (x.b.getAttribute("aria-pressed") !== sel) x.b.setAttribute("aria-pressed", sel);
+    return x.b;
+  }
+  // A day of history is up to 2,000 requests, and a row is ~20 elements:
+  // all of them in the list, a day picked took the page 0.4–0.7s here and
+  // seconds on Windows, and the old rows stayed in while the new ones went
+  // in among them, twice the rows at once (#2524, UNscientific-9). A list
+  // that long draws only the rows in and near its sight, between two gaps
+  // as tall as the rows above and below; scrolled, it draws the next ones.
+  // A row's height is measured once it was drawn, and one not yet drawn is
+  // taken as tall as the average drawn.
+  //
+  // The columns are as wide as the widest of all the requests, drawn or
+  // not, as before: a row unlike any drawn — another time's shape, model,
+  // kind or numbers — is in the list too, with no height and unseen (a
+  // probe), so the grid sizes its columns by it. Digits are as wide as
+  // each other there (tabular-nums), so a probe stands for every row of
+  // its shape.
+  const WIN_MIN = 300;
+  let listItems = [], winKey = "", winAvg = 0, winSoon = 0, rowsMoved = false;
+  const heights = new Map(); // a request's id, or a session's head → its height
+  const gapAbove = el("div", "rt-gap"), gapBelow = el("div", "rt-gap");
+  for (const g of [gapAbove, gapBelow]) g.setAttribute("aria-hidden", "true");
+  const probes = new Map(), probeShapes = new WeakMap();
+  const isHead = (x) => x instanceof Element;
+  const itemKey = (x) => isHead(x) ? x : x.id;
+  const itemEl = (x) => isHead(x) ? x : rowOf(x);
+  const digits = (s) => String(s).replace(/\d/g, "0");
+  let clockFmt = null, clockLang = "";
+  const rowClock = (time) => {
+    if (clockLang !== intlLang()) { clockLang = intlLang(); clockFmt = new Intl.DateTimeFormat(clockLang, { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
+    // a time not known (none yet, or not a date) reads as none: format
+    // throws on it, where toLocaleTimeString said "Invalid Date"
+    const d = new Date(time);
+    return isNaN(d) ? "" : clockFmt.format(d);
+  };
+  // what decides a row's width in each column sized by its content: its
+  // time, what was asked for, its numbers
+  function shapes(r, key) {
+    const was = probeShapes.get(r);
+    if (was && was.key === key) return was.s;
+    const how = outcome(r)[1], meta = r.tries.length > 1 ? t("{n} tries", { n: r.tries.length }) : "";
+    const s = ["t" + digits(rowClock(r.time)), "a" + JSON.stringify([r.model, tagKind(r) ? kindName(tagKind(r)) : ""]),
+      "m" + digits(JSON.stringify([meta, requestMetrics(r, how).map((m) => [m[0], m[2]])]))];
+    probeShapes.set(r, { key, s });
+    return s;
+  }
+  function probesFor(rs) {
+    const key = document.documentElement.lang + "|" + visibleMetrics.join(), seen = new Set(), want = new Map();
+    for (const r of rs) {
+      const s = shapes(r, key);
+      if (s.every((x) => seen.has(x))) continue;
+      s.forEach((x) => seen.add(x));
+      const id = key + JSON.stringify(s);
+      if (!want.has(id)) want.set(id, r);
+    }
+    for (const id of probes.keys()) if (!want.has(id)) probes.delete(id);
+    return [...want].map(([id, r]) => {
+      let b = probes.get(id);
+      if (!b) {
+        const [said, how, tr] = outcome(r), meta = r.tries.length > 1 ? [t("{n} tries", { n: r.tries.length })] : [];
+        b = reqRow(r, said, how, tr, agentOf(r.agent), meta, requestMetrics(r, how), "");
+        b.classList.add("probe");
+        b.removeAttribute("title");
+        b.tabIndex = -1;
+        b.inert = true;
+        b.setAttribute("aria-hidden", "true");
+        probes.set(id, b);
+      }
+      return b;
+    });
+  }
+  // placeRows puts the list's children in order, moving only those out of
+  // place: the list scrolls on its own, and WebKit, a row taken out for a
+  // moment, would send it back to its top from under the row just picked.
+  // A list made mostly anew (another day) is put in at once, not row by
+  // row among the old ones.
+  function placeRows(els) {
+    const kids = reqs.children;
+    if (kids.length === els.length && els.every((e, i) => kids[i] === e)) return;
+    rowsMoved = true;
+    const listTop = reqs.scrollTop;
+    let kept = 0;
+    for (const e of els) if (e.parentNode === reqs) kept++;
+    if (kept * 2 < els.length) reqs.replaceChildren(...els);
+    else {
+      let at = reqs.firstElementChild;
+      for (const e of els) {
+        if (e === at) { at = at.nextElementSibling; continue; }
+        reqs.insertBefore(e, at);
+      }
+      while (at) { const n = at.nextElementSibling; at.remove(); at = n; }
+    }
+    if (reqs.scrollTop !== listTop) reqs.scrollTop = listTop;
+  }
+  function drawList() {
+    const n = listItems.length;
+    if (n < WIN_MIN) {
+      reqs.classList.remove("win");
+      probes.clear();
+      return placeRows(listItems.map(itemEl));
+    }
+    reqs.classList.add("win");
+    // out of sight (another view, the window hidden) nothing has a height:
+    // drawn as last measured, and measured once in sight again
+    const live = !!reqs.offsetParent;
+    const listKey = [colA.className, reqs.clientWidth, document.documentElement.lang, visibleMetrics.join()].join("|");
+    if (live && listKey !== winKey) { winKey = listKey; heights.clear(); winAvg = 0; }
+    const pad = parseFloat(getComputedStyle(reqs).paddingTop) || 0;
+    // the first row in sight, and where: it stays there
+    const box = reqs.getBoundingClientRect();
+    let anchor = null, anchorAt = 0;
+    for (const e of reqs.children) {
+      if (e.classList.contains("rt-gap") || e.classList.contains("probe")) continue;
+      const r = e.getBoundingClientRect();
+      if (r.bottom > box.top) { anchor = e; anchorAt = r.top - box.top; break; }
+    }
+    const est = winAvg || 31, off = new Float64Array(n + 1);
+    const sum = () => { for (let i = 0; i < n; i++) off[i + 1] = off[i] + (heights.get(itemKey(listItems[i])) ?? est); };
+    sum();
+    const view = reqs.clientHeight, over = Math.max(view, 300), y = reqs.scrollTop - pad;
+    let i0 = 0, i1 = n;
+    while (i0 < n - 1 && off[i0 + 1] <= y - over) i0++;
+    for (let i = i0; i < n; i++) if (off[i] >= y + view + over) { i1 = i; break; }
+    const drawn = listItems.slice(i0, i1).map(itemEl);
+    gapAbove.style.height = off[i0] + "px";
+    gapBelow.style.height = off[n] - off[i1] + "px";
+    placeRows([gapAbove, ...drawn, gapBelow, ...probesFor(listItems.filter((x) => !isHead(x)))]);
+    if (!live) return;
+    // measured as drawn: each one's slot in the grid, its margins with it
+    drawn.forEach((e, i) => {
+      const s = getComputedStyle(e);
+      heights.set(itemKey(listItems[i0 + i]), e.getBoundingClientRect().height + parseFloat(s.marginTop) + parseFloat(s.marginBottom));
+    });
+    let total = 0;
+    for (const h of heights.values()) total += h;
+    winAvg = heights.size ? total / heights.size : 0;
+    sum();
+    const above = off[i0] + "px", below = off[n] - off[i1] + "px";
+    if (gapAbove.style.height !== above) gapAbove.style.height = above;
+    if (gapBelow.style.height !== below) gapBelow.style.height = below;
+    if (anchor?.parentNode === reqs) {
+      const moved = anchor.getBoundingClientRect().top - reqs.getBoundingClientRect().top - anchorAt;
+      if (Math.abs(moved) >= 0.5) reqs.scrollTop += moved;
+    }
+  }
+  // scrolled or resized: the rows now in sight drawn, once a frame
+  const redrawList = () => {
+    if (winSoon || !reqs.classList.contains("win")) return;
+    winSoon = requestAnimationFrame(() => { winSoon = 0; if (reqs.classList.contains("win")) drawList(); });
+  };
+  reqs.addEventListener("scroll", redrawList, { passive: true });
+  new ResizeObserver(redrawList).observe(reqs);
   function reqRow(r, said, how, tr, ag, meta, metrics, title) {
     const b = el("button", "rt-req " + how);
-    const when = el("span", "at", new Date(r.time).toLocaleTimeString(intlLang(), { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+    const when = el("span", "at", rowClock(r.time));
     const asked = el("span", "asked");
     const sw = el("i", "ag");
     sw.style.setProperty("--agent", hueOf(r.agent));
@@ -3343,13 +3536,13 @@ function routingPage(part) {
     for (const r of underWay()) play(r.id);
     renderAll();
   }
-  let seen = false, lastFrame = 0, ticking = 0;
   // the loop runs only while the page is the one in sight: out of sight it
   // is not scheduled at all, so a hidden Routing page — the window hidden,
   // another view picked, another tab open — asks for no frames forever
   // (#302's other half). Shown again, start() resumes it, and resume()
   // draws the page as it is now. The requests that came meanwhile are
-  // listed by the poll, which never stops.
+  // listed by the poll, which never stops. In sight, it runs only while
+  // the stage is busy, and kick() wakes it (#2827).
   function frame(ts) {
     ticking = 0;
     const vis = shown();
@@ -3369,7 +3562,7 @@ function routingPage(part) {
       if (ts < flipUntil) layout();
       if (capQ.length && ts - capAt > (capLo && !capQ[0].lo ? 500 : 1700)) show(capQ.shift());
     } else pause();
-    if (vis) ticking = requestAnimationFrame(frame);
+    if (vis && busy() && !ticking) ticking = requestAnimationFrame(frame);
   }
   function pause() {
     if (ticking) cancelAnimationFrame(ticking);
@@ -3385,7 +3578,7 @@ function routingPage(part) {
   // finish hidden work here too. The first visible frame alone owns resume.
   function start() {
     if (!shown()) { pause(); return; }
-    if (!ticking) ticking = requestAnimationFrame(frame);
+    kick();
   }
   // in sight again: the view picked, the window shown, another tab left,
   // the window covered and drawing frames once more
@@ -3429,6 +3622,15 @@ function routingPage(part) {
     layout();
   }
 
+  // the live dots beside "Routing" pulse while a request is under way,
+  // and rest when none is: an endless pulse repainted the head every
+  // frame, which without a GPU is a renderer's whole core (#2827)
+  const anyLive = () => loaded && mine && [...routes.values()].some((r) => !r.done);
+  function liveDots() {
+    const on = anyLive();
+    for (const d of document.querySelectorAll(".rt-livedot")) d.classList.toggle("on", on);
+  }
+
   async function poll() {
     for (;;) {
       try {
@@ -3453,6 +3655,7 @@ function routingPage(part) {
           offline(pinned ? "" : t(offMsg));
           loaded = false;
           renderPanel();
+          liveDots();
           await new Promise((r) => setTimeout(r, 5000));
           continue;
         }
@@ -3468,6 +3671,7 @@ function routingPage(part) {
         loaded = true;
         offMsg = "";
         renderPanel(first || d.routes.some((r) => r.done));
+        liveDots();
         // a request done is a day's count grown: heard of now and then
         if (first || (d.routes.some((r) => r.done) && performance.now() - daysAt > 15e3)) { daysAt = performance.now(); loadDays(); }
         if (first) {
@@ -5618,6 +5822,8 @@ function routingPage(part) {
   const P_ROWS = 6;
   let today = null, todayAt = 0;
   const pShown = () => pBox && document.body.dataset.ptab === "routing";
+  let pStale = false; // a draw skipped while the panel was hidden
+  if (pBox) document.addEventListener("visibilitychange", () => { if (pStale && !document.hidden) renderPanel(); });
   async function loadToday() {
     todayAt = performance.now();
     try { today = await api("usage?period=today"); } catch { return; }
@@ -5672,6 +5878,7 @@ function routingPage(part) {
   }
   function pDraw() {
     if (!pBox || !pStage.isConnected) return;
+    if (document.hidden) { pStale = true; return; }
     const recent = [...routes.values()].sort((a, b) => b.id - a.id);
     const flying = recent.filter((r) => pPlays.has(r.id));
     const ags = [], dst = new Map(); // seat key → { name, sub, how }
@@ -5785,7 +5992,7 @@ function routingPage(part) {
   }
   const pRest = (ms) => new Promise((res) => setTimeout(res, pShown() && !still() ? ms : 0));
   async function pPlay(id) {
-    if (!pBox || !pShown() || still() || pPlays.has(id) || pPlays.size >= 4) return;
+    if (!pBox || !pShown() || document.hidden || still() || pPlays.has(id) || pPlays.size >= 4) return;
     let r = routes.get(id);
     if (!r) return;
     pPlays.add(id);
@@ -5843,10 +6050,26 @@ function routingPage(part) {
     }
   }
   // renderPanel draws the tab; counted is a request just done, for today's
-  // totals to be read again (now and then)
+  // totals to be read again (now and then).
+  // While the panel is hidden, which is most of the time, it is drawn
+  // again only when its shape changes (what the panel's height is fitted
+  // to, every tab measured), and in full once it shows (#2515). A hidden
+  // page draws no frames, so the infinite CSS animations on what a draw
+  // replaces (the live dot, a waiting row's arrow, a waiting provider's
+  // mark) stay on the document's timeline, each holding its old tab, rows
+  // and all. On Windows, where a hidden WebView2 says so, the panel grew
+  // ~20 MB a minute under 1 request a second, 265k nodes in 11 minutes,
+  // and GBs over a day.
+  let pShape = "";
   function renderPanel(counted) {
     if (!pBox) return;
     if (counted && (!todayAt || performance.now() - todayAt > 5e3)) loadToday();
+    const picks = panelPicks();
+    const rs = [...routes.values()].sort((a, b) => b.id - a.id).slice(0, P_ROWS);
+    const shape = [offMsg, loaded, rs.length, picks?.childElementCount || 0, !!today].join("|");
+    if (document.hidden && shape === pShape) { pStale = true; return; }
+    pStale = false;
+    pShape = shape;
     const v = $("#view-agents"), keep = v.scrollTop;
     const head = el("div", "pr-head");
     const sum = el("span", "pr-today");
@@ -5858,11 +6081,9 @@ function routingPage(part) {
     const open = el("button", "text", t("Open Routing"));
     open.type = "button";
     open.onclick = (e) => { api("window/main?view=routing", {}); e.currentTarget.blur(); };
-    head.append(el("span", "rt-livedot"), sum, el("span", "grow"), open);
+    head.append(el("span", anyLive() ? "rt-livedot on" : "rt-livedot"), sum, el("span", "grow"), open);
     const out = [head];
-    const picks = panelPicks();
     if (picks) out.push(picks);
-    const rs = [...routes.values()].sort((a, b) => b.id - a.id).slice(0, P_ROWS);
     if (!offMsg && loaded && rs.length) out.push(pStage);
     if (offMsg) out.push(el("p", "pr-none", t(offMsg)));
     else if (!loaded) for (let i = 0; i < 3; i++) out.push(el("span", "skeleton pr-sk-row"));

@@ -1011,3 +1011,280 @@ func validJSONNumber(data []byte, i int) (int, bool) {
 	}
 	return i, true
 }
+
+// topMember is the value of the member named key of body's top-level
+// object, as decoding body into a map[string]json.RawMessage has it: the
+// last of that name, the name read with its escapes. ok is false when
+// body isn't a valid JSON object, found false when it has no such member.
+// A long body is checked and split once (longBody), so a rewrite asking
+// whether it has anything to do costs no walk over the conversation.
+func topMember(body []byte, key string) (val []byte, found, ok bool) {
+	var members []memberSpan
+	if len(body) >= validMemoMin {
+		var valid bool
+		if valid, members = longBody(body); !valid {
+			return nil, false, false
+		}
+	} else if !jsonCheck(body) {
+		return nil, false, false
+	}
+	raw := trimJSON(body)
+	if raw[0] != '{' {
+		return nil, false, false
+	}
+	eachMemberIn(raw, members, func(k, v []byte) bool {
+		if keyIs(k, key) {
+			val, found = v, true
+		}
+		return true
+	})
+	return val, found, true
+}
+
+// memberOf is topMember of obj, a valid JSON object.
+func memberOf(obj []byte, key string) (val []byte, found bool) {
+	eachMember(obj, func(k, v []byte) bool {
+		if keyIs(k, key) {
+			val, found = v, true
+		}
+		return true
+	})
+	return val, found
+}
+
+// keyIs reports whether quoted, a valid JSON string, is key.
+func keyIs(quoted []byte, key string) bool {
+	if len(quoted) == len(key)+2 && string(quoted[1:len(quoted)-1]) == key {
+		return true
+	}
+	if bytes.IndexByte(quoted, '\\') < 0 {
+		return false
+	}
+	s, _ := unquoteJSON(quoted)
+	return s == key
+}
+
+// stringBytes is the string raw, a valid JSON value, holds, as encoding/json
+// decodes it; false for any other kind of value. A plain ASCII string is
+// raw's own bytes, nothing copied.
+func stringBytes(raw []byte) ([]byte, bool) {
+	if len(raw) == 0 || raw[0] != '"' {
+		return nil, false
+	}
+	if s := raw[1 : len(raw)-1]; plainASCII(s) {
+		return s, true
+	}
+	s, ok := unquoteJSON(raw)
+	return []byte(s), ok
+}
+
+// plainASCII reports whether s, a JSON string's insides, is printable ASCII
+// with no escape: what it decodes to is s itself.
+func plainASCII(s []byte) bool {
+	for _, c := range s {
+		if c == '\\' || c >= 0x80 {
+			return false
+		}
+	}
+	return true
+}
+
+// hasPrefix is strings.HasPrefix of b, nothing copied.
+func hasPrefix(b []byte, prefix string) bool {
+	return len(b) >= len(prefix) && string(b[:len(prefix)]) == prefix
+}
+
+// safeID is safeIDChars.Match of id, nothing allocated.
+func safeID(id []byte) bool {
+	for _, c := range id {
+		if !('a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return len(id) > 0
+}
+
+// inputItems calls f with each item of a Responses body's input, as
+// decoding the body into a map[string]json.RawMessage and its input into
+// a []json.RawMessage has them, until f returns false. ok is false when
+// the body isn't a valid object or its input isn't an array (nor null,
+// which has no items).
+func inputItems(body []byte, f func(item []byte) bool) (ok bool) {
+	in, found, ok := topMember(body, "input")
+	if !ok {
+		return false
+	}
+	if !found || string(in) == "null" {
+		return true
+	}
+	if in[0] != '[' {
+		return false
+	}
+	eachElement(in, f)
+	return true
+}
+
+// anyInputItem reports whether any of a Responses body's input items
+// (inputItems) is one f is looking for: whether a rewrite of them has
+// anything to do, told without decoding the conversation. Most turns it
+// hasn't, and each rewrite decoded all of it and the decoding was most
+// of the CPU of a long Codex session's turn (#1532, #2354).
+func anyInputItem(body []byte, f func(item []byte) bool) (found bool) {
+	inputItems(body, func(it []byte) bool {
+		found = f(it)
+		return !found
+	})
+	return found
+}
+
+// memberOrNil is memberOf of it when it is an object, as decoding it into
+// a map[string]json.RawMessage reads it, and nil for any other value.
+func memberOrNil(it []byte, key string) []byte {
+	if len(it) == 0 || it[0] != '{' {
+		return nil
+	}
+	v, _ := memberOf(it, key)
+	return v
+}
+
+// marshalRaw is json.Marshal of v, or marshalPlain's encoding with
+// escapeHTML false, for a map[string]json.RawMessage or a
+// []json.RawMessage: a request body split at its members or its items
+// and put back together. encoding/json writes each raw value through its
+// scanner, a call a byte, so a Codex conversation of 5 MB with one item
+// changed cost tens of milliseconds to write back, on every turn and by
+// each rewrite (#1532). Here each value is checked by jsonCheck and
+// copied, its strings whole; the bytes are encoding/json's. ok is false
+// for any other type, and for a value encoding/json would refuse, which
+// the caller then gives encoding/json to say so.
+func marshalRaw(v any, escapeHTML bool) (_ []byte, ok bool) {
+	switch v := v.(type) {
+	case map[string]json.RawMessage:
+		if v == nil {
+			return []byte("null"), true
+		}
+		n := 2
+		keys := make([]string, 0, len(v))
+		for k, raw := range v {
+			n += len(k) + len(raw) + 4
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		dst := make([]byte, 0, n)
+		dst = append(dst, '{')
+		for i, k := range keys {
+			if i > 0 {
+				dst = append(dst, ',')
+			}
+			if dst, ok = appendJSONKey(dst, k, escapeHTML); !ok {
+				return nil, false
+			}
+			dst = append(dst, ':')
+			if dst, ok = appendRawJSON(dst, v[k], escapeHTML); !ok {
+				return nil, false
+			}
+		}
+		return append(dst, '}'), true
+	case []json.RawMessage:
+		if v == nil {
+			return []byte("null"), true
+		}
+		n := 2
+		for _, raw := range v {
+			n += len(raw) + 1
+		}
+		dst := make([]byte, 0, n)
+		dst = append(dst, '[')
+		for i, raw := range v {
+			if i > 0 {
+				dst = append(dst, ',')
+			}
+			if dst, ok = appendRawJSON(dst, raw, escapeHTML); !ok {
+				return nil, false
+			}
+		}
+		return append(dst, ']'), true
+	}
+	return nil, false
+}
+
+// appendJSONKey is key quoted as encoding/json quotes a string: as it is
+// when it is printable ASCII with nothing in it to escape, and otherwise
+// by encoding/json itself.
+func appendJSONKey(dst []byte, key string, escapeHTML bool) ([]byte, bool) {
+	for i := 0; i < len(key); i++ {
+		if c := key[i]; c < 0x20 || c >= 0x7f || c == '"' || c == '\\' || escapeHTML && (c == '<' || c == '>' || c == '&') {
+			var b bytes.Buffer
+			enc := json.NewEncoder(&b)
+			enc.SetEscapeHTML(escapeHTML)
+			if enc.Encode(key) != nil {
+				return dst, false
+			}
+			return append(dst, bytes.TrimRight(b.Bytes(), "\n")...), true
+		}
+	}
+	dst = append(dst, '"')
+	dst = append(dst, key...)
+	return append(dst, '"'), true
+}
+
+// appendRawJSON is what encoding/json writes of raw as a json.RawMessage:
+// null for nil, and otherwise raw compacted (appendCompactJSON); false
+// when raw isn't valid JSON.
+func appendRawJSON(dst []byte, raw json.RawMessage, escapeHTML bool) ([]byte, bool) {
+	if raw == nil {
+		return append(dst, "null"...), true
+	}
+	if !jsonCheck(raw) {
+		return dst, false
+	}
+	return appendCompactJSON(dst, raw, escapeHTML), true
+}
+
+// appendCompactJSON is encoding/json's appendCompact of src, a valid JSON
+// value: without the space between its tokens, and with <, >, & and
+// U+2028, U+2029 escaped when escapeHTML, as json.Marshal writes them.
+// Those are only ever in a string, where a valid value's space is too, so
+// strings are copied whole, or looked through for those alone.
+func appendCompactJSON(dst, src []byte, escapeHTML bool) []byte {
+	start := 0
+	for i := 0; i < len(src); {
+		switch c := src[i]; {
+		case c == '"':
+			j := skipJSONString(src, i)
+			if escapeHTML {
+				dst = append(dst, src[start:i]...)
+				dst = appendHTMLEscaped(dst, src[i:j])
+				start = j
+			}
+			i = j
+		case isJSONSpace(c):
+			dst = append(dst, src[start:i]...)
+			i++
+			start = i
+		default:
+			i++
+		}
+	}
+	return append(dst, src[start:]...)
+}
+
+// appendHTMLEscaped is s with <, >, & and U+2028, U+2029 as \u escapes.
+func appendHTMLEscaped(dst, s []byte) []byte {
+	const hex = "0123456789abcdef"
+	start := 0
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c == '<' || c == '>' || c == '&':
+			dst = append(dst, s[start:i]...)
+			dst = append(dst, '\\', 'u', '0', '0', hex[c>>4], hex[c&0xF])
+			start = i + 1
+		case c == 0xE2 && i+2 < len(s) && s[i+1] == 0x80 && s[i+2]&^1 == 0xA8:
+			dst = append(dst, s[start:i]...)
+			dst = append(dst, '\\', 'u', '2', '0', '2', hex[s[i+2]&0xF])
+			start = i + 3
+			i += 2
+		}
+	}
+	return append(dst, s[start:]...)
+}

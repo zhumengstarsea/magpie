@@ -3955,6 +3955,8 @@ async function load(again) {
     paintUpdateAll(true);
     loadCLIs(); // after the rows, never holding them up
     loadInstalls();
+    // the Providers page made ready behind the one shown (#1519)
+    if (mode !== "panel" && !(view === "providers" || providersPage(view))) prefetchProviders();
     // the panel brought up on its Allowances tab is the reader opening
     // them (#1588); the page loaded while the panel is still put away is not
     if (mode === "panel") { renderPanelQuota(); panelTab === "usage" && !document.hidden && (again || document.hasFocus()) ? quotasOpened() : loadQuotas(); }
@@ -5581,15 +5583,71 @@ saveCurrent.onclick = () => {
 // every provider becomes "provider/model" in the agents' pickers, served by
 // the local gateway in whichever API the agent speaks.
 
-async function loadProviders() {
+// The list read in the background once the app has started (#1519), for
+// the page's first opening: { read, got } — the read, and the list once in.
+let providersEarly = null;
+function prefetchProviders() {
+  if (providers || providersEarly) return;
+  const e = providersEarly = { read: api("providers") };
+  e.read.then((s) => { e.got = s; }, () => { if (providersEarly === e) providersEarly = null; });
+}
+
+// The page's first reading, while it is on its way, is the one every ask
+// gets (a start on the page asks from load and from show both), not
+// another read: the kept list drawn, a click on a row waits for it.
+function loadProviders() {
+  if ((!providers || providers.last) && loadProviders.first) return loadProviders.first;
+  const first = !providers, p = loadProvidersNow();
+  if (first) {
+    loadProviders.first = p;
+    p.finally(() => { if (loadProviders.first === p) loadProviders.first = null; }).catch(() => {});
+  }
+  return p;
+}
+
+async function loadProvidersNow() {
+  // The page's first opening (#1519, fatkun): a list is drawn at once, as
+  // the Agents page draws the last state, and the fresh one replaces it
+  // when it is in — the one read in the background after the start, else
+  // the one kept from the last read (this run's or the run before's). The
+  // read in the background still on its way is waited for, not asked again.
+  let fresh = null, kept = null;
+  if (!providers) {
+    const early = providersEarly;
+    providersEarly = null;
+    if (early?.got) kept = early.got;
+    else {
+      fresh = early ? early.read : api("providers");
+      if (view === "providers") {
+        kept = await Promise.race([fresh.then(() => null, () => null), api("providers?last=1").catch(() => null)]);
+        if (!kept?.providers?.length || providers) kept = null;
+        // a kept list, whatever it says of itself: a row clicked on it
+        // waits for the fresh one, never opened to be drawn again under
+        // the reader's hands when that comes in
+        else kept.last = true;
+      }
+    }
+  }
+  fresh ||= api("providers");
+  if (kept) {
+    providers = kept;
+    renderSideGw(providers.gateway);
+    if (typeof editing === "string" && !providers.providers.some((p) => p.id === editing)) editing = null;
+    if (providersPage(view)) magpie.call(view, "render", null);
+    else renderProviders();
+  }
   // the skeletons only while there is nothing yet: a reload keeps what is
   // drawn, and where the reader is in it, until the new one is in
-  if (!providers) { if (providersPage(view)) magpie.call(view, "loading"); else renderProvidersLoading(); }
+  else if (!providers) { if (providersPage(view)) magpie.call(view, "loading"); else renderProvidersLoading(); }
   // a plugin's page opened from another that had the list: drawn from it
   // at once (#123)
   else if (providersPage(view)) magpie.call(view, "draft");
   const was = providers;
-  providers = await api("providers");
+  const next = await fresh;
+  // a change saved meanwhile drew the list it was answered with, newer
+  // than this read
+  if (kept && providers !== kept) return;
+  providers = next;
   renderSideGw(providers.gateway);
   // a reload's provider may be gone since
   if (typeof editing === "string" && !providers.providers.some((p) => p.id === editing)) editing = null;
@@ -5820,6 +5878,12 @@ function renderProviders() {
     if (!p.off) row.oncontextmenu = (ev) => { ev.preventDefault(); openProviderMenu(row.querySelector(".pv-handle"), p); };
     row.onclick = async () => {
       if (providerDirty() && !(await confirmDiscard())) return;
+      // a list drawn before the fresh one is in (#1519) leaves out what the
+      // editor shows (headers, proxies): the row opens on the fresh one
+      if (providers.last) {
+        try { await loadProviders(); } catch (e) { status(e.message, "err"); return; }
+        if (!providers.providers.some((x) => x.id === p.id)) return;
+      }
       editing = open ? null : p.id; draft = null; renderProviders();
     }; // the preset sheet stays as it is under the dialog
     list.append(row);
@@ -19200,7 +19264,7 @@ function renderSettings() {
     s.dock ? "on" : s.dockWindow ? "window" : "off", (v) => savePrefs({ ...keep, dock: v === "on", dockWindow: v === "window" })));
   // a closed window's webview let go (#580): the app's windows alone
   $("#lightweightRow").hidden = web;
-  $("#lightweightSegs").replaceChildren(segs([["off", t("Off")], ["on", t("On")]], s.lightweight ? "on" : "off",
+  $("#lightweightSegs").replaceChildren(segs([["off", t("Off")], ["on", t("On")]], s.lightweight !== false ? "on" : "off",
     (v) => savePrefs({ ...keep, lightweight: v === "on" })));
   // the display kept on too (#975): an agent recording the screen found it locked
   $("#keepAwakeSegs").replaceChildren(segs([["off", t("Off")], ["on", t("On")], ["display", t("Screen on too")]],
@@ -22338,7 +22402,7 @@ function wbCheckinLine(r) {
 
 // prefsKeep is what the settings page sends of s, all of it each time.
 function prefsKeep(s) {
-  return { theme: s.theme, colorblind: !!s.colorblind, lang: s.lang, tray: s.tray, dock: !!s.dock, dockWindow: !!s.dockWindow, lightweight: !!s.lightweight, keepAwake: !!s.keepAwake, keepAwakeDisplay: !!s.keepAwakeDisplay, noWSLAgents: !!s.noWSLAgents, proxy: s.proxy || "",
+  return { theme: s.theme, colorblind: !!s.colorblind, lang: s.lang, tray: s.tray, dock: !!s.dock, dockWindow: !!s.dockWindow, lightweight: s.lightweight, keepAwake: !!s.keepAwake, keepAwakeDisplay: !!s.keepAwakeDisplay, noWSLAgents: !!s.noWSLAgents, proxy: s.proxy || "",
     sessionTerminal: s.sessionTerminal || "",
     uiFont: s.uiFont || null, codeFont: s.codeFont || null,
     otel: s.otel || {},
@@ -23477,7 +23541,14 @@ function renderCrumb(items) {
 // the gateway at the sidebar's foot: where it listens, or that it doesn't
 var sideGwAt = null;
 function sideGwRead() {
-  if (sideGwRead.due && sideNav() && !sideGwAt) api("providers").then((r) => renderSideGw(r?.gateway), () => {});
+  if (!(sideGwRead.due && sideNav() && !sideGwAt)) return;
+  // the list is not read yet: the read the Providers page is made ready
+  // with (#1519) serves both, one read, not two
+  if (!providers && mode !== "panel") {
+    prefetchProviders();
+    if (providersEarly) return void providersEarly.read.then((r) => renderSideGw(r?.gateway), () => {});
+  }
+  api("providers").then((r) => renderSideGw(r?.gateway), () => {});
 }
 function renderSideGw(g) {
   const b = $("#sideGw");
@@ -23691,7 +23762,12 @@ function noteAccount(s) {
 function noteAccounts(x, depth = 0) {
   if (!x || typeof x !== "object" || depth > 8) return;
   if (Array.isArray(x)) { for (const v of x) noteAccounts(v, depth + 1); return; }
-  for (const [k, v] of Object.entries(x)) {
+  // for…in, not Object.entries: every answer is walked, Routing's trace a
+  // second, and entries made an array for each object and each key in it,
+  // ~8 MB of garbage a minute on Routing alone (#1481)
+  for (const k in x) {
+    if (!Object.hasOwn(x, k)) continue;
+    const v = x[k];
     if (typeof v === "string") {
       if (k === "user" || k === "account" || k === "alias" || (k === "who" && x.kind === "account")) noteAccount(v);
     } else if (k === "who" && x.kind === "account" && Array.isArray(v)) for (const w of v) noteAccount(w);

@@ -30,7 +30,7 @@ func TestClaudeAccountsOutliveLogout(t *testing.T) {
 		{"agent": "claude", "user": "two@example.com", "plan": "max", "on": true, "seen": seen.Add(-time.Hour), "auth": oauth("tok-two")},
 	})
 	loginsMu.Lock()
-	loginsSeenAt = time.Time{}
+	loginsSeenAt.Store(0)
 	loginsMu.Unlock()
 	if p, ok := find(All(), "claude"); !ok || p.Account.User != "own@example.com" {
 		t.Fatalf("signed in: %v %+v", ok, p.Account)
@@ -41,7 +41,7 @@ func TestClaudeAccountsOutliveLogout(t *testing.T) {
 	os.Remove(filepath.Join(home, ".claude.json"))
 	forgetClaudeCredential()
 	loginsMu.Lock()
-	loginsSeenAt = time.Time{}
+	loginsSeenAt.Store(0)
 	loginsMu.Unlock()
 
 	// the one Claude Code held went with its /logout, which revokes the

@@ -155,6 +155,29 @@ func dropHeld() {
 	held.Unlock()
 }
 
+// Stamp marks what the catalog is built from, read without building it.
+// Two equal stamps mean nothing magpie wrote or was told of came between
+// them: no Changed (a provider, an account, a setting saved), no plugin's
+// change, no catalog.Reset or Touched, no filememo.Forget, the same
+// environment, and the providers', the settings' and the catalog's own
+// files with the same time and size, as another process leaves them.
+// What it can't see — another app rewriting an account's file, a model
+// retired by its date — a caller that keeps what it built across stamps
+// builds again now and then all the same.
+type Stamp struct {
+	gen, fgen, env uint64
+	roots          [3]rootStamp
+}
+
+// StampNow is the Stamp as things are now.
+func StampNow() Stamp {
+	held.Lock()
+	gen := held.gen
+	held.Unlock()
+	return Stamp{gen: gen, fgen: filememo.Gen(), env: environSum(),
+		roots: [3]rootStamp{stampOf(Path()), stampOf(settings.Path()), stampOf(catalog.CachePath())}}
+}
+
 // heldOf is what build gives, built once while a request holds it.
 func heldOf[T any](key string, build func() T) T {
 	held.Lock()

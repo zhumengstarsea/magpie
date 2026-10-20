@@ -23,6 +23,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yetone/magpie/internal/appdir"
@@ -130,8 +131,18 @@ var (
 		Path:   func() string { return loginsPath() + ".lock" },
 		Locked: func() { filememo.Look(loginsPath()) },
 	}
-	loginsSeenAt time.Time
+	// loginsSeenAt is when rememberLogins last looked at the agents'
+	// sign-ins (UnixNano), 0 for not since this magpie started or since
+	// a change made the next look due at once. It is read without
+	// loginsMu, so a look not yet due takes no lock (#1665).
+	loginsSeenAt atomic.Int64
 )
+
+// loginsLookDue says the 30 seconds since the last look are up.
+func loginsLookDue() bool {
+	at := loginsSeenAt.Load()
+	return at == 0 || time.Since(time.Unix(0, at)) >= 30*time.Second
+}
 
 // switchable agents: those whose sign-in magpie can save and put back.
 var loginAgents = []string{"claude", "codex"}
@@ -720,12 +731,20 @@ func rememberLogins(force bool) {
 	if settings.AccountDiscoveryOff() {
 		return
 	}
-	loginsMu.Lock()
-	defer loginsMu.Unlock()
-	if !force && time.Since(loginsSeenAt) < 30*time.Second {
+	// the time first, and the lock only for a look that is due: taken
+	// first, every ask (each list of accounts, each page's read) made and
+	// locked logins.json.lock, ~370 times in a start's first 25s on
+	// Windows, where an antivirus' filter driver works on each (#1665)
+	if !force && !loginsLookDue() {
 		return
 	}
-	loginsSeenAt = time.Now()
+	loginsMu.Lock()
+	defer loginsMu.Unlock()
+	// another ask may have looked while this one waited for the lock
+	if !force && !loginsLookDue() {
+		return
+	}
+	loginsSeenAt.Store(time.Now().UnixNano())
 	was := readLogins()
 	ls := slices.Clone(was)
 	now := time.Now().UTC().Truncate(time.Second)
@@ -1137,7 +1156,7 @@ func switchSavedLogin(agent, user string) (from string, _ error) {
 	if err != nil {
 		return "", err
 	}
-	loginsSeenAt = time.Time{}
+	loginsSeenAt.Store(0)
 	forgetAccountCaches()
 	return from, nil
 }
@@ -1312,7 +1331,7 @@ func loginAgentName(agent string) string {
 // a caller that changed a sign-in behind magpie's back (a test's home).
 func ForgetAccounts() {
 	loginsMu.Lock()
-	loginsSeenAt = time.Time{}
+	loginsSeenAt.Store(0)
 	loginsMu.Unlock()
 	// an account asked for its list a moment ago is asked again: the
 	// accounts read afresh may be others under the same id

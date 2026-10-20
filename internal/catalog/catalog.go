@@ -371,22 +371,27 @@ func (p mdProvider) levels(m mdModel, providerID string) []string {
 	if e := m.efforts(providerID); len(e) > 0 || !m.Thinks || m.Family == "" || m.budgeted() {
 		return e
 	}
-	var kin *mdModel
-	for _, x := range p.Models {
-		if x.Family != m.Family || !x.Thinks || x.ID == m.ID || len(x.efforts(providerID)) == 0 {
+	// the kin is kept by its id, date and levels, not as &x: a pointer to
+	// the loop's copy put every model of p on the heap, for every model
+	// asked (~6 GB in 48 minutes of a user's magpie, #1956)
+	var kinID, kinDate string
+	var kin []string
+	for id := range p.Models {
+		x := p.Models[id]
+		if x.Family != m.Family || !x.Thinks || x.ID == m.ID {
 			continue
 		}
 		if m.ReleaseDate != "" && x.ReleaseDate > m.ReleaseDate {
 			continue
 		}
-		if kin == nil || x.ReleaseDate > kin.ReleaseDate || x.ReleaseDate == kin.ReleaseDate && x.ID > kin.ID {
-			kin = &x
+		if kin != nil && (x.ReleaseDate < kinDate || x.ReleaseDate == kinDate && x.ID <= kinID) {
+			continue
+		}
+		if e := x.efforts(providerID); len(e) > 0 {
+			kinID, kinDate, kin = x.ID, x.ReleaseDate, e
 		}
 	}
-	if kin == nil {
-		return nil
-	}
-	return kin.efforts(providerID)
+	return kin
 }
 
 // window is the tokens a prompt to m may hold: the input limit where
@@ -432,7 +437,12 @@ var (
 	// while a call is pricing its model
 	loadMu sync.Mutex
 	loaded bool
-	mdev   map[string]mdProvider
+	// built are Provider's lists of this load, by provider: dsh's wiring
+	// asks for them every 30 seconds, and each built every model again.
+	// gen counts Resets, so a list built from an older load isn't kept.
+	built map[string][]Model
+	gen   int
+	mdev  map[string]mdProvider
 	// images are the models, by bare id, most of the providers serving
 	// them say take images (a few mislabel a text model)
 	images map[string]bool
@@ -622,6 +632,8 @@ func load() map[string]mdProvider {
 func Reset() {
 	loadMu.Lock()
 	loaded = false
+	built = nil
+	gen++
 	mdev, images, windows, outputs, efforts, thinks, names, listed, canonical = nil, nil, nil, nil, nil, nil, nil, nil, nil
 	loadMu.Unlock()
 	if Forget != nil {
@@ -838,7 +850,27 @@ func APIOf(providerID, modelID string) string {
 // A vendor's own /models answer, once fetched, is layered over it by the
 // provider package (see provider.Provider.Available).
 func Provider(id string) []Model {
-	p, ok := load()[id]
+	loadMu.Lock()
+	out, ok := built[id]
+	at := gen
+	loadMu.Unlock()
+	if ok {
+		return slices.Clone(out)
+	}
+	out = provider(load(), id)
+	loadMu.Lock()
+	if at == gen {
+		if built == nil {
+			built = map[string][]Model{}
+		}
+		built[id] = out
+	}
+	loadMu.Unlock()
+	return slices.Clone(out)
+}
+
+func provider(all map[string]mdProvider, id string) []Model {
+	p, ok := all[id]
 	if !ok {
 		return nil
 	}
