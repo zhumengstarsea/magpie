@@ -48,6 +48,7 @@ func (s *Server) readRequestBody(w http.ResponseWriter, r *http.Request, from pr
 		writeError(w, from, status, err.Error())
 		return nil, false
 	}
+	holdBody(r.Context(), body)
 	return body, true
 }
 

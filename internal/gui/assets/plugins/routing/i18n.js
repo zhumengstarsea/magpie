@@ -2,6 +2,9 @@
 // kernel adds them to i18n.js's (magpie.strings).
 magpie.strings({
   zh: {
+    "Filter, or type an agent's name…": "筛选，或输入 Agent 名称…",
+    "the name its User-Agent begins with": "User-Agent 开头的名称",
+    "heard from in the last 30 days": "近 30 天有请求",
     "The subagent effort set in magpie is {effort}; the model's supported levels and a routing group's fixed member effort still apply.": "magpie 为子代理设定的推理强度是 {effort}；仍按模型支持的等级适配，并保留路由组成员的固定强度。",
     "{agent}'s call to magpie's web_search MCP tool": "{agent} 对 magpie 的 web_search MCP 工具的调用",
     "{agent}'s {model}": "{agent} 的 {model}",
@@ -532,6 +535,9 @@ magpie.strings({
     "{h} h {m} min": "{h} 小时 {m} 分钟",
   },
   "zh-TW": {
+    "Filter, or type an agent's name…": "篩選，或輸入 Agent 名稱…",
+    "the name its User-Agent begins with": "User-Agent 開頭的名稱",
+    "heard from in the last 30 days": "近 30 天有請求",
     "The subagent effort set in magpie is {effort}; the model's supported levels and a routing group's fixed member effort still apply.": "magpie 為子代理設定的推理強度是 {effort}；仍按模型支援的等級適配，並保留路由群組成員的固定強度。",
     "{agent} guessed your next message for its composer by itself, reading the whole conversation again. Not a turn of the conversation; Settings › General › Codex composer predictions picks its model, and Codex's Settings › General › Show predictions turns it off.": "{agent} 自行為輸入框猜測你的下一則訊息，每次都把整段對話重讀一遍。不屬於對話輪次；在 設定 › 常規 › Codex 輸入框預測 裡選它用的模型，在 Codex 的 設定 › 一般 › 顯示預測內容 裡可以關掉。",
     "{agent}'s call to magpie's web_search MCP tool": "{agent} 對 magpie 的 web_search MCP 工具的呼叫",
@@ -1062,6 +1068,9 @@ magpie.strings({
     "{h} h {m} min": "{h} 小時 {m} 分鐘",
   },
   ja: {
+    "Filter, or type an agent's name…": "絞り込み、またはエージェント名を入力…",
+    "the name its User-Agent begins with": "User-Agent の先頭の名前",
+    "heard from in the last 30 days": "過去 30 日にリクエストあり",
     "The subagent effort set in magpie is {effort}; the model's supported levels and a routing group's fixed member effort still apply.": "magpie で設定したサブエージェントの推論レベルは {effort} です。モデルが対応するレベルへの調整と、ルーティンググループのメンバーに固定されたレベルは引き続き適用されます。",
     "{agent}'s call to magpie's web_search MCP tool": "{agent} による magpie の web_search MCP ツールの呼び出し",
     "{agent}'s {model}": "{agent} の {model}",
@@ -1592,6 +1601,9 @@ magpie.strings({
     "These routing groups will no longer be available to agents.": "これらのルーティンググループはエージェントから利用できなくなります。",
   },
   de: {
+    "Filter, or type an agent's name…": "Filtern oder Namen eines Agenten eingeben…",
+    "the name its User-Agent begins with": "der Name, mit dem sein User-Agent beginnt",
+    "heard from in the last 30 days": "in den letzten 30 Tagen gesehen",
     "The subagent effort set in magpie is {effort}; the model's supported levels and a routing group's fixed member effort still apply.": "Der in magpie gesetzte Reasoning-Effort der Subagenten ist {effort}; die unterstützten Stufen des Modells und die feste Stufe eines Mitglieds der Routing-Gruppe gelten weiterhin.",
     "{agent}'s call to magpie's web_search MCP tool": "den Aufruf von {agent} an magpies MCP-Werkzeug web_search",
     "{agent}'s {model}": "{model} von {agent}",

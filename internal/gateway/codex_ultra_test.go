@@ -25,6 +25,7 @@ import (
 type copilotUp struct {
 	mu     sync.Mutex
 	bodies []map[string]any
+	reply  string // a stream to answer with, in place of the made one
 }
 
 func (c *copilotUp) last(t *testing.T) map[string]any {
@@ -59,7 +60,13 @@ func copilotSol(t *testing.T) *copilotUp {
 		json.Unmarshal(b, &body)
 		c.mu.Lock()
 		c.bodies = append(c.bodies, body)
+		reply := c.reply
 		c.mu.Unlock()
+		if reply != "" {
+			w.Header().Set("Content-Type", "text/event-stream")
+			io.WriteString(w, reply)
+			return
+		}
 		message := "Find the release date of Codex 0.159 and report it."
 		if strings.Contains(string(b), `"encrypted"`) {
 			message = "gAAAAAsealed=="

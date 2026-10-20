@@ -14,7 +14,8 @@
   let mine = null;       // /api/plugins: what's installed
   let listings = null;   // /api/plugins/listings: the plugins suggested
   let tagged = null;     // /api/plugins/github: repositories their authors tagged magpie-plugin, as listings
-  let taggedErr = "";    // why they couldn't be asked for, while none were had
+  let taggedErr = "";    // why the list isn't GitHub's whole answer: it couldn't be asked, or...
+  let taggedMissing = 0; // ...this many repositories it named couldn't be read
   let topic = "magpie-plugin";
   const npm = {};        // /api/plugins/npm: package → what npm says of it
   const heads = {};      // /api/plugins/git: a git plugin's spec → the commit its repository is at
@@ -170,14 +171,22 @@
     summary: r.description ? { en: r.description } : undefined,
     npm: { version: r.version || "", publisher: r.owner, repository: r.url, license: r.license, weekly: 0 },
   });
-  async function loadTagged() {
+  // A failed ask is said, with why, whether or not a list was had before:
+  // an empty list was read as there being no unofficial plugins (till on
+  // Discord: GitHub unreachable from their desktop, the section gone).
+  // A list had before stands through a failed ask that brings none.
+  // again: Try again, which has magpie ask GitHub at once.
+  async function loadTagged(again) {
     try {
-      const r = await api("plugins/github");
-      tagged = (r.repos || []).map(ghListing);
-      taggedErr = "";
+      const r = await api("plugins/github" + (again ? "?again=1" : ""));
+      const got = (r.repos || []).map(ghListing);
+      if (!(r.error && !got.length && tagged?.length)) tagged = got;
+      taggedErr = r.error || "";
+      taggedMissing = r.missing || 0;
       if (r.topic) topic = r.topic;
     } catch (e) {
-      if (!tagged) taggedErr = e.message || String(e);
+      taggedErr = e.message || String(e);
+      taggedMissing = 0;
       tagged = tagged || [];
     }
   }
@@ -644,6 +653,10 @@
     replaceKeeping(ghSec, [ghHead, skeleton(3)]);
     return ghSec;
   }
+  // why the list isn't GitHub's whole answer; kept: cards are shown
+  const ghWhy = (kept) => taggedMissing
+    ? t(kept ? "{n} more on GitHub couldn't be read: {error}" : "GitHub found {n} repositories, but none of them could be read: {error}", { n: taggedMissing, error: taggedErr })
+    : t(kept ? "Couldn't ask GitHub, so these are from before: {error}" : "Couldn't ask GitHub: {error}", { error: taggedErr });
   // and one GitHub couldn't be asked of says so, with another go
   function ghFailed() {
     ghHead.replaceChildren(...ghTitle());
@@ -654,12 +667,27 @@
     again.onclick = () => {
       tagged = null;
       taggedErr = "";
+      taggedMissing = 0;
       drawBody();
-      loadTagged().then(drawBody);
+      loadTagged(true).then(drawBody);
     };
-    box.append(el("span", "", t("Couldn't ask GitHub: {error}", { error: taggedErr })), again);
+    box.append(el("span", "", ghWhy(false)), again);
     replaceKeeping(ghSec, [ghHead, box]);
     return ghSec;
+  }
+  // the cards GitHub could give, and a line saying what it couldn't, with
+  // another go that keeps them until it answers
+  function ghNote() {
+    const note = el("div", "pm-ghwarn");
+    note.setAttribute("role", "status");
+    const again = el("button", "text", t("Try again"));
+    again.type = "button";
+    again.onclick = () => {
+      again.disabled = true;
+      loadTagged(true).then(drawBody);
+    };
+    note.append(el("span", "", ghWhy(true)), again);
+    return note;
   }
   function ghSection(list) {
     ghList = list;
@@ -677,9 +705,10 @@
     return ghSec;
   }
   function drawGh() {
+    const head = taggedErr ? [ghHead, ghNote()] : [ghHead];
     if ((tagged || []).length <= 6) {
       ghGrid.replaceChildren(...ghList.map(card));
-      replaceKeeping(ghSec, [ghHead, ghGrid]);
+      replaceKeeping(ghSec, [...head, ghGrid]);
       return;
     }
     // the kinds there are, in the market's order, each with how many the
@@ -724,7 +753,7 @@
     const shown = found.filter((l) => (!ghKind || kindOf(l) === ghKind) && (!ghHave || have(l) === (ghHave === "have")));
     if (shown.length) {
       ghGrid.replaceChildren(...shown.map(card));
-      replaceKeeping(ghSec, [ghHead, ghBar, ghGrid]);
+      replaceKeeping(ghSec, [...head, ghBar, ghGrid]);
       return;
     }
     const none = el("div", "pm-ghnone");
@@ -732,7 +761,7 @@
     all.type = "button";
     all.onclick = () => { ghKind = ""; ghHave = ""; ghQuery = ""; drawGh(); ghQ.focus(); };
     none.append(el("span", "", t("No plugin on GitHub matches")), all);
-    replaceKeeping(ghSec, [ghHead, ghBar, none]);
+    replaceKeeping(ghSec, [...head, ghBar, none]);
   }
 
   // the head and its search field are made once and drawn again in
@@ -886,7 +915,7 @@
       if (pgs.length) out.push(section(t("Pages"), t("pages of their own in magpie's window, each shut off from the rest and reading only what it lists"), pgs));
       if (gh.length) out.push(ghSection(gh));
       else if (!tagged) out.push(ghWaiting());
-      else if (taggedErr) out.push(ghFailed());
+      else if (taggedErr && !tagged.length) out.push(ghFailed());
       out.push(manual());
       replaceKeeping(body, out);
       return;
@@ -894,6 +923,7 @@
     if (ls.length) out.push(section(t("Suggested"), "", ls));
     if (gh.length) out.push(ghSection(gh));
     else if (!tagged) out.push(ghWaiting());
+    else if (taggedErr && !tagged.length) out.push(ghFailed());
     const known = new Set([...listings.map((l) => l.package), ...(tagged || []).map((l) => l.github.package).filter(Boolean)]);
     const box = el("section", "pm-sec");
     const h = el("div", "pm-sechead");

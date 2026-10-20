@@ -2348,8 +2348,9 @@ node --test internal/gui/tests/ledger-protocol.test.cjs
 
 `library-rtk-nohook.test.cjs` checks that an agent RTK has no hook for
 (DeepSeek Harness) is listed in Library › RTK with a No RTK hook tag saying
-why, and that its switch can't be turned on, while Pi's can. English and
-Chinese, Chromium and WebKit.
+why, and that its switch can't be turned on, while Pi's can. Grok Build's
+tag gives its own reason and rtk-ai/rtk#2136, never dsh's #3847. English
+and Chinese, Chromium and WebKit.
 
 ```sh
 node --test internal/gui/tests/library-rtk-nohook.test.cjs

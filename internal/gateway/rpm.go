@@ -177,6 +177,9 @@ func (l *rpms) wait(ctx context.Context, who string, limit int, longest time.Dur
 	case <-c:
 		return d, nil
 	case <-ctx.Done():
+		// the wait ends before its place is given back, so once the place
+		// is back nothing is left to send it
+		stop()
 		l.giveBack(who, at)
 		return rpmNow().Sub(now), ctx.Err()
 	}

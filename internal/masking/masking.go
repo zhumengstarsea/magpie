@@ -7,6 +7,7 @@ package masking
 import (
 	"net/http"
 
+	"github.com/yetone/magpie/internal/pii"
 	"github.com/yetone/magpie/internal/redact"
 	"github.com/yetone/magpie/internal/settings"
 )
@@ -21,7 +22,22 @@ func Wanted(st settings.Settings) bool {
 
 func options() redact.Options {
 	st := settings.Load()
-	return redact.Options{Secrets: st.Redact, Personal: st.RedactPersonal, Kinds: st.RedactKinds, Words: st.RedactWords, Rules: st.RedactRules}
+	o := redact.Options{Secrets: st.Redact, Personal: st.RedactPersonal, Kinds: st.RedactKinds, Words: st.RedactWords, Rules: st.RedactRules}
+	if st.RedactModel {
+		o.Model = model
+	}
+	return o
+}
+
+// model is the local model (internal/pii) as redact's Model. One that
+// can't answer panics, and the request is held back (gwmw.Safely) rather
+// than sent with only the rules' masking: the user asked for the model's.
+func model(texts []string) [][]redact.Found {
+	got, err := pii.Find(texts)
+	if err != nil {
+		panic(err)
+	}
+	return got
 }
 
 func (Masker) JSON(body []byte) ([]byte, int) {

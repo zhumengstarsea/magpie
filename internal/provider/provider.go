@@ -1275,9 +1275,10 @@ func normalize(p Provider) Provider {
 			p.Decide = pr.Decide
 		}
 	}
-	// an oMLX or MLX-Serve provider saved before its preset had System One (#1641)
-	// asks it where its chat completions are, at whatever port it was given
-	if (p.Preset == OMLXPreset || p.Preset == MLXServePreset) && p.Decide == "" && p.Chat != "" {
+	// an oMLX, MLX-Serve or Ollama provider saved before its preset had
+	// System One (#1641; Nanka on Discord) asks it where its chat
+	// completions are, at whatever address it was given
+	if (p.Preset == OMLXPreset || p.Preset == MLXServePreset || p.Preset == "ollama" || p.Preset == "ollama-cloud") && p.Decide == "" && p.Chat != "" {
 		p.Decide = p.Chat
 	}
 	if p.Routing != Ordered && p.Routing != Rotate && p.Routing != LeastUsed && p.Routing != Pace && p.Routing != Weighted && !PluginRouting(p.Routing) {

@@ -395,8 +395,11 @@ type settingsJSON struct {
 	// settings, environment, system, off or none
 	ProxyNow    string `json:"proxyNow"`
 	ProxySource string `json:"proxySource"`
-	// whether magpie opens at login: the system's record, not a setting
-	Login bool `json:"login"`
+	// whether magpie opens at login: the system's record, not a setting;
+	// LoginAllow, the record is there but the user switched it off in
+	// System Settings › Login Items, which is where it's allowed again
+	Login      bool `json:"login"`
+	LoginAllow bool `json:"loginAllow,omitempty"`
 	// the model that describes images when Vision names none, and those
 	// that can be named
 	VisionAuto   string     `json:"visionAuto,omitempty"`
@@ -583,6 +586,10 @@ type searchFailedJSON struct {
 	At           time.Time `json:"at"`
 }
 
+// loginState is whether magpie opens at login, as the system will act on
+// it. A var for the tests: the real one asks the user's own system.
+var loginState = autostart.Enabled
+
 func settingsState() settingsJSON {
 	s := settingsJSON{Settings: settings.Load(), Version: Version, Dir: tilde(settings.Dir()), Portable: settings.Portable() != "", Gateway: gateway.URL()}
 	s.AddrEnv = os.Getenv("MAGPIE_ADDR")
@@ -622,7 +629,8 @@ func settingsState() settingsJSON {
 			s.OTelEnv = true
 		}
 	}
-	s.Login = autostart.Enabled()
+	login := loginState()
+	s.Login, s.LoginAllow = login != autostart.Off, login == autostart.NeedsAllowing
 	if s.LAN {
 		s.LANURLs, s.LANContainer = gateway.LANURLs(), gateway.ContainerAddrs()
 	}
@@ -1127,6 +1135,7 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 	cliBehindRoutes(mux)
 	gatewayFixRoutes(mux)
 	gatewayModeRoutes(mux)
+	privacyModelRoutes(mux)
 	builtinRoutes(mux)
 	mux.HandleFunc("GET /api/settings", func(rw http.ResponseWriter, r *http.Request) {
 		access.MigrateLegacyLANKeyBestEffort()
@@ -1206,6 +1215,7 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		in.RequestArchiveMaxMB = cur.RequestArchiveMaxMB   // in settings.json only
 		in.GatewayConversations = cur.GatewayConversations // Sessions' explicit recording consent
 		in.RedactRules = cur.RedactRules                   // the masking rules, set on their own
+		in.RedactModel = cur.RedactModel                   // set on its own (privacy-model)
 		in.DisabledModels = cur.DisabledModels             // set on their own (disabled-models below, #1867)
 		// used or left is the Usage page's toggle as much as Settings', set on its own
 		in.QuotaLeft = cur.QuotaLeft

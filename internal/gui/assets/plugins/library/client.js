@@ -947,8 +947,8 @@ magpie.plugin("library", (ctx) => {
       if (a.on && !rtk.path) row.append(tag(t("RTK missing"), "warn", t("{agent}'s hook calls rtk, which isn't installed, so its shell commands fail. Install RTK, or switch this off.", { agent: a.name })));
       // …or one that is, off the PATH the agent gets
       else if (a.on && rtk.offPath) row.append(tag(t("Not on PATH"), "warn", t("{agent}'s hook runs rtk by name and can't find it, so RTK does nothing for it. Put RTK on PATH above.", { agent: a.name })));
-      // an agent RTK has no hook for (DeepSeek Harness): listed, with why
-      if (a.noHook) row.append(tag(t("No RTK hook"), "warn", t("RTK can't be given to {agent} yet: RTK works by rewriting the shell command an agent is about to run, and {agent}'s hooks can only allow or deny a command, not change it. RTK's installer has no option for it either (github.com/rtk-ai/rtk/issues/3847).", { agent: a.name })));
+      // an agent RTK has no hook for (rtkNoHook in rtk.go): listed, with its own why
+      if (a.noHook) row.append(tag(t("No RTK hook"), "warn", rtkNoHookWhy(a)));
       // RTK before 0.51 installs Antigravity's hook only per project
       else if (a.blocked && a.id === "agy") row.append(tag(t("Update RTK"), "warn", t("{agent}'s hook needs RTK 0.51 or newer: older ones install it only per project. Update RTK (brew upgrade rtk, or its installer again), then switch it on.", { agent: a.name })));
       else if (a.blocked && a.id !== "opencode") row.append(tag(t("Update RTK"), "warn", t("{agent}'s hook needs RTK 0.50 or newer: older ones only add @RTK.md to AGENTS.md, which rewrites no command. Update RTK (brew upgrade rtk, or its installer again), then switch it on.", { agent: a.name })));
@@ -964,6 +964,20 @@ magpie.plugin("library", (ctx) => {
     }
     if (!rows.length) list.append(el("div", "lib-none", t("None of your agents is one RTK has a hook for.")));
     body.append(list);
+  }
+  // Why RTK has no hook for an agent: each agent's own reason and its own
+  // rtk-ai/rtk issue, never another agent's (新v学员 on Discord: Grok Build's
+  // said DeepSeek Harness's hooks can't rewrite and linked dsh's issue).
+  // Keyed as rtkNoHook in rtk.go; TestRTKNoHookIssuesAreEachAgents holds the
+  // two together. An agent with no entry gets no reason and no link.
+  function rtkNoHookWhy(a) {
+    const agent = a.name;
+    switch (a.id) {
+      case "dsh": return t("RTK can't be given to {agent} yet: RTK works by rewriting the shell command an agent is about to run, and {agent}'s hooks can only allow or deny a command, not change it. RTK's installer has no option for it either (github.com/rtk-ai/rtk/issues/3847).", { agent });
+      case "grok": return t("RTK can't be given to {agent} yet: RTK's installer has no option for Grok Build (github.com/rtk-ai/rtk/issues/2136).", { agent });
+      case "grok-app": return t("RTK can't be given to {agent} yet: {agent} runs Grok Build, and RTK's installer has no option for Grok Build (github.com/rtk-ai/rtk/issues/2136).", { agent });
+      default: return t("RTK can't be given to {agent} yet: RTK has no hook for it.", { agent });
+    }
   }
   async function setRTK(a, on) {
     rtkBusy.add(a.id);

@@ -465,6 +465,11 @@ function routingPage(part) {
   const LONE = "Only one account or key is on for this, so routing has nothing to choose between. Turn on a second in the provider's editor, and how it routes is set under Several accounts or keys below.";
 
   const agentOf = (id) => (state.clients || state.agents).find((a) => a.id === id);
+  // uaName is a client as the gateway names one it doesn't know
+  // (usage.AgentOf): its User-Agent's product name, before the first / or
+  // space, in lower case as a rule keeps it. "SillyTavern/1.12" is
+  // sillytavern; a comma would part it in two (ParseRule)
+  const uaName = (s) => String(s || "").trim().split(/[\/\s,]/)[0].toLowerCase();
   const agentName = (id) => agentOf(id)?.name || (id && id !== "other" ? id : t("your agent"));
   // who names an account or key in a sentence
   const who = (w) => w.kind === "provider" ? w.name : w.who;
@@ -1116,16 +1121,51 @@ function routingPage(part) {
     trips.push(tr);
   }).finally(() => { for (const l of legs) if (l.j) l.p.remove(); });
 
+  // measured is a path's length, and the tips of it flights met, for the d
+  // it had: measured again only when its d changes. Every frame poses
+  // every flight, and measured each leg and each wire end anew — with
+  // three agents sending at once, ~10 s of a 40 s look at the page went to
+  // getTotalLength and getPointAtLength alone, and the page lagged
+  // (yg6888 on X: "打开页面很卡").
+  const measured = new WeakMap(); // path → { d, L, tips, pts }
+  function measure(p) {
+    const d = p.isConnected && p.getAttribute("d");
+    if (!d) return null;
+    let m = measured.get(p);
+    if (!m || m.d !== d) measured.set(p, m = { d, L: p.getTotalLength?.() || 0, tips: [], pts: [] });
+    return m;
+  }
+  const pathLength = (p) => measure(p)?.L || 0;
+  // pointAt is the point s along p, read between the points measured every
+  // ptStep along it, each measured once for its d: every flight asked
+  // getPointAtLength three times a frame, and the flights on one wire asked
+  // for the same points again. Between two points 8 px apart, a wire's
+  // curve is off its chord by a fraction of a pixel.
+  const ptStep = 8;
+  function pointAt(p, s) {
+    const m = measure(p);
+    if (!m?.L) return p.getPointAtLength(s);
+    s = Math.max(0, Math.min(m.L, s));
+    const k = Math.floor(s / ptStep), s0 = k * ptStep, s1 = Math.min(m.L, s0 + ptStep);
+    const at = (i, si) => m.pts[i] || (m.pts[i] = p.getPointAtLength(si));
+    const a = at(k, s0);
+    if (s === s0 || s1 <= s0) return a;
+    const b = at(k + 1, s1), f = (s - s0) / (s1 - s0);
+    return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+  }
+
   // tip is where a flight meets a wire's end or start, and which way it
   // heads there: along the wire, or back along it
   const tip = (p, atEnd, back) => () => {
-    const L = p.isConnected && p.getTotalLength?.() || 0;
+    const m = measure(p), L = m?.L;
     if (!L) return null; // not laid out: nowhere to meet it yet
+    const key = (atEnd ? 2 : 0) + (back ? 1 : 0);
+    if (m.tips[key]) return m.tips[key];
     const a = p.getPointAtLength(atEnd ? L : 0), b = p.getPointAtLength(atEnd ? Math.max(0, L - 2) : Math.min(L, 2));
     let tx = atEnd ? a.x - b.x : b.x - a.x, ty = atEnd ? a.y - b.y : b.y - a.y;
     if (back) { tx = -tx; ty = -ty; }
     const n = Math.hypot(tx, ty) || 1;
-    return { x: a.x, y: a.y, tx: tx / n, ty: ty / n };
+    return m.tips[key] = { x: a.x, y: a.y, tx: tx / n, ty: ty / n };
   };
   // via is the way through magpie from one wire to the next: a gentle arc
   // across it, carrying on the way the flight came in and leaving the way
@@ -1150,7 +1190,9 @@ function routingPage(part) {
         c1 = [a.x + a.tx * k + nx * l, a.y + a.ty * k + ny * l];
         c2 = [b.x - b.tx * k + nx * l, b.y - b.ty * k + ny * l];
       }
-      p.setAttribute("d", `M${a.x} ${a.y} C${c1[0]} ${c1[1]} ${c2[0]} ${c2[1]} ${b.x} ${b.y}`);
+      // set only when it moved: a new d is measured again (measure)
+      const d = `M${a.x} ${a.y} C${c1[0]} ${c1[1]} ${c2[0]} ${c2[1]} ${b.x} ${b.y}`;
+      if (p.getAttribute("d") !== d) p.setAttribute("d", d);
     };
     j();
     return { p, j };
@@ -2567,6 +2609,7 @@ function routingPage(part) {
       return;
     }
     const lang = document.documentElement.lang, ids = new Set();
+    let redrawn = false; // a row made anew, or the rows moved: metaFit measures them again
     const rowEls = rs.map((r) => {
       const [said, how, tr] = outcome(r);
       const sel = String(pinned ? pinned.id === r.id : cur?.id === r.id);
@@ -2584,6 +2627,7 @@ function routingPage(part) {
         const row = x = { sig, b: reqRow(r, said, how, tr, ag, meta, metrics, title) };
         row.b.onclick = () => pick(row.r); // the request as it is when clicked
         reqRows.set(r.id, x);
+        redrawn = true;
       }
       x.r = r;
       if (x.b.getAttribute("aria-pressed") !== sel) x.b.setAttribute("aria-pressed", sel);
@@ -2600,8 +2644,11 @@ function routingPage(part) {
       els.forEach((e, i) => { if (kids[i] !== e) reqs.insertBefore(e, kids[i] || null); });
       while (kids.length > els.length) reqs.lastElementChild.remove();
       if (reqs.scrollTop !== listTop) reqs.scrollTop = listTop;
+      redrawn = true;
     }
-    metaFit();
+    // measuring every row's line forces a layout: only when one changed
+    // (a resize measures them through the ResizeObserver)
+    if (redrawn) metaFit();
     renderActs(rs);
   }
   function reqRow(r, said, how, tr, ag, meta, metrics, title) {
@@ -3248,7 +3295,7 @@ function routingPage(part) {
   // than a bird banks
   function pose(tr, e) {
     for (const l of tr.legs) if (l.j) l.j();
-    const lens = tr.legs.map((l) => l.p.isConnected && l.p.getAttribute("d") && l.p.getTotalLength?.() || 0);
+    const lens = tr.legs.map((l) => pathLength(l.p));
     const total = lens.reduce((a, b) => a + b, 0);
     const point = (d) => {
       d = Math.max(0, Math.min(total, d));
@@ -3256,7 +3303,7 @@ function routingPage(part) {
       // a leg not laid out has nowhere to be on: passed over
       while (i < lens.length - 1 && (d > lens[i] || !lens[i])) { d -= lens[i]; i++; }
       const l = tr.legs[i];
-      return l.p.getPointAtLength(l.rev ? lens[i] - d : d);
+      return pointAt(l.p, l.rev ? lens[i] - d : d);
     };
     if (!total) return;
     const d = e * total, pt = point(d);
@@ -4440,6 +4487,13 @@ function routingPage(part) {
     // More are picked with the model picker the agents use.
     const infoOf = (id) => g?.memberInfo?.find((x) => x.id === id);
     const pickFrom = (label, anchor, ev, options, onPick, value = "") => openPicker({ id: "", name: "", fields: [] }, { key: "rule", label, value, menu: true, options, onPick }, anchor, ev);
+    // the agents magpie heard from in the last 30 days that it doesn't
+    // know, by the names the gateway gave them (usage.AgentOf), asked for
+    // once while the editor is open; none when usage can't be read
+    let heardFrom = null;
+    const heard = () => heardFrom || (heardFrom = api("usage?period=30d")
+      .then((u) => (u?.agents || []).map((a) => uaName(a.id)).filter((id) => id && id !== "other" && id !== "magpie"))
+      .catch(() => []));
     const box = el("div", "fallback");
     const list = el("div", "fbl");
     const addBtn = el("button", "rt-gadd");
@@ -5032,18 +5086,31 @@ function routingPage(part) {
           wrap("compact", cp);
           if (mine === "compact") focus = () => cp.focus({ preventScroll: true });
         }
-        // agents
+        // agents: the ones magpie knows, the others it has heard from, and
+        // any typed by the name the gateway gives a client it doesn't know
+        // (raikyou on Discord: SillyTavern, one's own app)
         if (kinds.includes("agents")) {
           const clients = state.clients || state.agents || [];
           const agentsName = () => r.agents.length ? r.agents.map((id) => clients.find((a) => a.id === id)?.name || id).join(", ") : t("any agent");
           const ag = el("button", "rt-cond" + (r.agents.length ? " on" : ""), agentsName());
-          ag.onclick = (ev) => pickFrom("agent", ag, ev, [
-            { value: "", label: t("any agent"), note: t("not a condition") },
-            ...clients.map((a) => ({ value: a.id, label: a.name, icon: a.icon, note: r.agents.includes(a.id) ? "✓" : "" })),
-          ], (v) => {
-            r.agents = !v ? [] : r.agents.includes(v) ? r.agents.filter((x) => x !== v) : [...r.agents, v];
-            ag.textContent = agentsName(); ag.classList.toggle("on", r.agents.length > 0); warn();
-          });
+          heard();
+          ag.onclick = async (ev) => {
+            ev.stopPropagation();
+            const known = new Set(clients.map((a) => a.id));
+            const others = [...(await heard()), ...r.agents].filter((id, i, all) => !known.has(id) && all.indexOf(id) === i);
+            const tick = (id) => r.agents.includes(id) ? "✓" : "";
+            openPicker({ id: "", name: "", fields: [] }, { key: "rule", label: "agent", value: "", menu: true,
+              placeholder: t("Filter, or type an agent's name…"),
+              typed: (s) => { const id = uaName(s); return id && { value: id, label: id, note: t("the name its User-Agent begins with") }; },
+              options: [
+                { value: "", label: t("any agent"), note: t("not a condition") },
+                ...clients.map((a) => ({ value: a.id, label: a.name, icon: a.icon, note: tick(a.id) })),
+                ...others.map((id) => ({ value: id, label: id, icon: "generic", note: tick(id) || t("heard from in the last 30 days") })),
+              ], onPick: (v) => {
+                r.agents = !v ? [] : r.agents.includes(v) ? r.agents.filter((x) => x !== v) : [...r.agents, v];
+                ag.textContent = agentsName(); ag.classList.toggle("on", r.agents.length > 0); warn();
+              } }, ag, ev);
+          };
           wrap("agents", ag);
           if (mine === "agents") focus = () => { ag.focus({ preventScroll: true }); ag.onclick({ stopPropagation() {} }); };
         }
@@ -5691,9 +5758,9 @@ function routingPage(part) {
     for (const tr of pTrips) {
       const k = pShown() && !still() ? Math.min(1, Math.max(0, (ts - tr.t0) / tr.ms)) : 1;
       const e = k < .5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2;
-      const L = tr.n.wire.getTotalLength?.() || 0;
+      const L = pathLength(tr.n.wire);
       if (L) {
-        const pt = tr.n.wire.getPointAtLength((tr.back ? 1 - e : e) * L);
+        const pt = pointAt(tr.n.wire, (tr.back ? 1 - e : e) * L);
         tr.dot.setAttribute("cx", pt.x);
         tr.dot.setAttribute("cy", pt.y);
         tr.dot.removeAttribute("visibility");

@@ -40,6 +40,11 @@ type Options struct {
 	// id, where the user chose; one not in it is as its Category.On says.
 	// None of them is masked while Personal is off.
 	Kinds map[string]bool
+	// Model, where set, finds more in the texts to mask (model.go)
+	Model Model
+
+	// found are the spans Model found, by text, for one request's texts
+	found map[string][]Found
 }
 
 // covers says o masks what a rule of category cat finds: "" are the
@@ -329,7 +334,9 @@ type span struct {
 }
 
 // Mask swaps what o covers in s for placeholders, and says how many.
-func Mask(s string, o Options) (string, int) { return mask(s, o, placeholder) }
+func Mask(s string, o Options) (string, int) {
+	return mask(s, withModel(o, []string{s}), placeholder)
+}
 
 // mask swaps what o covers in s for what put makes of each value.
 func mask(s string, o Options, put func(kind, v string) string) (string, int) {
@@ -420,6 +427,7 @@ func mask(s string, o Options, put func(kind, v string) string) (string, int) {
 	}
 	// after the rules', so where a rule finds the same value it keeps the
 	// kind it has always had
+	found = append(found, modelSpans(s, o)...)
 	found = append(found, knownSpans(s, o)...)
 	return apply(s, found, put)
 }

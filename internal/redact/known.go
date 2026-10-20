@@ -105,6 +105,12 @@ var kindCats = func() map[string][]string {
 			}
 		}
 	}
+	// and the model's: a name it found is personal data, not a secret
+	for _, k := range modelKinds {
+		if c := modelCat(k); c != "" && !slices.Contains(m[k], c) {
+			m[k] = append(m[k], c)
+		}
+	}
 	return m
 }()
 

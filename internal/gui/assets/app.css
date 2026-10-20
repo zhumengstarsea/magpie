@@ -3196,6 +3196,8 @@ body:not(.side-nav) #view-settings .set-head.stuck::before { box-shadow: 0 1px 0
 .feat-say { margin: 2px 4px 10px; font-size: 12px; line-height: 1.45; color: var(--muted); }
 .set-searching .feat-say { display: none; }
 .row.pref .sub.feat-why { color: var(--muted); font-size: 11px; }
+/* the local model's row says a download, a device or an error in full */
+#privacyModelRow .sub { white-space: normal; overflow-wrap: anywhere; }
 /* a plugin's settings, under its row (kernel.js ui.form) */
 .row.pref.feat-set { min-height: 44px; padding-left: 30px; }
 .row.pref.feat-set .name { font-size: 12.5px; }
@@ -3341,6 +3343,8 @@ input.words.search-key, input.words.search-url { flex: 1 1 120px; width: auto; m
 .warm-at .warm-rm, .warm-at .warm-add { min-width: 24px; height: 27px; padding: 0 6px; font-size: 14px; line-height: 1; }
 .row.pref .sub .warn { color: var(--amber); }
 .row.pref .sub.wraps { white-space: normal; }
+.row.pref .login-allow-open { font: inherit; color: var(--accent); padding: 0; background: none; border: 0; cursor: pointer; }
+.row.pref .login-allow-open:hover { text-decoration: underline; }
 /* the field's clock and picker in the page's own palette */
 :root[data-theme="dark"] .warm-at input.at { color-scheme: dark; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .warm-at input.at { color-scheme: dark; } }

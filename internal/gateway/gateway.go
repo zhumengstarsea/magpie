@@ -1977,6 +1977,11 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		}
 	} else {
 		cands, pl = s.plan(p, model, from)
+		if handedOnOf(r) != nil {
+			// Codex's own sign-in, asked as often as it is asked: only
+			// the fallbacks are left (codexFallBack)
+			cands, pl = fallbacksOnly(cands, pl, p.ID, model)
+		}
 		if provider.IsFastPick(agent, p.ID+"/"+model) {
 			// the agent's pick of it is sent in its vendor's fast mode
 			// (#954), as a group's member may be; its fallbacks, other
@@ -2277,6 +2282,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	autoReset := resetFirst != nil // a Codex or Claude reset looked at, once a request
 	// what the tries' held streams sent the agent ahead of a reply (#751)
 	kept := &keptAlive{proto: from, told: start}
+	if k := handedOnOf(r); k != nil {
+		// Codex's own sign-in waited for first, with Codex kept alive
+		kept = k
+	}
 	var sentMs int64 // ms from the request to its answering try going to the vendor
 	// of it, magpie's own, the tries that failed first and the wait for a
 	// slot (usage.Record.Own, Retried, Queued: #1532)
@@ -4650,8 +4659,17 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 	if proto == provider.Responses {
 		phases = &phaseTidy{sse: sse}
 	}
-	// out is what a filter let through, through phases
+	// each item keeps the id it was added with (itemids.go): Copilot gives
+	// it another in every event
+	var ids *idTidy
+	if proto == provider.Responses && sse {
+		ids = &idTidy{}
+	}
+	// out is what a filter let through, through ids and phases
 	out := func(b []byte) []byte {
+		if ids != nil {
+			b = ids.write(b)
+		}
 		if phases != nil {
 			return phases.write(b)
 		}
@@ -4705,6 +4723,9 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 			}
 			if sigs != nil {
 				out = sigs.write(out)
+			}
+			if ids != nil {
+				out = ids.write(out)
 			}
 			if phases != nil {
 				out = phases.write(out)
@@ -4767,6 +4788,13 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 	}
 	if sigs != nil {
 		write(out(sigs.flush()))
+	}
+	if ids != nil {
+		b := ids.flush()
+		if phases != nil {
+			b = phases.write(b)
+		}
+		write(b)
 	}
 	if phases != nil {
 		write(phases.flush())
@@ -6353,20 +6381,22 @@ func conversationID(in http.Header, body []byte) string {
 		}
 	}
 	var m struct {
-		Messages []json.RawMessage `json:"messages"`
-		Input    json.RawMessage   `json:"input"`
-		Contents []json.RawMessage `json:"contents"`
+		Messages json.RawMessage `json:"messages"`
+		Input    json.RawMessage `json:"input"`
+		Contents json.RawMessage `json:"contents"`
 	}
 	// An undecodable body still gets an id: the hash of the whole body.
 	_ = decodeJSON(body, &m)
-	items := m.Messages
-	geminiContents := len(items) == 0 && len(m.Contents) > 0
+	// The turns are the body's own bytes, not a copy of each: this runs on
+	// every request, and a 1.5 MB conversation's copy was ~2.8 MB of each
+	// request's allocations (yg6888 on X).
+	items, contents := elementsOf(m.Messages), elementsOf(m.Contents)
+	geminiContents := len(items) == 0 && len(contents) > 0
 	if geminiContents {
-		items = m.Contents // Gemini generateContent repeats the first user turn.
+		items = contents // Gemini generateContent repeats the first user turn.
 	}
-	if len(items) == 0 && len(m.Input) > 0 && m.Input[0] == '[' {
-		// A malformed input array leaves items empty, and the whole body is hashed.
-		_ = decodeJSON(m.Input, &items)
+	if len(items) == 0 {
+		items = elementsOf(m.Input)
 	}
 	first := []byte(m.Input)
 	if len(items) > 0 {

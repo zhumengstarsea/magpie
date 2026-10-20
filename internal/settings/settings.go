@@ -87,8 +87,12 @@ type Settings struct {
 	// RedactKinds turns the other kinds of personal data on or off one by
 	// one, by redact.Categories' ids (ssn, ip, home…), under
 	// RedactPersonal: only the user's choices, a kind not in it is as its
-	// category's On says.
+	// category's On says. RedactModel has a local model (internal/pii) find
+	// what the rules can't as well, a name or an address in free text,
+	// under Redact and RedactPersonal; it is this computer's own, as the
+	// model is downloaded on it.
 	Redact         bool            `json:"redact,omitempty"`
+	RedactModel    bool            `json:"redactModel,omitempty"`
 	RedactPersonal bool            `json:"redactPersonal,omitempty"`
 	RedactKinds    map[string]bool `json:"redactKinds,omitempty"`
 	RedactWords    []string        `json:"redactWords,omitempty"`
@@ -979,7 +983,8 @@ func (s Settings) Compact() int {
 // is shared on the local network and the addresses let in to it, the
 // Dock, gateway mode, whether WSL is looked in, whether agents' sign-ins
 // are read, when allowances are read, the terminal app a session resumes
-// in, and what the menu bar or tray shows beside magpie's icon (yoooo on
+// in, whether the local masking model is on (it is downloaded on this
+// computer alone), and what the menu bar or tray shows beside magpie's icon (yoooo on
 // Discord: usage turned off on a Mac came back from a Windows box that
 // shows it; Lullaby: sharing turned on at home came on at work).
 func (s *Settings) KeepOwn(cur Settings) {
@@ -995,6 +1000,7 @@ func (s *Settings) KeepOwn(cur Settings) {
 	s.LAN, s.AllowIPs = cur.LAN, cur.AllowIPs
 	s.FetchPrivate = cur.FetchPrivate
 	s.SessionTerminal = cur.SessionTerminal
+	s.RedactModel = cur.RedactModel
 }
 
 // RenamePerModel moves what the user said of a provider's models to the id
@@ -1196,6 +1202,16 @@ func SetGatewayConversations(on bool) error {
 	s := load()
 	s.GatewayConversations = on
 	return save(s, true)
+}
+
+// SetRedactModel turns the local masking model on or off, on its own, as
+// Settings → Privacy does once the model is downloaded.
+func SetRedactModel(on bool) error {
+	fileMu.Lock()
+	defer fileMu.Unlock()
+	s := load()
+	s.RedactModel = on
+	return save(s, false)
 }
 
 // save is called under fileMu. Only the consent setter may replace recording.

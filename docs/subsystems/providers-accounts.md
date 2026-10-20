@@ -104,9 +104,19 @@ apart, so its decision models are the ones its `/v1/models/status` gives
 [`omlx_decide.go`](../../internal/provider/omlx_decide.go)). MLX-Serve marks
 them in its `/v1/models` with `capabilities: ["decisions"]`, kept under
 `<id>.decisions` (`mlxServeDecides`, `listedMLXServeDecide` in
-[`mlxserve_decide.go`](../../internal/provider/mlxserve_decide.go)). A server
-with none lists none, and no Jev is made up for it. An oMLX or MLX-Serve
-provider saved before the preset had a decision base gets its chat base as one.
+[`mlxserve_decide.go`](../../internal/provider/mlxserve_decide.go)). Ollama
+and Ollama Cloud (Nanka on Discord; Ollama 0.35.0+, 0.40.5+ for cloud models)
+serve System One at `/v1/systemone` beside their chat API, and list decision
+models (Tev, Nimble, Clef) in `/v1/models` like any other. Their `/api/tags`,
+asked with the same key, gives each model `capabilities`, `decision` for
+these and `vision` for one that reads images. Those are kept under
+`<id>.decisions`, with the cloud's 65,536-token window when the list gives
+none (`ollamaDecides`, `listedOllamaDecide` in
+[`ollama_decide.go`](../../internal/provider/ollama_decide.go)). An Ollama
+older than its System One lists no capabilities, so none. A server
+with none lists none, and no Jev is made up for it. An oMLX, MLX-Serve or
+Ollama provider saved before the preset had a decision base gets its chat
+base as one.
 
 The CLI and TUI report model-list fetch errors for remote and other mixed providers
 (such as OpenRouter, serving conversation and decision models). Only a

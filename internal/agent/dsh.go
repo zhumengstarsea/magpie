@@ -1500,6 +1500,23 @@ func dshLevels(ref string) []string {
 	return nil
 }
 
+// dshMaxTokens is the maxTokens magpie lists m with. dsh takes a listed
+// maxTokens as every request's output and reserves it, with 65536 of
+// headroom, out of contextWindow before it decides when to compact
+// (compaction-basic's resolveCompactSpec: the threshold is the smaller of
+// 80% of the window and window - maxTokens - 65536). A vendor's reply limit
+// near its window leaves dsh compacting at a sliver of it, or failing to
+// (#2823): 500000 with 393216 compacted at 41248; 524288 with 524288, and
+// 131072 with 65536, left it no budget at all. So the vendor's figure is
+// held to a quarter of the window, as VS Code's and Copilot's are, while a
+// Max output the user set stays as they set it (outputOr).
+func dshMaxTokens(m catalog.Model) int {
+	if m.Context <= 0 {
+		return maxTokens(m)
+	}
+	return outputOr(m, min(maxTokens(m), max(1, m.Context/4)))
+}
+
 // dshRouteConfig is magpie's first route with every one of models on it.
 func dshRouteConfig(models []catalog.Model, api, gw string) dshPiRoute {
 	return dshKindConfig(dshKinds[0], models, api, gw)
@@ -1518,7 +1535,7 @@ func dshKindConfig(k dshKind, models []catalog.Model, api, gw string) dshPiRoute
 	for _, m := range models {
 		e := dshPiModel{ID: m.ID, Name: m.Name, ContextWindow: m.Context}
 		if m.Output > 0 {
-			e.MaxTokens = maxTokens(m)
+			e.MaxTokens = dshMaxTokens(m)
 		}
 		switch {
 		case m.Images:
@@ -1604,7 +1621,7 @@ func dshProviderLines(effort string, models []catalog.Model, gw string) []string
 			lines = append(lines, fmt.Sprintf("        contextWindow: %d", m.Context))
 		}
 		if m.Output > 0 {
-			lines = append(lines, fmt.Sprintf("        maxTokens: %d", maxTokens(m)))
+			lines = append(lines, fmt.Sprintf("        maxTokens: %d", dshMaxTokens(m)))
 		}
 		if m.Images {
 			lines = append(lines, "        inputModalities: [text, image]")
