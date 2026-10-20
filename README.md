@@ -293,7 +293,7 @@ To publish this fork, push the source to this repository's `master`, then use **
 
 The release workflow (`发布与同步`) checks upstream stable releases every six hours (00:00, 06:00, 12:00 and 18:00 Asia/Shanghai). It preserves fork commits, GPG-signs merge commits, pushes `master` without force, and continues the full-platform release in the same run. Leave the manual version input empty to check upstream, or specify a version to build directly. Configure `SYNC_TOKEN` (Contents, Workflows and Actions read/write for this repository) and `GPG_PRIVATE_KEY`; `GPG_PASSPHRASE` is needed only for a protected key. Merge conflicts and conflicting existing tags stop the run. See the [automatic release setup](README.zh-CN.md#自动跟进上游发布).
 
-Completed successful checks explicitly marked as no update are removed by the next scan. Runs that found updates, direct builds, failures and active runs are retained; published Releases are unaffected.
+Completed successful checks explicitly marked as no update are removed by the next scan. Runs that found updates, direct builds, failures and active runs are retained; published Releases are unaffected. An optional `ZHIPU_API_KEY` enables Zhipu's free GLM-4.7-Flash translation; quota or service failures fall back to the free Edge and Google translators.
 
 Each scan also mirrors all corresponding upstream branches, including new branches, preserving upstream commits. The customized `master` and fork-only branches are excluded. Lease-protected pushes stop on concurrent changes; runs that synchronize branches are retained. First-release notes use the previous merged upstream release as their base. Bilingual notes show up to 100 recent commits within a 120,000-byte limit and link to the full comparison.
 

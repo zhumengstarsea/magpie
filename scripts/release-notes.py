@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Build bilingual release notes using keyless Edge/Google translation."""
+"""Build bilingual release notes using Zhipu and free Edge/Google translation."""
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -10,7 +11,21 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 
-LITERALS = re.compile(r"`+[^`]+`+|https?://[^\s<>\]\)]+|\b[0-9a-f]{7,40}\b")
+# Keep source attributions and technical literals intact. A Chinese name or
+# a parenthesized Discord attribution must not make an otherwise English
+# subject look like an already translated subject.
+LITERALS = re.compile(
+    r"`+[^`]+`+|https?://[^\s<>\]\)]+|\b[0-9a-f]{7,40}\b|"
+    r"\([^()\n]*[\u3400-\u9fff][^()\n]*\)"
+)
+
+
+def mostly_chinese(text):
+    """Return true only when Chinese is the subject's main language."""
+    text = LITERALS.sub("", text)
+    chinese = len(re.findall(r"[\u3400-\u9fff]", text))
+    latin = len(re.findall(r"[A-Za-z]", text))
+    return chinese >= 2 and chinese >= latin
 
 
 def protect(text):
@@ -34,9 +49,49 @@ def restore(text, literals):
     return text.strip()
 
 
-def request_json(request):
-    with urlopen(request, timeout=15) as response:
+def request_json(request, timeout=15):
+    with urlopen(request, timeout=timeout) as response:
         return json.loads(response.read(2 * 1024 * 1024))
+
+
+def zhipu(texts):
+    """Translate a batch with Zhipu's free GLM-4.7-Flash API."""
+    key = os.environ.get("ZHIPU_API_KEY")
+    if not key:
+        raise RuntimeError("ZHIPU_API_KEY is not configured")
+    prompt = (
+        "Translate each English commit subject to Simplified Chinese. "
+        "Return only a JSON object with a translations array of strings with the same length and order. "
+        "Preserve tokens such as ZXQMP0000QXZ, code, URLs, names and issue numbers. "
+        "Do not add explanations.\n\n"
+        + json.dumps(texts, ensure_ascii=False)
+    )
+    request = Request(
+        "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+        data=json.dumps({
+            "model": "glm-4.7-flash",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0,
+            "do_sample": False,
+            "thinking": {"type": "disabled"},
+            "stream": False,
+            "max_tokens": 4096,
+            "response_format": {"type": "json_object"},
+        }, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "magpie-release-notes",
+            "Authorization": "Bearer " + key,
+        },
+        method="POST",
+    )
+    result = request_json(request, timeout=60)
+    text = result["choices"][0]["message"]["content"]
+    parsed = json.loads(text)
+    values = parsed.get("translations") if isinstance(parsed, dict) else None
+    if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+        raise ValueError("Zhipu returned an invalid translations array")
+    return values
 
 
 def edge(texts):
@@ -63,11 +118,27 @@ def google(texts):
 
 
 def translate(subjects, providers=None):
-    providers = providers if providers is not None else (edge, google)
+    providers = providers if providers is not None else tuple(
+        ([zhipu] if os.environ.get("ZHIPU_API_KEY") else []) + [edge, google]
+    )
     output = list(subjects)
-    # Already-Chinese subjects need no request. Bound each batch and preserve
-    # code, hashes and links instead of asking a translator to rewrite Markdown.
-    pending = [i for i, text in enumerate(subjects) if not re.search(r"[\u3400-\u9fff]", text)]
+    # Already-Chinese subjects need no request. A mixed subject such as
+    # "gateway: ... (新成员 on Discord)" still needs translating. Bound each
+    # batch and preserve code, hashes, links and source attributions.
+    pending = [i for i, text in enumerate(subjects) if not mostly_chinese(text)]
+
+    def translate_one(subject):
+        protected, literals = protect(subject)
+        for provider in providers:
+            try:
+                values = provider([protected])
+                if len(values) != 1:
+                    raise ValueError("translation returned a different number of subjects")
+                return restore(values[0], literals)
+            except Exception as error:
+                print(f"Translation via {provider.__name__} failed for one subject ({type(error).__name__}); trying fallback.", file=sys.stderr)
+        return subject
+
     while pending:
         batch = [pending.pop(0)]
         size = len(subjects[batch[0]])
@@ -75,8 +146,11 @@ def translate(subjects, providers=None):
             batch.append(pending.pop(0))
             size += len(subjects[batch[-1]])
         if size > 5000:
+            for i in batch:
+                output[i] = translate_one(subjects[i])
             continue
         protected = [protect(subjects[i]) for i in batch]
+        translated = False
         for provider in providers:
             try:
                 values = provider([text for text, _ in protected])
@@ -85,11 +159,15 @@ def translate(subjects, providers=None):
                 restored = [restore(value, literals) for value, (_, literals) in zip(values, protected)]
                 for i, value in zip(batch, restored):
                     output[i] = value
+                translated = True
                 break
             except Exception as error:
                 print(f"Translation via {provider.__name__} failed ({type(error).__name__}); trying fallback.", file=sys.stderr)
-        else:
-            print("Translation unavailable; keeping the original commit subjects.", file=sys.stderr)
+        if not translated:
+            # One malformed or unusually long subject must not discard the
+            # translations for the other subjects in its batch.
+            for i in batch:
+                output[i] = translate_one(subjects[i])
     return output
 
 

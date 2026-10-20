@@ -467,6 +467,8 @@ jobs:
           sha256sum --check SHA256SUMS
 
       - name: 生成并免费翻译更新日志
+        env:
+          ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
         run: |
           set -euo pipefail
           # Prefer the previous release of this fork, not inherited upstream tags.
@@ -568,7 +570,7 @@ jobs:
           bash scripts/configure-release-gpg.sh
           git add Formula/magpie.rb Casks/magpie-app.rb
           if git diff --cached --quiet; then exit 0; fi
-          git -c commit.gpgsign=true commit -S -m "同步上游并发布 $VERSION"
+          git -c commit.gpgsign=true commit -S -m "发布 $VERSION 版本"
           git push origin "HEAD:$TAP_BRANCH"
       - name: 清理临时 GPG 密钥
         if: always()

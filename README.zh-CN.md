@@ -290,7 +290,7 @@ magpie plugin options model-map '{"mapping": {"fast": "deepseek/deepseek-chat"}}
 
 将源码推送到本仓库的 `master` 后，在 **Actions → 发布与同步 → Run workflow** 选择 `master`，填写纯版本号（例如 `0.1.1294`）可直接构建；版本号留空则检查并同步上游，发现新版后继续构建。`ref` 留空即构建所选分支，也可填写本仓库的提交或标签。勾选 `publish` 会发布到本仓库的 Releases；取消则仅生成 Actions 构建附件。推送指向改版提交的新 `vX.Y.Z` 标签也会触发发布；已有上游标签指向不同代码时，应使用新版本号。
 
-发布包含 15 个桌面/命令行文件和 `SHA256SUMS`，全部上传并校验后才公开。更新日志根据本仓库上次发布以来的提交生成；首次发布以当前版本之前、已合入源码的上游正式发布为基准。正文最多展示最近 100 条提交，并限制为 120,000 UTF-8 字节，完整历史通过比较链接查看，避免超过 GitHub 正文限制。翻译优先使用免 Token 的微软 Edge 接口，失败时使用 Google `client=gtx`；两个接口都失败时保留原文，仍会生成中英文分区。无需注册翻译服务或配置翻译 Secret。应用内更新源与“更新内容”读取本仓库的 Release 版本、附件和正文。
+发布包含 15 个桌面/命令行文件和 `SHA256SUMS`，全部上传并校验后才公开。更新日志根据本仓库上次发布以来的提交生成；首次发布以当前版本之前、已合入源码的上游正式发布为基准。正文最多展示最近 100 条提交，并限制为 120,000 UTF-8 字节，完整历史通过比较链接查看，避免超过 GitHub 正文限制。配置免费的 `ZHIPU_API_KEY` 时优先用智谱 `GLM-4.7-Flash` 翻译，额度不足或接口失败后逐条回退到免 Token 的微软 Edge 和 Google `client=gtx`；所有接口失败时保留原文，仍会生成中英文分区。智谱官方将 GLM-4.7-Flash 提供为免费调用，但免费额度和速率受平台规则限制。应用内更新源与“更新内容”读取本仓库的 Release 版本、附件和正文。
 
 Homebrew 配方由 `scripts/update-tap.sh` 按本次发布的真实校验值生成，保存在 `homebrew-v版本号` Actions 附件中，不复制上游二进制的校验值。若配置仓库 Secret `GPG_PRIVATE_KEY`（有密码时还需 `GPG_PASSPHRASE`），工作流会使用该密钥签名提交 `Formula/magpie.rb` 和 `Casks/magpie-app.rb` 到默认分支；密钥及其邮箱须已在 GitHub 验证。未配置时可下载附件后在本地 GPG 签名提交。首次提交配方后，可执行：
 
@@ -316,6 +316,7 @@ brew install --cask zhumengstarsea/magpie/magpie-app
 | --- | --- |
 | `SYNC_TOKEN` | 只授权本仓库的 fine-grained PAT；Contents、Workflows、Actions 均为 Read and write |
 | `GPG_PRIVATE_KEY` | 完整 ASCII 格式 GPG 私钥，公钥及对应邮箱已在 GitHub 验证 |
+| `ZHIPU_API_KEY` | 可选：智谱开放平台 API key，仅用于免费的 GLM-4.7-Flash 更新日志翻译 |
 
 私钥有密码时另加 `GPG_PASSPHRASE`；无密码则不需要创建。Actions 需启用并允许工作流使用的公共 Actions。Token 或分支规则还需允许向 `master` 普通推送；签名不会绕过要求 PR 等分支保护规则。
 
