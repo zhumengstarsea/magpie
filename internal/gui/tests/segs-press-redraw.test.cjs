@@ -14,7 +14,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { watchSettingsReads, settingsDrawn } = require("./reader.cjs");
+const { watchSettingsReads, settingsDrawn, reach } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const words = { en: { on: "On", off: "Off" }, zh: { on: "开启", off: "关闭" }, ja: { on: "オン", off: "オフ" }, de: { on: "An", off: "Aus" } };
@@ -229,7 +229,15 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           await settle(page);
           if (tab === "usage") {
             for (const id of ["codex", "claude", "wb", "trae", "minimax", "qoder", "plugins"]) {
-              await page.locator("#warmTab-" + id).click();
+              // the last sweep can leave the tabs above or below the view (a
+              // narrow window scrolls them sideways, which the click does)
+              const warm = page.locator("#warmTab-" + id);
+              const away = await warm.evaluate((e) => {
+                const b = e.getBoundingClientRect(), v = e.closest(".view").getBoundingClientRect();
+                return b.top < v.top || b.bottom > v.bottom;
+              });
+              if (away) await reach(page, page.locator("#warmTabs"));
+              await warm.click();
               await sweep(tab);
             }
           } else if (tab === "sync") {

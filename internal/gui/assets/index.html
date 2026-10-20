@@ -193,38 +193,8 @@
         <div class="who"><div class="name" data-t>Provider in model names</div></div>
         <div id="plainNamesSegs"></div>
       </div>
-      <div class="row pref">
-        <div class="who"><div class="name" data-t>Codex subagents on any model</div><div class="sub" data-t>A GPT lead spawns subagents on magpie’s other models. New threads only; Codex’s own multi_agent_v2 still wins</div><div class="sub err" id="codexAgentsV1Warn" hidden></div></div>
-        <div id="codexAgentsV1Segs"></div>
-      </div>
-      <div class="row pref">
-        <div class="who"><div class="name" data-t>Long conversations</div><div class="sub" data-t>Codex and Claude Code compact at 272K (non-Claude [1m] too) or the size typed; full window: slower, costlier</div></div>
-        <div id="fullContextSegs"></div>
-      </div>
-      <div class="row pref" id="codexAsyncRow">
-        <div class="who"><div class="name" data-t>Codex background compaction</div><div class="sub" data-t>Codex 0.163 and later summarise while a turn goes on, past the share of the window typed (65% when empty); a value set in its own config stays</div></div>
-        <div id="codexAsyncSegs"></div>
-      </div>
-      <div class="row pref" id="codexTitlesRow">
-        <div class="who"><div class="name" data-t>Codex thread titles</div></div>
-        <div class="val" id="codexTitlesPick"></div>
-      </div>
-      <div class="row pref" id="codexDescriptionsRow">
-        <div class="who"><div class="name" data-t>Codex thread descriptions</div></div>
-        <div class="val" id="codexDescriptionsPick"></div>
-      </div>
-      <div class="row pref" id="codexPredictionsRow">
-        <div class="who"><div class="name" data-t>Codex composer predictions</div></div>
-        <div class="val" id="codexPredictionsPick"></div>
-      </div>
-      <div class="row pref" id="codexAutoReviewRow">
-        <div class="who"><div class="name" data-t>Codex auto-review model</div></div>
-        <div class="val" id="codexAutoReviewPick"></div>
-      </div>
-      <div class="row pref" id="codexMemoriesRow" hidden>
-        <div class="who"><div class="name" data-t>Codex memories model</div></div>
-        <div class="val" id="codexMemoriesPick"></div>
-      </div>
+      <!-- Codex's and Claude Code's own settings are on the Agents page (AGENT_PREFS); while searching, a row here says where -->
+      <div id="agentPrefLinks"></div>
       <div class="row pref" id="loginRow">
         <div class="who"><div class="name" data-t>Open at login</div></div>
         <div id="loginSegs"></div>
@@ -452,6 +422,41 @@
   </div>
 </div>
 
+<!-- an agent's own settings, drawn here and shown in its sheet or opened row (AGENT_PREFS) -->
+<div id="agentPrefRows" hidden>
+  <div class="row pref" id="codexAgentsV1Row">
+    <div class="who"><div class="name" data-t>Codex subagents on any model</div><div class="sub" data-t>A GPT lead spawns subagents on magpie’s other models. New threads only; Codex’s own multi_agent_v2 still wins</div><div class="sub err" id="codexAgentsV1Warn" hidden></div></div>
+    <div id="codexAgentsV1Segs"></div>
+  </div>
+  <div class="row pref" id="fullContextRow">
+    <div class="who"><div class="name" data-t>Long conversations</div><div class="sub" data-t>Codex and Claude Code compact at 272K (non-Claude [1m] too) or the size typed; full window: slower, costlier</div></div>
+    <div id="fullContextSegs"></div>
+  </div>
+  <div class="row pref" id="codexAsyncRow">
+    <div class="who"><div class="name" data-t>Codex background compaction</div><div class="sub" data-t>Codex 0.163 and later summarise while a turn goes on, past the share of the window typed (65% when empty); a value set in its own config stays</div></div>
+    <div id="codexAsyncSegs"></div>
+  </div>
+  <div class="row pref" id="codexTitlesRow">
+    <div class="who"><div class="name" data-t>Codex thread titles</div></div>
+    <div class="val" id="codexTitlesPick"></div>
+  </div>
+  <div class="row pref" id="codexDescriptionsRow">
+    <div class="who"><div class="name" data-t>Codex thread descriptions</div></div>
+    <div class="val" id="codexDescriptionsPick"></div>
+  </div>
+  <div class="row pref" id="codexPredictionsRow">
+    <div class="who"><div class="name" data-t>Codex composer predictions</div></div>
+    <div class="val" id="codexPredictionsPick"></div>
+  </div>
+  <div class="row pref" id="codexAutoReviewRow">
+    <div class="who"><div class="name" data-t>Codex auto-review model</div></div>
+    <div class="val" id="codexAutoReviewPick"></div>
+  </div>
+  <div class="row pref" id="codexMemoriesRow" hidden>
+    <div class="who"><div class="name" data-t>Codex memories model</div></div>
+    <div class="val" id="codexMemoriesPick"></div>
+  </div>
+</div>
 <script src="i18n.js"></script>
 <script src="kernel.js"></script>
 <!-- the built-in plugins' own scripts (pluginrt.Manifest.Client) -->

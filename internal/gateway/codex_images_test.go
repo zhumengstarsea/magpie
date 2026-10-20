@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"container/list"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -14,6 +16,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -377,6 +380,215 @@ func fitKeyEntry(t *testing.T, shot string) fitEntry {
 	return e
 }
 
+// pngHeader is a PNG whose header declares w by h at depth bits a channel
+// and colour, with a valid zlib stream of no pixels after it: what a
+// decode reads the size from, before it reads a pixel. Go's png decodes it
+// as far as allocating the image the header declares, which is where a
+// header alone costs its bytes.
+func pngHeader(w, h uint32, depth, colour byte) []byte {
+	var b bytes.Buffer
+	b.Write([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'})
+	be := func(v any) { _ = binary.Write(&b, binary.BigEndian, v) }
+	var ihdr bytes.Buffer
+	_ = binary.Write(&ihdr, binary.BigEndian, w)
+	_ = binary.Write(&ihdr, binary.BigEndian, h)
+	ihdr.Write([]byte{depth, colour, 0, 0, 0})
+	for _, c := range []struct {
+		kind string
+		body []byte
+	}{
+		{"IHDR", ihdr.Bytes()},
+		// a valid zlib stream of no pixel data, so that a decode reads
+		// the header and allocates what it says
+		{"IDAT", []byte{0x78, 0x9c, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01}},
+		{"IEND", nil},
+	} {
+		be(uint32(len(c.body)))
+		head := append([]byte(c.kind), c.body...)
+		b.Write(head)
+		be(crc32.ChecksumIEEE(head))
+	}
+	return b.Bytes()
+}
+
+func bombURL(w, h uint32, depth, colour byte) string {
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(pngHeader(w, h, depth, colour))
+}
+
+// allocDuring is the bytes f allocates, from before it runs to after,
+// which is what a decode of a size it was given costs whether or not it
+// then finds the pixels.
+func allocDuring(f func()) uint64 {
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	f()
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
+}
+
+// A header of a few dozen bytes is all it takes to ask a decode for
+// hundreds of megabytes: it declares the size, and png allocates that
+// before it reads a pixel, so the decode is paid for even though it then
+// fails. 110 bytes declaring 8000x8000 at 16 bits a channel held 488 MB,
+// and four such images in one request held 1.7 GB: a process the system
+// kills, off 260 bytes of an upload. What a decode may hold is judged
+// from the declaration now, before it decodes, and it is the same measure
+// for every format (codexImageMaxBytes, four bytes a pixel for anything
+// with colour, as image/png allocates it).
+func TestCodexAHeaderAloneCantHoldPastTheBudget(t *testing.T) {
+	if testing.Short() {
+		t.Skip("measures the bytes a decode holds")
+	}
+	for _, c := range []struct {
+		w, h   uint32
+		depth  byte
+		colour byte
+		what   string
+	}{
+		{8000, 8000, 8, 6, "8000x8000 at 8 bits a channel: 256 MB of pixels"},
+		{8000, 8000, 16, 6, "8000x8000 at 16 bits a channel: 512 MB of pixels"},
+		{70000, 70000, 8, 6, "70000x70000: more than an int holds"},
+	} {
+		url := bombURL(c.w, c.h, c.depth, c.colour)
+		if n := len(url); n > 1024 {
+			t.Fatalf("%s: the upload is %d bytes, not a header alone", c.what, n)
+		}
+		b64 := url[strings.IndexByte(url, ',')+1:]
+		held := allocDuring(func() {
+			codexImageRefit(b64, imageLimits{2048, 2500})
+		})
+		if held > codexImageMaxBytes {
+			t.Errorf("%s: %d bytes of upload held %d MB, past the %d MB a decode may hold",
+				c.what, len(url), held>>20, codexImageMaxBytes>>20)
+		}
+	}
+}
+
+// The same, in one request: four headers each declaring a size it may not
+// hold, which codexImagesFit used to make side by side.
+func TestCodexFourHeadersInOneRequestCantHoldTheHeap(t *testing.T) {
+	const allowed = 128 << 20
+	if testing.Short() {
+		t.Skip("measures the bytes a decode holds")
+	}
+	// four *distinct* images: one entry is made per image, so the same data
+	// URL four times is made once
+	urls := make([]string, 4)
+	for i := range urls {
+		urls[i] = bombURL(7000+uint32(i), 8000, 16, 6)
+	}
+	body := computerUseRequest(urls)
+	held := allocDuring(func() {
+		codexImagesFit(codexAccount(), provider.Responses, body)
+	})
+	if held > allowed {
+		t.Errorf("%d bytes of upload, sent as 4 images in one request, held %d MB, past %d MB",
+			len(body), held>>20, allowed>>20)
+	}
+}
+
+// The budget the bytes above are counted against is the one a real
+// screenshot of the size Codex sends still fits under: what it holds once
+// decoded, so that a genuine image and a header alone are judged by the
+// same measure.
+func TestCodexRealScreenshotsFitBytesTheyHold(t *testing.T) {
+	for _, c := range []struct{ w, h int }{
+		{3456, 2234}, // ylorn's, the size Codex's own client sends
+		{4032, 3024},
+		{6000, 4000},
+	} {
+		for _, format := range []string{"png", "jpeg"} {
+			url := shotURL(t, shotImage(c.w, c.h), format)
+			raw := rawOf(t, url)
+			cfg, f, err := image.DecodeConfig(bytes.NewReader(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			holds, ok := imageHolds(cfg, f)
+			if !ok || len(raw)+holds > codexImageMaxBytes {
+				t.Fatalf("%dx%d %s holds %d MB: a real screenshot is turned away", c.w, c.h, format, holds>>20)
+			}
+			e := codexImageRefit(url[strings.IndexByte(url, ',')+1:], imageLimits{2048, 2500})
+			if e.data == nil {
+				t.Fatalf("%dx%d %s went as it came", c.w, c.h, format)
+			}
+			if m, _ := shotDecode(t, "data:"+e.mime+";base64,"+base64.StdEncoding.EncodeToString(e.data)); m == nil {
+				t.Fatalf("%dx%d %s: what was made isn't an image", c.w, c.h, format)
+			}
+		}
+	}
+}
+
+func rawOf(t *testing.T, url string) []byte {
+	t.Helper()
+	raw, err := base64.StdEncoding.DecodeString(url[strings.IndexByte(url, ',')+1:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+// What one request may hold is batched: no more than fitBudget is made at
+// once, however many images the request carries, so that a request of 100
+// screenshots holds what four do and not what a hundred do.
+func TestCodexFittingHoldsTheBudget(t *testing.T) {
+	const mb = 1 << 20
+	for _, c := range []struct {
+		what   string
+		holds  []int
+		budget int
+		want   [][2]int
+	}{
+		{"four small ones, all at once", []int{10 * mb, 10 * mb, 10 * mb, 10 * mb}, 100 * mb, [][2]int{{0, 4}}},
+		{"one more than the budget, alone", []int{10 * mb, 250 * mb, 10 * mb}, 100 * mb, [][2]int{{0, 1}, {1, 2}, {2, 3}}},
+		{"the second waits for the first", []int{60 * mb, 60 * mb}, 100 * mb, [][2]int{{0, 1}, {1, 2}}},
+		{"a batch breaks where the next wouldn't fit", []int{40 * mb, 40 * mb, 40 * mb, 40 * mb, 10 * mb}, 100 * mb, [][2]int{{0, 2}, {2, 5}}},
+		{"a batch breaks where the next wouldn't fit, exactly", []int{40 * mb, 40 * mb, 40 * mb, 30 * mb}, 100 * mb, [][2]int{{0, 2}, {2, 4}}},
+		{"one past the budget on its own, alone", []int{400 * mb, 10 * mb}, 100 * mb, [][2]int{{0, 1}, {1, 2}}},
+		{"nothing to make", nil, 100 * mb, nil},
+	} {
+		got := fitInHand(c.holds, c.budget)
+		if len(got) != len(c.want) {
+			t.Errorf("%s: %d batches %v, want %d %v", c.what, len(got), got, len(c.want), c.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Errorf("%s: batch %d is %v, want %v", c.what, i, got[i], c.want[i])
+			}
+		}
+		// and what any batch holds is the budget, or one image alone
+		at := 0
+		for _, b := range got {
+			if b[0] != at {
+				t.Errorf("%s: batch %v leaves a gap after %d", c.what, b, at)
+			}
+			at = b[1]
+			sum := 0
+			for _, h := range c.holds[b[0]:b[1]] {
+				sum += h
+			}
+			if sum > c.budget && b[1]-b[0] != 1 {
+				t.Errorf("%s: batch %v holds %d MB past the budget of %d MB", c.what, b, sum/mb, c.budget/mb)
+			}
+		}
+	}
+}
+
+// A request whose images fit the budget is made as it was: the batching
+// changes nothing for the screenshots a real turn carries.
+func TestCodexFittingLeavesATurnThatFitsAsItWas(t *testing.T) {
+	made := freshFitted(t, fittedBudget)
+	shots := wideShots(t, 8)
+	if out := codexImagesFit(codexAccount(), provider.Responses, computerUseRequest(shots)); len(out) == 0 {
+		t.Fatal("no reply body")
+	}
+	if n := made(); n != 8 {
+		t.Errorf("%d of 8 images made", n)
+	}
+}
+
 // What no request has sent for fittedIdle is let go.
 func TestCodexFittedImagesLetGoWhenIdle(t *testing.T) {
 	made := freshFitted(t, fittedBudget)
@@ -396,5 +608,32 @@ func TestCodexFittedImagesLetGoWhenIdle(t *testing.T) {
 	}
 	if want := len(fitKeyEntry(t, shots[1]).data); held != want {
 		t.Errorf("%d bytes held, want %d", held, want)
+	}
+}
+
+// A JPEG's frame header can sit behind an EXIF segment of up to 64 KB, and
+// a phone photo's often does. fitHolds read only the first 4 KB of base64
+// for it, counted such an image as holding nothing, and put it in a batch
+// with three others each holding up to codexImageMaxBytes. It is counted
+// now for what it holds, wherever its header is.
+func TestCodexAHeaderBehindExifIsCounted(t *testing.T) {
+	var shot bytes.Buffer
+	if err := jpeg.Encode(&shot, shotImage(3456, 2234), &jpeg.Options{Quality: 85}); err != nil {
+		t.Fatal(err)
+	}
+	raw := shot.Bytes()
+	// SOI, then an APP1 of the most a segment holds, then the rest
+	exif := make([]byte, 0xffff-2)
+	copy(exif, "Exif\x00\x00")
+	withExif := append([]byte{0xff, 0xd8, 0xff, 0xe1, 0xff, 0xff}, exif...)
+	withExif = append(withExif, raw[2:]...)
+	url := "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(withExif)
+	if _, _, err := image.DecodeConfig(bytes.NewReader(withExif)); err != nil {
+		t.Fatalf("the photo isn't a JPEG: %v", err)
+	}
+	cfg := image.Config{ColorModel: color.YCbCrModel, Width: 3456, Height: 2234}
+	pixels, _ := imageHolds(cfg, "jpeg")
+	if got, want := fitHolds(url), len(withExif)+pixels; got != want {
+		t.Errorf("a JPEG with its header behind %d KB of EXIF holds %d MB, want %d MB", len(exif)>>10, got>>20, want>>20)
 	}
 }

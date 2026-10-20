@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"sync"
 
 	"github.com/klauspost/compress/zstd"
 )
@@ -20,11 +21,26 @@ import (
 
 var errFrame = errors.New("not a zstd frame")
 
+// frameDecoders holds the decoders frames are decoded whole with, kept
+// between reads as openLines keeps its own (streams): one that has read a
+// stream holds its block decoder, which DecodeAll waits for.
+var frameDecoders = sync.Pool{New: func() any {
+	d, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(1), zstd.WithDecoderLowmem(true))
+	if err != nil {
+		panic(err)
+	}
+	return d
+}}
+
 // readFrame reads the frame at r into buf: a zstd frame whole, nil for a
 // skippable one. io.ErrUnexpectedEOF when the file ends inside it, io.EOF
-// when it ends before it.
-func readFrame(r *bufio.Reader, buf []byte) ([]byte, int64, error) {
+// when it ends before it. size is how long frameSize found the frame to
+// be: buf is made that large at once, not grown a block at a time.
+func readFrame(r *bufio.Reader, buf []byte, size int) ([]byte, int64, error) {
 	buf = buf[:0]
+	if size > cap(buf) {
+		buf = make([]byte, 0, size)
+	}
 	var n int64
 	take := func(k int) ([]byte, error) {
 		start := len(buf)
@@ -65,6 +81,36 @@ func readFrame(r *bufio.Reader, buf []byte) ([]byte, int64, error) {
 		return nil, 0, err
 	}
 	d := fhd[0]
+	if _, err := take(frameHeaderLen(d)); err != nil {
+		return nil, 0, err
+	}
+	for {
+		h, err := take(3)
+		if err != nil {
+			return nil, 0, err
+		}
+		size, last, ok := blockLen(h)
+		if !ok {
+			return nil, 0, errFrame
+		}
+		if _, err := take(size); err != nil {
+			return nil, 0, err
+		}
+		if last {
+			break
+		}
+	}
+	if d>>2&1 == 1 {
+		if _, err := take(4); err != nil {
+			return nil, 0, err
+		}
+	}
+	return buf, n, nil
+}
+
+// frameHeaderLen is how many bytes of a zstd frame's header follow its
+// descriptor d: the window descriptor, dictionary id and content size.
+func frameHeaderLen(d byte) int {
 	single := d>>5&1 == 1
 	extra := 0
 	if !single {
@@ -83,35 +129,58 @@ func readFrame(r *bufio.Reader, buf []byte) ([]byte, int64, error) {
 	case 3:
 		extra += 8
 	}
-	if _, err := take(extra); err != nil {
-		return nil, 0, err
+	return extra
+}
+
+// blockLen is how long a zstd block is after its 3-byte header h, and
+// whether it is its frame's last; not ok for the reserved block type.
+func blockLen(h []byte) (size int, last, ok bool) {
+	v := uint32(h[0]) | uint32(h[1])<<8 | uint32(h[2])<<16
+	size = int(v >> 3)
+	switch v >> 1 & 3 {
+	case 1:
+		size = 1 // RLE: one byte, repeated
+	case 3:
+		return 0, false, false
 	}
+	return size, v&1 == 1, true
+}
+
+// frameSize is the length of the zstd frame at off in f, found from its
+// headers alone, read ahead without moving f: 0 for a skippable frame, or
+// one the file doesn't yet hold whole. A dsh frame holding a pasted image
+// is megabytes long, and grown a block at a time its buffer allocated
+// about 2.6 times the frame.
+func frameSize(f io.ReaderAt, off int64) int {
+	var h [4]byte
+	if n, _ := f.ReadAt(h[:], off); n < 4 || binary.LittleEndian.Uint32(h[:]) != 0xFD2FB528 {
+		return 0
+	}
+	if n, _ := f.ReadAt(h[:1], off+4); n < 1 {
+		return 0
+	}
+	d := h[0]
+	at := off + 5 + int64(frameHeaderLen(d))
 	for {
-		h, err := take(3)
-		if err != nil {
-			return nil, 0, err
+		if n, _ := f.ReadAt(h[:3], at); n < 3 {
+			return 0
 		}
-		v := uint32(h[0]) | uint32(h[1])<<8 | uint32(h[2])<<16
-		size := int(v >> 3)
-		switch v >> 1 & 3 {
-		case 1:
-			size = 1 // RLE: one byte, repeated
-		case 3:
-			return nil, 0, errFrame
+		size, last, ok := blockLen(h[:3])
+		if !ok {
+			return 0
 		}
-		if _, err := take(size); err != nil {
-			return nil, 0, err
-		}
-		if v&1 == 1 {
+		at += 3 + int64(size)
+		if last {
 			break
 		}
 	}
 	if d>>2&1 == 1 {
-		if _, err := take(4); err != nil {
-			return nil, 0, err
-		}
+		at += 4 // checksum
 	}
-	return buf, n, nil
+	if n, _ := f.ReadAt(h[:1], at-1); n < 1 {
+		return 0
+	}
+	return int(at - off)
 }
 
 // scanFrames hands fn each whole line of a file of zstd frames, from the
@@ -131,18 +200,16 @@ func scanFrames(path string, off, skip int64, fn func([]byte) bool) (next, nextS
 	if _, err = f.Seek(off, io.SeekStart); err != nil {
 		return
 	}
-	dec, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(1), zstd.WithDecoderLowmem(true))
-	if err != nil {
-		return
-	}
-	defer dec.Close()
-	r := bufio.NewReaderSize(f, scanBuffer(f, off))
+	dec := frameDecoders.Get().(*zstd.Decoder)
+	defer frameDecoders.Put(dec)
+	r, release := lineReader(f, scanBuffer(f, off))
+	defer release()
 	var frame, out, pending []byte
 	at := off
 	first := true
 	for {
 		var n int64
-		frame, n, err = readFrame(r, frame)
+		frame, n, err = readFrame(r, frame, frameSize(f, at))
 		if err != nil {
 			// the end, a frame still being written, or not one at all:
 			// what was read stands, the rest waits for the next read

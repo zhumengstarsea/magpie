@@ -222,10 +222,16 @@ var lineCallReaders = map[string]lineCallReader{
 	"omp":  {piCallsBegin, readPiCallLine, piCallsKept},
 }
 
-func readCalls(f file) *callFile {
+// callLock is the lock a file's calls are read under, so that two readers
+// never read the same file at once.
+func callLock(path string) *sync.Mutex {
 	h := fnv.New32a()
-	_, _ = h.Write([]byte(f.path))
-	lock := &callIO[h.Sum32()%uint32(len(callIO))]
+	_, _ = h.Write([]byte(path))
+	return &callIO[h.Sum32()%uint32(len(callIO))]
+}
+
+func readCalls(f file) *callFile {
+	lock := callLock(f.path)
 	lock.Lock()
 	defer lock.Unlock()
 	callsMu.Lock()
@@ -332,6 +338,84 @@ func readCalls(f file) *callFile {
 	}
 	callsMu.Unlock()
 	return st
+}
+
+// callsRide reads a packed Codex rollout's calls on the scan that parses its
+// summary. A packed file is decompressed whole for every read, and when the
+// Codex app packs or repacks every rollout (11,591 on 10-20) the start's
+// warm-up parsed each for the Sessions page and then read each again for
+// Requests' calls: ~48 GB decompressed twice. Reading both on one pass
+// leaves readCalls a shard on disk that is already up to date.
+type callsRide struct {
+	f          file
+	st         *callFile
+	generation uint64
+	lock       *sync.Mutex
+	sum, calls bool // what each reader's head said of the line being read
+}
+
+// callsAlong is a ride for f's calls when f is a packed Codex rollout whose
+// calls are to be read again, and nil otherwise. It holds the file's calls
+// lock until release, so a readCalls of the file meanwhile waits for what
+// the ride reads rather than read it again.
+func callsAlong(f file) *callsRide {
+	if f.agent != "codex" || !packed(f.path) || f.cold || wslCold(f.path) {
+		return nil
+	}
+	lock := callLock(f.path)
+	lock.Lock()
+	callsMu.Lock()
+	old, generation := callCache[f.path], callGeneration
+	callsMu.Unlock()
+	if old == nil {
+		old = restoreCallContinuation(loadCalls(f))
+	}
+	if old != nil && old.Size == f.size && old.Mod == f.mod.UnixNano() {
+		lock.Unlock()
+		return nil
+	}
+	return &callsRide{f: f, st: prepareCalls(f, old), generation: generation, lock: lock}
+}
+
+// ride is a scan's head and line for both readers: each head sees every
+// line, as on a scan of its own, and each line goes to the readers whose
+// head wanted it.
+func (r *callsRide) ride(head func([]byte) bool, line func([]byte, int64, int64) bool) (func([]byte) bool, func([]byte, int64, int64) bool) {
+	return func(b []byte) bool {
+			r.sum = head == nil || head(b)
+			r.calls = callHead(r.st, b)
+			return r.sum || r.calls
+		}, func(b []byte, start, end int64) bool {
+			if r.sum {
+				line(b, start, end)
+			}
+			if r.calls {
+				r.st.At, r.st.End = start, end
+				codexCallLine(r.st, b)
+			}
+			return true
+		}
+}
+
+// release lets the file's calls lock go.
+func (r *callsRide) release() { r.lock.Unlock() }
+
+// finish keeps the calls read, as readCalls would have, when the scan
+// read to its end; after a failed one readCalls reads them itself.
+func (r *callsRide) finish(off int64, err error) {
+	if err != nil {
+		return
+	}
+	st, f := r.st, r.f
+	st.Off, st.Size, st.Mod = off, f.size, f.mod.UnixNano()
+	st.ContentHash = prefixHash(f.path, off)
+	writeCalls(st, 0, false)
+	st.dirty = nil
+	callsMu.Lock()
+	if r.generation == callGeneration {
+		keepCalls(f.path, st)
+	}
+	callsMu.Unlock()
 }
 
 // Common strings are stored once per append frame; File is implied by State.

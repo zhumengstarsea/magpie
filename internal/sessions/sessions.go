@@ -852,12 +852,15 @@ func refresh(want, all []file) {
 		go func() {
 			for i := range ch {
 				j := &jobs[i]
+				// its file's calls lock is taken before a read slot, as
+				// readCalls takes them
+				calls := callsAlong(j.f)
 				release := readSlot()
 				end := readBegin()
 				if parseHook != nil {
 					parseHook()
 				}
-				j.parsed = parse(j.f, j.old)
+				j.parsed = parseWith(j.f, j.old, calls)
 				end()
 				release()
 				if (j.parsed.Claude != nil && !windows[j.f.path]) || (j.parsed.Claude == nil && !recentRevision(j.parsed.Mod, j.parsed.revisionWeight(), time.Now())) {
@@ -1293,7 +1296,14 @@ func parserFor(agent string) sessionParser {
 }
 
 // parse reads a file on from where old left it, or from the start.
-func parse(f file, old *state) *state {
+func parse(f file, old *state) *state { return parseWith(f, old, nil) }
+
+// parseWith is parse with calls, when not nil, reading the file's calls on
+// the same pass.
+func parseWith(f file, old *state, calls *callsRide) *state {
+	if calls != nil {
+		defer calls.release()
+	}
 	// Summary caches contain aggregates only. After a restart, a changed
 	// Codex file rebuilds its transient response index from the source.
 	if f.agent == "codex" && old != nil && old.Codex == nil {
@@ -1325,12 +1335,19 @@ func parse(f file, old *state) *state {
 	if f.agent == "codex" {
 		head = func(b []byte) bool { return codexHead(s, b, f.main) }
 	}
-	off, err := scanAt(f.path, s.Off, head, func(b []byte, _, _ int64) bool {
+	line := func(b []byte, _, _ int64) bool {
 		parser.line(s, b, f.main)
 		return true
-	})
+	}
+	if calls != nil {
+		head, line = calls.ride(head, line)
+	}
+	off, err := scanAt(f.path, s.Off, head, line)
 	if err == nil {
 		s.Off = off
+	}
+	if calls != nil {
+		calls.finish(off, err)
 	}
 	if isBuddy(f.agent) && s.Cwd == "" {
 		workbuddyMeta(s, f.path)
@@ -1378,15 +1395,25 @@ func scanAt(path string, off int64, head func([]byte) bool, fn func(b []byte, st
 		if _, err := s.Seek(off, io.SeekStart); err != nil {
 			return off, err
 		}
-	} else if _, err := io.CopyN(io.Discard, f, off); err != nil {
-		if errors.Is(err, io.EOF) {
-			return off, nil
-		}
-		return off, err
 	}
 	r, release := lineReader(f, scanBuffer(f, off))
 	defer release()
+	if _, ok := f.(io.Seeker); !ok && off > 0 {
+		// passed over through the reader the lines are read with, not a
+		// copy's buffer of its own
+		if _, err := r.Discard(int(off)); err != nil {
+			if errors.Is(err, io.EOF) {
+				return off, nil
+			}
+			return off, err
+		}
+	}
+	pf, plain := f.(*os.File)
 	var long []byte
+	var kept *[]byte // long's buffer, from longLines
+	defer func() { giveLong(kept, long) }()
+	var parts blocks // a packed file's long line so far
+	defer parts.release()
 	var n int64 // bytes of the line so far
 	skip, seen := false, false
 	for {
@@ -1397,19 +1424,28 @@ func scanAt(path string, off int64, head func([]byte) bool, fn func(b []byte, st
 				seen = true
 				skip = skip || !head(chunk)
 			}
-			if pf, ok := f.(*os.File); ok && !skip && len(long) == 0 {
+			if plain && !skip && len(long) == 0 {
 				// gathered in one buffer of the line's own size, not grown a
 				// chunk at a time (~5 times the line allocated, #2515)
 				if l := lineLen(pf, off, maxLine+r.Size()); l > maxLine+r.Size() {
 					skip = true
 				} else if l > cap(long) {
-					long = make([]byte, 0, l)
+					kept, long = takeLong(l)
 				}
 			}
-			if !skip && len(long)+len(chunk) <= maxLine {
-				long = append(long, chunk...)
-			} else {
+			switch {
+			case skip || len(long)+parts.n+len(chunk) > maxLine:
 				skip, long = true, long[:0]
+				parts.release()
+			case plain:
+				long = append(long, chunk...)
+			default:
+				// a packed file's line has no length to read ahead: it is
+				// kept in pooled blocks until its end, then gathered once
+				// at its own size. Grown by append it allocated ~3.8 times
+				// the line, most of what a cold read of packed rollouts
+				// with pasted images allocated.
+				parts.add(chunk)
 			}
 			continue
 		}
@@ -1418,6 +1454,13 @@ func scanAt(path string, off int64, head func([]byte) bool, fn func(b []byte, st
 				return off, nil
 			}
 			return off, err
+		}
+		if parts.n > 0 {
+			if l := parts.n + len(chunk); l > cap(long) {
+				kept, long = takeLong(l)
+			}
+			long = parts.appendTo(long[:0])
+			parts.release()
 		}
 		b := chunk
 		if len(long) > 0 {
@@ -1434,6 +1477,77 @@ func scanAt(path string, off int64, head func([]byte) bool, fn func(b []byte, st
 		off += n
 		n, skip, seen, long = 0, false, false, long[:0]
 	}
+}
+
+// longLines keep the buffers scanAt gathers long lines in between scans:
+// a line handed out from one is only good until the scan ends, as one
+// from its read buffer is.
+var longLines sync.Pool
+
+// takeLong is an empty buffer of at least l bytes, from the pool when it
+// has one that large (the one a scan had, too small, is let go).
+func takeLong(l int) (*[]byte, []byte) {
+	if p, _ := longLines.Get().(*[]byte); p != nil {
+		if cap(*p) >= l {
+			return p, (*p)[:0]
+		}
+		longLines.Put(p)
+	}
+	b := make([]byte, 0, l)
+	return &b, b
+}
+
+// giveLong gives the buffer long was gathered in back to the pool.
+func giveLong(p *[]byte, long []byte) {
+	if p == nil {
+		return
+	}
+	*p = long[:cap(long)]
+	if poisonReleased {
+		for i := range *p {
+			(*p)[i] = 0xFF
+		}
+	}
+	*p = (*p)[:0]
+	longLines.Put(p)
+}
+
+// blocks hold a long line read from a packed file until its end is found:
+// copied into 1 MiB blocks kept between scans, so the line is allocated
+// only once, at its own length.
+type blocks struct {
+	b []*[]byte
+	n int // bytes held
+}
+
+var gatherBlocks = sync.Pool{New: func() any { b := make([]byte, 0, 1<<20); return &b }}
+
+func (g *blocks) add(p []byte) {
+	g.n += len(p)
+	for len(p) > 0 {
+		if len(g.b) == 0 || len(*g.b[len(g.b)-1]) == cap(*g.b[len(g.b)-1]) {
+			g.b = append(g.b, gatherBlocks.Get().(*[]byte))
+		}
+		last := g.b[len(g.b)-1]
+		k := min(len(p), cap(*last)-len(*last))
+		*last = append(*last, p[:k]...)
+		p = p[k:]
+	}
+}
+
+func (g *blocks) appendTo(dst []byte) []byte {
+	for _, b := range g.b {
+		dst = append(dst, *b...)
+	}
+	return dst
+}
+
+func (g *blocks) release() {
+	for _, b := range g.b {
+		*b = (*b)[:0]
+		gatherBlocks.Put(b)
+	}
+	g.b, g.n = g.b[:0], 0
 }
 
 // lineLen is the length, its newline included, of the line at off in f,
@@ -1530,22 +1644,48 @@ func openLines(path string) (io.ReadCloser, error) {
 	if err != nil || !packed(path) {
 		return f, err
 	}
-	d, err := zstd.NewReader(f, zstd.WithDecoderConcurrency(1), zstd.WithDecoderLowmem(true))
-	if err != nil {
+	d := streams.Get().(*zstd.Decoder)
+	if err := d.Reset(f); err != nil {
 		f.Close()
 		return nil, err
 	}
-	return zstdFile{d.IOReadCloser(), f}, nil
+	return &zstdFile{d: d, f: f}, nil
 }
 
-// zstdFile is a packed file's lines, closed with the file.
+// streams holds decoders between packed reads. A decoder made for each
+// read allocated its window (a packed rollout's is 2 MiB, held in 3 MiB at
+// low memory) and its block buffers every time: 75 GB of a live magpie's
+// first read of 11,591 rollouts. One kept here keeps them, and is let go
+// with the pool's other idle ones by the garbage collector.
+var streams = sync.Pool{New: func() any {
+	d, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(1), zstd.WithDecoderLowmem(true))
+	if err != nil {
+		panic(err) // only for options it doesn't know
+	}
+	return d
+}}
+
+// zstdFile is a packed file's lines, closed with the file. Its decoder goes
+// back to the pool at Close, which a read after can't reach.
 type zstdFile struct {
-	io.ReadCloser
+	d *zstd.Decoder
 	f *os.File
 }
 
-func (z zstdFile) Close() error {
-	z.ReadCloser.Close()
+func (z *zstdFile) Read(p []byte) (int, error) {
+	if z.d == nil {
+		return 0, os.ErrClosed
+	}
+	return z.d.Read(p)
+}
+
+func (z *zstdFile) Close() error {
+	if z.d == nil {
+		return os.ErrClosed
+	}
+	z.d.Reset(nil)
+	streams.Put(z.d)
+	z.d = nil
 	return z.f.Close()
 }
 

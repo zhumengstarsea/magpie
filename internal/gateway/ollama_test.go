@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tidwall/gjson"
 	"github.com/yetone/magpie/internal/access"
 	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/settings"
@@ -110,6 +111,14 @@ func TestOllamaModelRoutes(t *testing.T) {
 			t.Fatalf("model_info %s: %v", k, s.ModelInfo[k])
 		}
 	}
+	// "ollama run plan/plain" asks for plan/plain:latest, and pulls the
+	// model when show says it isn't there
+	if c, s := show(`{"model":"plan/plain:latest"}`); c != 200 || !slices.Equal(s.Capabilities, []string{"completion", "tools"}) {
+		t.Fatalf("show plain:latest: %d %+v", c, s)
+	}
+	if c, _ := show(`{"model":"plan/nothing:latest"}`); c != 404 {
+		t.Fatal("an unknown model:latest:", c)
+	}
 	if c, _ := show(`{"model":"plan/nothing"}`); c != 404 {
 		t.Fatal("an unknown model:", c)
 	}
@@ -119,10 +128,11 @@ func TestOllamaModelRoutes(t *testing.T) {
 }
 
 // A gateway key held to some models is listed and shown those alone on the
-// Ollama routes, as on /v1/models.
+// Ollama routes, as on /v1/models, and chats on /api/chat and
+// /api/generate with those alone, as on /v1/chat/completions.
 func TestOllamaRoutesHoldAKey(t *testing.T) {
 	fresh(t)
-	ollamaPlan(t, "http://127.0.0.1:1/v1")
+	ollamaPlan(t, ollamaUpstream(t, nil).URL+"/v1")
 	keys, secrets := newCaller(t, "Held")
 	if _, err := access.Update("models-key", access.Change{Key: keys[0].ID, Models: []string{"plan/plain"}}); err != nil {
 		t.Fatal(err)
@@ -144,6 +154,21 @@ func TestOllamaRoutesHoldAKey(t *testing.T) {
 	if w := do("POST", "/api/show", `{"model":"plan/plain"}`); w.Code != 200 {
 		t.Fatalf("held key's own model: %d %s", w.Code, w.Body)
 	}
+	v1 := do("POST", "/v1/chat/completions", `{"model":"plan/seer","messages":[{"role":"user","content":"hi"}]}`)
+	if v1.Code == 200 {
+		t.Fatalf("held key chatted with a model it may not use on /v1: %s", v1.Body)
+	}
+	for _, rt := range [][2]string{
+		{"/api/chat", `{"model":"%s","messages":[{"role":"user","content":"hi"}],"stream":false}`},
+		{"/api/generate", `{"model":"%s","prompt":"hi","stream":false}`},
+	} {
+		if w := do("POST", rt[0], fmt.Sprintf(rt[1], "plan/seer")); w.Code != v1.Code || gjson.Get(w.Body.String(), "error").Type != gjson.String {
+			t.Fatalf("%s: held key with a model it may not use: %d %s, want %d as /v1 and Ollama's error", rt[0], w.Code, w.Body, v1.Code)
+		}
+		if w := do("POST", rt[0], fmt.Sprintf(rt[1], "plan/plain")); w.Code != 200 || !strings.Contains(w.Body.String(), `"done":true`) {
+			t.Fatalf("%s: held key's own model: %d %s", rt[0], w.Code, w.Body)
+		}
+	}
 }
 
 // The Ollama routes are guarded as every gateway route is, through the
@@ -157,12 +182,14 @@ func TestOllamaRoutesGuarded(t *testing.T) {
 	t.Setenv("MAGPIE_ADDR", "")
 	t.Setenv("MAGPIE_PUBLIC_URL", "")
 	t.Setenv("MAGPIE_TRUST_PROXY", "")
-	ollamaPlan(t, "http://127.0.0.1:1/v1")
+	ollamaPlan(t, ollamaUpstream(t, nil).URL+"/v1")
 	srv := lanGuard(New().Handler())
 	routes := []struct{ method, path, body string }{
 		{"GET", "/api/version", ""},
 		{"GET", "/api/tags", ""},
 		{"POST", "/api/show", `{"model":"plan/seer"}`},
+		{"POST", "/api/chat", `{"model":"plan/seer","messages":[{"role":"user","content":"hi"}],"stream":false}`},
+		{"POST", "/api/generate", `{"model":"plan/seer","prompt":"hi","stream":false}`},
 	}
 	const gw = "127.0.0.1:3425"
 	browser := []string{"User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15",

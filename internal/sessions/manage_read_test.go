@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -26,13 +27,14 @@ func TestManageReadsOnlyTheAgentsItShows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed := 0
-	parseHook = func() { parsed++ }
+	// refresh's readers each call it, at once
+	var parsed atomic.Int64
+	parseHook = func() { parsed.Add(1) }
 	t.Cleanup(func() { parseHook = nil })
 
 	v := Manage(map[string]bool{}, claude)
-	if parsed != 0 {
-		t.Fatalf("Codex's files changed and Claude Code's page read %d of them", parsed)
+	if n := parsed.Load(); n != 0 {
+		t.Fatalf("Codex's files changed and Claude Code's page read %d of them", n)
 	}
 	if v.Agent != "claude" || len(v.Sessions) == 0 {
 		t.Fatalf("listed %q with %d sessions", v.Agent, len(v.Sessions))
@@ -47,7 +49,7 @@ func TestManageReadsOnlyTheAgentsItShows(t *testing.T) {
 
 	// asked for Codex's ids: its changed files are read, as the id is in them
 	v = Manage(map[string]bool{"codex": true, "claude": true}, claude)
-	if parsed == 0 {
+	if parsed.Load() == 0 {
 		t.Fatal("Codex's ids were asked for and its changed files not read")
 	}
 	if !v.Native["codex"]["01a0bdc9-b5fd-7e63-9658-68bc8dce5ecd"] {

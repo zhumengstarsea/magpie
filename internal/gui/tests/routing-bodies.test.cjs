@@ -12,6 +12,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
+const { reach } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const now = new Date();
@@ -105,9 +106,13 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       });
       // a click at the middle of what is shown: with the page scrolled down
       // to the story, Playwright's WebKit places what sits in a scroller
-      // ~700px lower than it shows, and clicks the footer instead
+      // ~700px lower than it shows, and clicks the footer instead. The
+      // reader wheels it into sight first (reach): the page puts back any
+      // scroll that isn't the reader's, and Playwright's
+      // scrollIntoViewIfNeeded is code, so the row it scrolled to was put
+      // back under the footer or out of the window before the click (#2559).
       const tap = async (loc) => {
-        await loc.scrollIntoViewIfNeeded();
+        await reach(page, loc);
         const [x, y] = await loc.evaluate((e) => { const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; });
         await page.mouse.click(x, y);
       };

@@ -214,3 +214,71 @@ func TestALineKeptPastItsScanIsGarbageInTests(t *testing.T) {
 		t.Fatalf("a line kept past its scan reads %q", b)
 	}
 }
+
+// A packed rollout's long line (a pasted screenshot in a prompt) has no
+// length to read ahead, so it was grown a read buffer at a time and
+// allocated ~3.8 times its size; a cold read of 120 real packed rollouts
+// allocated 1.6 GB of 2.2 GB there. It is now gathered once, at its own
+// size, and handed over whole; a line its head says no to is not gathered
+// at all.
+func TestScanGathersAPackedLongLineOnce(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "rollout.jsonl.zst")
+	wanted := `{"type":"want","data":"` + strings.Repeat("x", 20<<20) + `"}`
+	unwanted := `{"type":"skip","data":"` + strings.Repeat("y", 20<<20) + `"}`
+	enc, err := zstd.NewWriter(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := enc.EncodeAll([]byte(wanted+"\n{}\n"+unwanted+"\n{}\n"), nil)
+	enc.Close()
+	if err := os.WriteFile(p, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	skip := func(b []byte) bool { return !bytes.Contains(b[:min(len(b), 64)], []byte(`"skip"`)) }
+	none := func([]byte) bool { return false } // sets up the decoder a packed scan keeps
+	scan := func(head func([]byte) bool) (uint64, []int) {
+		var got []int
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		if _, err := scanAt(p, 0, head, func(b []byte, _, _ int64) bool {
+			if len(b) > 2 && !bytes.Equal(b, []byte(wanted)) {
+				t.Fatalf("a %d-byte line handed over is not the one written", len(b))
+			}
+			got = append(got, len(b))
+			return true
+		}); err != nil {
+			t.Fatal(err)
+		}
+		runtime.ReadMemStats(&after)
+		return after.TotalAlloc - before.TotalAlloc, got
+	}
+	if _, got := scan(none); len(got) != 0 {
+		t.Fatalf("lines %v handed over, want none", got)
+	}
+	alloc, got := scan(skip)
+	if len(got) != 3 || got[0] != len(wanted) || got[1] != 2 || got[2] != 2 {
+		t.Fatalf("lines %v, want [%d 2 2]", got, len(wanted))
+	}
+	// the line once at its size, and at worst once more into blocks the
+	// pool let go, with 16 MiB for the decoder's window; grown a chunk at
+	// a time it was ~107 MB past the window
+	if most := uint64(len(wanted))*5/2 + 16<<20; alloc > most {
+		t.Fatalf("a scan of a packed %d-byte line allocated %d bytes, want at most %d", len(wanted), alloc, most)
+	}
+}
+
+// Blocks give back what they were given in order, across a block's end.
+func TestBlocksKeepALineInOrder(t *testing.T) {
+	var g blocks
+	defer g.release()
+	var want []byte
+	for i, n := range []int{700 << 10, 900 << 10, 1, 1 << 20, 3} {
+		p := bytes.Repeat([]byte{byte('a' + i)}, n)
+		g.add(p)
+		want = append(want, p...)
+	}
+	if got := g.appendTo([]byte("x")); !bytes.Equal(got, append([]byte("x"), want...)) || g.n != len(want) {
+		t.Fatalf("blocks gave back %d bytes (n %d), not the %d given", len(got)-1, g.n, len(want))
+	}
+}

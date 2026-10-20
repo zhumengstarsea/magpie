@@ -16,7 +16,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
-const { watchSettingsReads, settingsDrawn } = require("./reader.cjs");
+const { watchSettingsReads, settingsDrawn, reach } = require("./reader.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const loginItems = "x-apple.systempreferences:com.apple.LoginItems-Settings.extension";
@@ -100,13 +100,11 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       // scrolled to as a reader would, with the wheel, once the page has come
       // in (it comes in animated: a place read mid-way isn't where it rests)
       await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => {}))));
-      let b = await open.boundingBox();
-      for (let i = 0; i < 40 && b.y + b.height > page.viewportSize().height; i++) {
-        await page.mouse.move(width / 2, 300);
-        await page.mouse.wheel(0, 200);
-        await page.waitForTimeout(50);
-        b = await open.boundingBox();
-      }
+      // (reach waits for each wheel's scroll to land and for the button to be
+      // the thing under the pointer: a fixed pause read a stale place, and
+      // the click landed beside it)
+      await reach(page, open);
+      const b = await open.boundingBox();
       await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
       for (let i = 0; i < 50 && !opened.length; i++) await page.waitForTimeout(50);
       assert.deepEqual(opened, [loginItems]);

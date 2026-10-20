@@ -44,6 +44,21 @@ func (s *Server) ollamaTags(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"models": models})
 }
 
+// ollamaName is the model id a request names: the ollama CLI names a
+// model with no tag as name:latest, which is the bare id unless a model is
+// really called that.
+func ollamaName(r *http.Request, id string) string {
+	if _, ok := ollamaEntry(r, id); ok {
+		return id
+	}
+	if bare, cut := strings.CutSuffix(id, ":latest"); cut {
+		if _, ok := ollamaEntry(r, bare); ok {
+			return bare
+		}
+	}
+	return id
+}
+
 // ollamaShow is one model as Ollama's /api/show tells it. A client reads
 // what it takes from capabilities, its window from model_info's
 // "<general.architecture>.context_length" (VS Code's Copilot takes 32768
@@ -69,6 +84,7 @@ func (s *Server) ollamaShow(w http.ResponseWriter, r *http.Request) {
 		ollamaError(w, http.StatusBadRequest, "model is required")
 		return
 	}
+	id = ollamaName(r, id)
 	e, ok := ollamaEntry(r, id)
 	if !ok {
 		ollamaError(w, http.StatusNotFound, "model '"+id+"' not found")

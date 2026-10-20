@@ -494,7 +494,8 @@ func CodexListTag() string { return codexListTag("") }
 // moves from one list to the other; a V1 list's mark stays in front.
 func CodexOwnListTag() string { return codexListTag("own") }
 
-func codexListTag(kind string) string {
+// buildCodexListTag is codexListTag built afresh from the catalog.
+func buildCodexListTag(kind string) string {
 	ms := CodexListed()
 	off := slices.Sorted(maps.Keys(CodexNativeHidden()))
 	for _, slug := range off {

@@ -13,8 +13,9 @@ import (
 // The Cline plugin's provider has ClinePass's Upstream tick too (ARNO on
 // Discord): saved on it, a DeepSeek model's request reaches the plugin
 // pinned to DeepSeek's own API and a GLM model's to Z.ai's (sdytman on
-// Discord), on Chat and Anthropic Messages alike, and its other models'
-// requests go as sent.
+// Discord), on Chat and Anthropic Messages alike, glm-5.3-flash by
+// OpenRouter's provider.only since Cline sends it there, and its other
+// models' requests go as sent.
 func TestClinePluginPinsDeepSeekAndGLM(t *testing.T) {
 	t.Setenv("FAKE_DEEPSEEK", "1")
 	t.Setenv("FAKE_GLM", "1")
@@ -39,8 +40,10 @@ func TestClinePluginPinsDeepSeekAndGLM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !p.ClinePinnable() || p.ClinePin("deepseek-v4-pro") != "" || p.ClinePin("glm-5.3") != "" {
-		t.Fatalf("the Cline plugin's provider: pinnable %v, pinned unasked %q %q", p.ClinePinnable(), p.ClinePin("deepseek-v4-pro"), p.ClinePin("glm-5.3"))
+	ds, _ := p.ClinePin("deepseek-v4-pro")
+	glm, _ := p.ClinePin("glm-5.3")
+	if !p.ClinePinnable() || ds != "" || glm != "" {
+		t.Fatalf("the Cline plugin's provider: pinnable %v, pinned unasked %q %q", p.ClinePinnable(), ds, glm)
 	}
 	ask := func() []map[string]any {
 		mu.Lock()
@@ -52,12 +55,13 @@ func TestClinePluginPinsDeepSeekAndGLM(t *testing.T) {
 			{"/v1/chat/completions", `{"model":"` + pid + `/glm-5.3","messages":[{"role":"user","content":"hi"}]}`},
 			{"/v1/messages", `{"model":"` + pid + `/glm-5.3","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}`},
 			{"/v1/chat/completions", `{"model":"` + pid + `/fake-1","messages":[{"role":"user","content":"hi"}]}`},
+			{"/v1/chat/completions", `{"model":"` + pid + `/glm-5.3-flash","messages":[{"role":"user","content":"hi"}]}`},
 		} {
 			postProto(t, New(), req.path, req.body)
 		}
 		mu.Lock()
 		defer mu.Unlock()
-		if len(sent) != 5 {
+		if len(sent) != 6 {
 			t.Fatalf("the plugin sent %d requests", len(sent))
 		}
 		return append([]map[string]any(nil), sent...)
@@ -65,6 +69,9 @@ func TestClinePluginPinsDeepSeekAndGLM(t *testing.T) {
 	for i, q := range ask() {
 		if q["providerOptions"] != nil {
 			t.Fatalf("request %d pinned with the tick off: %v", i, q["providerOptions"])
+		}
+		if q["provider"] != nil {
+			t.Fatalf("request %d pinned with the tick off: provider %v", i, q["provider"])
 		}
 	}
 
@@ -87,7 +94,10 @@ func TestClinePluginPinsDeepSeekAndGLM(t *testing.T) {
 			t.Fatalf("request %d reached the plugin with providerOptions %s, want %s", i, po, want)
 		}
 	}
-	if got[4]["providerOptions"] != nil {
-		t.Fatalf("fake-1 pinned: %v", got[4]["providerOptions"])
+	if got[4]["providerOptions"] != nil || got[4]["provider"] != nil {
+		t.Fatalf("fake-1 pinned: %v %v", got[4]["providerOptions"], got[4]["provider"])
+	}
+	if po, _ := json.Marshal(got[5]["provider"]); string(po) != `{"only":["z-ai"]}` || got[5]["providerOptions"] != nil {
+		t.Fatalf("glm-5.3-flash reached the plugin with provider %s and providerOptions %v, want provider.only [z-ai] alone", po, got[5]["providerOptions"])
 	}
 }
