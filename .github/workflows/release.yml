@@ -475,6 +475,7 @@ jobs:
 
       - name: 生成并免费翻译更新日志
         env:
+          GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
           ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
         run: |
           set -euo pipefail
