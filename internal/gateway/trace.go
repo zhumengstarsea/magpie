@@ -163,7 +163,10 @@ func (u RouteUsage) PricingRecord() usage.Record {
 
 // GroupRef is the routing group a request asked for.
 type GroupRef struct {
-	ID       string   `json:"id"`
+	ID string `json:"id"`
+	// Ref: the id agents pick it by (provider.Group.Ref), auto/<model>
+	// for a group magpie found, which the Routing page names it by
+	Ref      string   `json:"ref,omitempty"`
 	Name     string   `json:"name"`
 	Routing  string   `json:"routing"`
 	Affinity string   `json:"affinity"`
@@ -185,6 +188,7 @@ type GroupRef struct {
 // SubGroup is a routing group in the group a request asked for.
 type SubGroup struct {
 	ID      string `json:"id"`
+	Ref     string `json:"ref,omitempty"` // as GroupRef's
 	Name    string `json:"name"`
 	Routing string `json:"routing"`
 	In      string `json:"in"`              // the group it is in
@@ -200,7 +204,7 @@ type NestedRule struct {
 
 // groupRef is the trace's g, with its models ms.
 func groupRef(g provider.Group, ms []provider.Member) *GroupRef {
-	ref := &GroupRef{ID: g.ID, Name: g.Name, Routing: g.Routing, Affinity: g.Affinity, Auto: g.Auto, Sink: sinks(g.Sink, g.Routing)}
+	ref := &GroupRef{ID: g.ID, Ref: g.Ref(), Name: g.Name, Routing: g.Routing, Affinity: g.Affinity, Auto: g.Auto, Sink: sinks(g.Sink, g.Routing)}
 	seen := map[string]bool{}
 	for _, m := range ms {
 		ref.Members = append(ref.Members, provider.WithMemberEffort(m.Provider.ID+"/"+m.Model, m.Effort))
@@ -212,7 +216,7 @@ func groupRef(g provider.Group, ms []provider.Member) *GroupRef {
 		for _, v := range m.Via {
 			if !seen[v.ID] {
 				seen[v.ID] = true
-				ref.Subs = append(ref.Subs, SubGroup{ID: v.ID, Name: v.Name, Routing: v.Routing, In: in, Rules: len(v.Rules)})
+				ref.Subs = append(ref.Subs, SubGroup{ID: v.ID, Ref: v.Ref(), Name: v.Name, Routing: v.Routing, In: in, Rules: len(v.Rules)})
 			}
 			in = v.ID
 		}

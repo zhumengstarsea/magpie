@@ -760,7 +760,12 @@ function routingPage(part) {
     return out + "]".repeat(open.length);
   }
   // useName is what a rule sends to: a model, or a group in the group
-  const useName = (r, id) => id?.startsWith("group/") ? t("the group {name}", { name: r.group?.subs?.find((s) => "group/" + s.id === id)?.name || id.slice(6) }) : id;
+  // a group magpie found goes by the id agents pick it by (auto/<model>), not its internal group/auto-…
+  const useName = (r, id) => {
+    if (!id?.startsWith("group/")) return id;
+    const s = r.group?.subs?.find((s) => "group/" + s.id === id);
+    return t("the group {name}", { name: s?.name || (s?.ref && !s.ref.startsWith("group/") ? s.ref : id.slice(6)) });
+  };
   // nestedWhy tells, for each group in the group down to the one that
   // went first, what its own rules did — and which group it came through
   function nestedWhy(r) {

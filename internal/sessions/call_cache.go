@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -518,6 +519,10 @@ func loadCalls(f file) *callFile {
 		if st != nil && frame.State.Off < st.Off {
 			return nil
 		}
+		// a frame's patches are mostly new calls: room for them at once,
+		// rather than append's doublings, which a warm start paid ~500 MB
+		// for across every cached file
+		calls = slices.Grow(calls, len(frame.Patches))
 		for _, p := range frame.Patches {
 			if p.Index < 0 || p.Index > len(calls) {
 				return nil

@@ -372,6 +372,21 @@ doesn't count, and hung up after ~315s (#2316). An error before any
 `TestSearchQueueKeepsCodexAlive` in
 [`search_queue_test.go`](../../internal/gateway/search_queue_test.go).
 
+## Which providers search for another model
+
+`Searchers()` (Settings › Web search's picker) and `autoSearcher` (magpie's
+own pick) take a provider by `searchRank`, and its models by
+`searchableModel`, from the same rules that send a provider's own search
+tool on (`searchesItself`, `modelSearches`, `remoteSearch`). A provider
+that searches for some of its models only (`searchModels`: Command Code's
+Provider API, `partSearcher`) is offered and picked with those models
+alone, never under `x-cmd-zdr`; before, its searching models were left out
+of both (01huadalang on Discord). A provider none of whose models searches
+by itself, such as a plugin whose `config` hook doesn't set `searches`
+(Trae's), is not a searcher: its models are given magpie's `web_search`,
+and the row's `searchLeftOut` names it. Covered by
+`TestCommandCodeSearchesForOtherModels` and `TestSearcherChosen`.
+
 ## A searcher that fails or finds nothing
 
 `modelSearch` asks the searcher picked in Settings (or the one magpie picks)

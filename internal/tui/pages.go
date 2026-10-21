@@ -834,7 +834,7 @@ func quotasCmd() tea.Msg {
 	defer cancel()
 	// a WorkBuddy (China) account's line says how its daily check-in went,
 	// as its card in the app does
-	return quotaMsg(provider.WithCheckins(provider.Quotas(ctx)))
+	return quotaMsg(provider.InProviderOrder(provider.WithCheckins(provider.Quotas(ctx))))
 }
 
 // checkinMsg is what came of c, WorkBuddy's daily check-in pressed now.

@@ -24,11 +24,22 @@ import (
 // read out of them; nothing keeps a reference to one after unpack.
 var rowDecodes = sync.Pool{New: func() any { return new([]byte) }}
 
+// rowEncodes are pack's scratch: the rows' bytes before compression and
+// S2's output. s2.Encode makes its output as large as the worst case
+// (MaxEncodedLen, more than the input), and an archive cut from it kept
+// that whole allocation, several times the compressed bytes: the largest
+// thing a started magpie held, ~17 MB for ~380k calls, and uncounted in
+// Bytes. The archive is copied out of the scratch at its own length.
+var rowEncodes = sync.Pool{New: func() any { return new([2][]byte) }}
+
 func (c *rowChunk) pack() *rowChunk {
 	if c == nil || len(c.Rows) < 64 || len(c.Archive) != 0 {
 		return c
 	}
-	data := make([]byte, 0, len(c.Rows)*64)
+	scratch := rowEncodes.Get().(*[2][]byte)
+	defer rowEncodes.Put(scratch)
+	data := scratch[0][:0]
+	defer func() { scratch[0] = data[:0] }()
 	put := func(v uint64) { data = binary.AppendUvarint(data, v) }
 	put(uint64(len(c.Rows)))
 	put(uint64(len(c.Strings)))
@@ -67,13 +78,14 @@ func (c *rowChunk) pack() *rowChunk {
 			put(math.Float64bits(p.Credits))
 		}
 	}
-	archive := s2.Encode(nil, data)
-	if int64(len(archive)) >= c.Bytes {
+	encoded := s2.Encode(scratch[1][:cap(scratch[1])], data)
+	scratch[1] = encoded[:0]
+	if int64(len(encoded)) >= c.Bytes {
 		return c
 	}
 	next := *c
 	next.Rows, next.Strings, next.dict = nil, nil, nil
-	next.Archive, next.Locations = slices.Clip(archive), locations
+	next.Archive, next.Locations = slices.Clone(encoded), locations
 	next.Bytes = int64(len(next.Archive)+len(locations)*8) + codexActorBytes(next.codexActors)
 	return &next
 }
