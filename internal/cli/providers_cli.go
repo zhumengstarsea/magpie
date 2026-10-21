@@ -42,6 +42,9 @@ const providerUsage = `usage:
                                           compaction=native asks the provider Codex's own compaction and hands
                                           Codex its sealed item as it came (a Responses API, a ChatGPT account,
                                           Copilot), compaction=magpie, the default, has magpie summarise
+                                          additional-tools=on sends a tool Claude Code's tool search loads to its
+                                          Responses API where it was loaded (an additional_tools item, which
+                                          keeps the cache); additional-tools=default puts it with the other tools
   magpie provider key <id> <key>          change the API key
   magpie provider icon <id> <file|name>   give a custom provider a picture (PNG, JPEG, SVG…) or a built-in icon
   magpie provider fallback <id> <provider/model>…   where requests go when it's out of quota or down (none clears)
@@ -1047,6 +1050,18 @@ func applyPairs(p *provider.Provider, pairs []string) error {
 				p.CodexAsSent = false
 			default:
 				return fmt.Errorf("codex=as-sent|default, not %q", v)
+			}
+		case "additional-tools":
+			// on: a tool an Anthropic client's tool search loads goes to
+			// the provider's Responses API in an additional_tools item
+			// where it was loaded, which keeps the cached prefix (#2660)
+			switch strings.ToLower(v) {
+			case "on", "yes":
+				p.AdditionalTools = true
+			case "default", "no", "off":
+				p.AdditionalTools = false
+			default:
+				return fmt.Errorf("additional-tools=on|default, not %q", v)
 			}
 		case "user-agent", "ua":
 			// agent: a request goes with the User-Agent the agent that

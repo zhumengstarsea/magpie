@@ -32,3 +32,37 @@ func TestFileNameIsNoEmail(t *testing.T) {
 		t.Fatalf("model's: %d masked: %q", n, out)
 	}
 }
+
+// Image names as apps ship them (willz on Discord: image@2x.png), other
+// files named so (intro@2x.mp4), and a scale before an extension that is a
+// domain too (icon@2x.zip) are no address either. An address on a real
+// domain still is: .ai, .io, and .zip, .mov and .md with no scale.
+func TestMoreFileNamesAreNoEmail(t *testing.T) {
+	o := Options{Secrets: true, Personal: true}
+	for _, s := range []string{
+		"file@2x.png", "Default@2x~iphone.png", "icon@3x.webp", "logo@2x.jpg",
+		"screenshot@1.5x.png", "Assets/AppIcon@2x.PNG", "banner@final.pdf",
+		"intro@2x.mp4", "strings@base.json", "icon@2x.zip", "intro@1.5x.mov",
+		`"src": "img/hero@2x.avif"`, "![shot](./docs/shot@2x.png)",
+	} {
+		in := "see " + s + " here"
+		if out, n := Mask(in, o); out != in || n != 0 {
+			t.Errorf("%q: %d masked: %q", s, n, out)
+		}
+	}
+	// as a request carries them: a tool's result listing an asset folder
+	body := `{"messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01","content":"AppIcon@2x.png\nintro@2x.mp4\nicon@2x.zip\nowner: x@company.ai"}]}]}`
+	got, n := MaskJSON([]byte(body), o)
+	if n != 1 || !strings.Contains(string(got), `AppIcon@2x.png\nintro@2x.mp4\nicon@2x.zip\nowner: {{EMAIL_`) {
+		t.Errorf("request: %d masked: %s", n, got)
+	}
+	for _, s := range []string{
+		"a.b@acme-corp.com", "x@company.ai", "dev@startup.io", "me@notes.md",
+		"ops@files.zip", "jane@studio.mov", "sales@2x.com", "hi@png.dev",
+	} {
+		in := "mail " + s + " now"
+		if out, n := Mask(in, o); n != 1 || strings.Contains(unmarked(out), s) {
+			t.Errorf("%q: %d masked: %q", s, n, out)
+		}
+	}
+}

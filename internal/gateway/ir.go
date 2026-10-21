@@ -50,6 +50,10 @@ type Part struct {
 	IsError    bool
 	Images     []Part         // the images the tool returned beside its text
 	Standalone map[string]any // native Responses notification with no call ID
+	// Loads are the tools a tool's result loads, by name: Claude Code's
+	// ToolSearch answers with tool_reference blocks naming the deferred
+	// tools it found (#2660)
+	Loads []string
 
 	// thinking: its signature (Anthropic's, or a Gemini thought's). On a
 	// tool call, and on text, Gemini's thoughtSignature: a tool call's
@@ -140,6 +144,10 @@ type Tool struct {
 	Description string
 	Schema      json.RawMessage // JSON schema of the arguments
 	Strict      bool            // the client asked for its arguments held to the schema
+	// Deferred is a tool the client marked defer_loading: Claude Code's
+	// tools that ToolSearch loads, offered from where they were loaded
+	// (Part.Loads), not from the start (#2660)
+	Deferred bool
 }
 
 // Request is a call to a model, whichever API it arrived in.
@@ -244,6 +252,12 @@ type Request struct {
 	// Namespaced are the tools a Responses client offered inside a
 	// namespace, by the flat name the model is offered them under.
 	Namespaced map[string]nsTool
+	// LoadedInPlace has a Responses upstream that takes an additional_tools
+	// item (loadsInPlace) given a deferred tool a result loaded in such an
+	// item right after that result, not in the top-level tools: the tools
+	// and the conversation sent before stay as they were, so its prompt
+	// cache does (#2660). Every other upstream gets them in tools.
+	LoadedInPlace bool
 	// Grok is set when the model asked is one of Grok's, whose calls'
 	// arguments reach the client with their zero fractions dropped
 	// (grok_integral.go).

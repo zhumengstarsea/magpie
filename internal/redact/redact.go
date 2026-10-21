@@ -209,7 +209,7 @@ func secretValue(v string) bool {
 
 func realEmail(v string) bool {
 	host := strings.ToLower(v[strings.LastIndexByte(v, '@')+1:])
-	if fileExt[host[strings.LastIndexByte(host, '.')+1:]] {
+	if fileHost(host) {
 		return false
 	}
 	for _, fake := range []string{"example.com", "example.org", "example.net", "localhost", ".test", ".invalid", ".example"} {
@@ -224,9 +224,35 @@ func realEmail(v string) bool {
 // what ends in one is a file's name and not an address: an image a Mac
 // saved at twice its size, 261020_14-16-11@2x.jpg, went to the model as
 // {{EMAIL_…}} and Pi could no longer read the file (#3029).
+// Other files are named so too (intro@2x.mp4, strings@base.json), and
+// none of these is a domain either (IANA's list, checked 2026-10-21).
 var fileExt = map[string]bool{
 	"jpg": true, "jpeg": true, "png": true, "gif": true, "webp": true, "svg": true, "heic": true, "heif": true,
 	"avif": true, "bmp": true, "tif": true, "tiff": true, "ico": true, "icns": true, "pdf": true,
+	"svgz": true, "apng": true, "jxl": true, "psd": true, "eps": true, "lottie": true,
+	"mp4": true, "m4v": true, "webm": true, "mkv": true, "avi": true, "mp3": true, "m4a": true, "wav": true,
+	"ogg": true, "flac": true, "aac": true, "ttf": true, "otf": true, "woff": true, "woff2": true, "eot": true,
+	"json": true, "yaml": true, "yml": true, "toml": true, "xml": true, "txt": true, "csv": true, "tsv": true,
+	"log": true, "html": true, "htm": true, "css": true, "scss": true, "less": true, "js": true, "mjs": true,
+	"cjs": true, "jsx": true, "ts": true, "tsx": true, "doc": true, "docx": true, "xls": true, "xlsx": true,
+	"ppt": true, "pptx": true, "gz": true, "tgz": true, "tar": true, "rar": true, "7z": true, "dmg": true,
+}
+
+// scaleExt are file extensions that are top-level domains too (.zip,
+// .mov, .md, .map): a name ending in one is a file's only with a scale
+// before it, icon@2x.zip, intro@1.5x.mov, while ops@files.zip is an
+// address.
+var scaleExt = map[string]bool{"zip": true, "mov": true, "md": true, "map": true}
+
+var scaleRe = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+)?x$`)
+
+// fileHost says host, what follows the @ of what looks like an address,
+// is the end of a file's name: an extension no domain has (fileExt), or a
+// scale and an extension that is a domain too (scaleExt).
+func fileHost(host string) bool {
+	dot := strings.LastIndexByte(host, '.')
+	ext := host[dot+1:]
+	return fileExt[ext] || dot > 0 && scaleExt[ext] && scaleRe.MatchString(host[:dot])
 }
 
 func chineseID(v string) bool {

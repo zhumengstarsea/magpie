@@ -1540,6 +1540,11 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 				if !in.CodexAsSent && old != nil {
 					in.CodexAsSent = old.CodexAsSent
 				}
+				// and additional_tools taken, set with `magpie provider
+				// set <id> additional-tools=on` (#2660)
+				if !in.AdditionalTools && old != nil {
+					in.AdditionalTools = old.AdditionalTools
+				}
 				// each account's own proxy likewise: {} clears them
 				if in.AccountProxies == nil && old != nil {
 					in.AccountProxies = old.AccountProxies

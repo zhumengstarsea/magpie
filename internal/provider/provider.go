@@ -228,6 +228,15 @@ type Provider struct {
 	// fitting, which a backend that isn't OpenAI's needs (#350).
 	CodexAsSent bool `json:"codexAsSent,omitempty"`
 
+	// AdditionalTools says the provider's Responses API takes an
+	// additional_tools input item, as OpenAI's does: a deferred tool an
+	// Anthropic client's tool search loaded goes to it in such an item
+	// where the search loaded it, not in the top-level tools, which keeps
+	// the prompt's cached prefix (#2660). OpenAI's own API is sent one
+	// without it; another vendor isn't unless this is set, since xAI's
+	// turns the item away (#350).
+	AdditionalTools bool `json:"additionalTools,omitempty"`
+
 	// NativeCompaction has Codex's compaction_trigger go to the provider
 	// as Codex sent it, and the compaction the provider writes back go to
 	// Codex as it came (#1099), where magpie otherwise asks the model for

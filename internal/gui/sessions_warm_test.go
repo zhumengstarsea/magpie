@@ -2,6 +2,7 @@ package gui
 
 import (
 	"runtime"
+	"runtime/debug"
 	"testing"
 	"time"
 
@@ -33,7 +34,9 @@ func TestWarmUpReturnsItsGarbage(t *testing.T) {
 // With Codex sessions on this computer the warm-up also reads Codex's
 // per-thread effort, which a first Codex page after a start otherwise read
 // from the whole ledger while it waited (#2776); without any it doesn't.
+// It reads under the tight GC: the usage page's rows are still held then.
 func TestWarmUpReadsCodexEffort(t *testing.T) {
+	defer debug.SetGCPercent(debug.SetGCPercent(100))
 	statsMemo.Lock()
 	saved := statsMemo.m
 	statsMemo.Unlock()
@@ -55,7 +58,12 @@ func TestWarmUpReadsCodexEffort(t *testing.T) {
 		}
 		statsMemo.Unlock()
 		read := 0
-		warmCodexEffort = func() { read++ }
+		warmCodexEffort = func() {
+			read++
+			if p := gcPercent(); p != tightGCPercent {
+				t.Errorf("Codex's effort was read under GOGC=%d, want %d", p, tightGCPercent)
+			}
+		}
 		warmUp(warmSteps()...)
 		if read != c.want {
 			t.Fatalf("with sessions %v Codex's effort was read %d times, want %d", c.keys, read, c.want)

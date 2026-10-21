@@ -509,7 +509,7 @@ func warmSteps() []func() {
 		func() { underTightGC(func() { usage.QueryPage(usage.All, usage.Filter{}, 0, 50) }) },
 		func() {
 			if slices.ContainsFunc(statsFor(0).Keys, func(k string) bool { return strings.HasPrefix(k, "codex:") }) {
-				warmCodexEffort()
+				underTightGC(warmCodexEffort)
 			}
 		},
 	}
@@ -536,8 +536,10 @@ func warmUp(steps ...func()) {
 // what was set; a GOGC the user set lower, or off, is kept. The usage
 // page's read of the whole history holds every row of it at once (~270 MB
 // live for 390k calls), and a cold start that rests at ~200 MB peaked at
-// 555–587 MB in Activity Monitor there; under it, 410–438 MB. Only that
-// read runs under it: the warm-up as a whole did too for ~11 s more CPU.
+// 555–587 MB in Activity Monitor there; under it, 410–438 MB. That read
+// and Codex's effort, which reads the whole ledger again while the page
+// still holds its rows, run under it: the warm-up as a whole did too for
+// ~11 s more CPU.
 func underTightGC(fn func()) {
 	if was := debug.SetGCPercent(tightGCPercent); was < tightGCPercent {
 		debug.SetGCPercent(was)

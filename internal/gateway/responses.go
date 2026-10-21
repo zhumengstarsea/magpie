@@ -1094,6 +1094,25 @@ func buildResponses(r *Request, model, host string, rejectTemp bool) []byte {
 	// sealed reasoning, and may refuse an item without it.
 	replay := replaysReasoning(model, host)
 	var input []any
+	// a deferred tool a result loaded goes in an additional_tools item
+	// after that result and the results beside it, once, where the
+	// upstream takes one (Request.LoadedInPlace, #2660)
+	deferred := map[string]Tool{}
+	placed := map[string]bool{}
+	if r.LoadedInPlace {
+		for _, t := range r.Tools {
+			if t.Deferred {
+				deferred[t.Name] = t
+			}
+		}
+	}
+	var loaded []any
+	flushLoaded := func() {
+		if len(loaded) > 0 {
+			input = append(input, map[string]any{"type": "additional_tools", "role": "developer", "tools": loaded})
+			loaded = nil
+		}
+	}
 	// a second answer to one call is left out, as the Chat and Messages
 	// builds leave it (dropSecondAnswers)
 	for _, m := range dropSecondAnswers(r.Messages) {
@@ -1102,6 +1121,7 @@ func buildResponses(r *Request, model, host string, rejectTemp bool) []byte {
 			if len(content) == 0 {
 				return
 			}
+			flushLoaded()
 			input = append(input, map[string]any{"type": "message", "role": m.Role, "content": content})
 			content = nil
 		}
@@ -1131,14 +1151,17 @@ func buildResponses(r *Request, model, host string, rejectTemp bool) []byte {
 					// a Responses API's own sealed reasoning goes back as
 					// it came: id, summary and encrypted_content (#1445)
 					flushMsg()
+					flushLoaded()
 					input = append(input, p.Sealed)
 				} else if replay && p.Text != "" {
 					flushMsg()
+					flushLoaded()
 					input = append(input, map[string]any{"type": "reasoning", "summary": []any{},
 						"content": []map[string]any{{"type": "reasoning_text", "text": p.Text}}})
 				}
 			case ToolCall:
 				flushMsg()
+				flushLoaded()
 				id := p.ID
 				if id == "" {
 					id = "call_" + newID()
@@ -1163,10 +1186,17 @@ func buildResponses(r *Request, model, host string, rejectTemp bool) []byte {
 					output = items
 				}
 				input = append(input, map[string]any{"type": "function_call_output", "call_id": p.CallID, "output": output})
+				for _, name := range p.Loads {
+					if t, ok := deferred[name]; ok && !placed[name] {
+						placed[name] = true
+						loaded = append(loaded, responsesTool(t))
+					}
+				}
 			}
 		}
 		flushMsg()
 	}
+	flushLoaded()
 	if replay {
 		// each step that makes a call, or follows a tool output, leads with
 		// its reasoning, or with a space's (#1592, #1822)
@@ -1255,14 +1285,10 @@ func buildResponses(r *Request, model, host string, rejectTemp bool) []byte {
 	if len(r.Tools) > 0 || r.WebSearch {
 		var tools []map[string]any
 		for _, t := range r.Tools {
-			// strict is said, as Codex says it: left out, the ChatGPT
-			// backend holds the schema to strict mode's rules and refuses a
-			// pattern with a lookaround (MiniMax Code's path, #383)
-			tool := map[string]any{"type": "function", "name": t.Name, "description": t.Description, "strict": t.Strict}
-			if len(t.Schema) > 0 {
-				tool["parameters"] = t.Schema
+			if placed[t.Name] {
+				continue // offered where it was loaded
 			}
-			tools = append(tools, tool)
+			tools = append(tools, responsesTool(t))
 		}
 		if r.WebSearch {
 			tools = append(tools, map[string]any{"type": "web_search"})
@@ -1272,7 +1298,9 @@ func buildResponses(r *Request, model, host string, rejectTemp bool) []byte {
 				include = append(include, "web_search_call.action.sources")
 			}
 		}
-		out["tools"] = tools
+		if len(tools) > 0 {
+			out["tools"] = tools
+		}
 		switch {
 		case r.ToolChoice == "auto" || r.ToolChoice == "none" || r.ToolChoice == "required":
 			out["tool_choice"] = r.ToolChoice
@@ -1301,6 +1329,18 @@ func buildResponses(r *Request, model, host string, rejectTemp bool) []byte {
 	// the lone call, "No tool output found for function call <id>", on
 	// every turn after it too (#2222)
 	return pairToolItems(b)
+}
+
+// responsesTool is t as a Responses function tool. strict is said, as
+// Codex says it: left out, the ChatGPT backend holds the schema to strict
+// mode's rules and refuses a pattern with a lookaround (MiniMax Code's
+// path, #383).
+func responsesTool(t Tool) map[string]any {
+	tool := map[string]any{"type": "function", "name": t.Name, "description": t.Description, "strict": t.Strict}
+	if len(t.Schema) > 0 {
+		tool["parameters"] = t.Schema
+	}
+	return tool
 }
 
 type rUsage struct {

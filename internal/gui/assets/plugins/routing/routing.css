@@ -484,7 +484,8 @@ button.rt-session { cursor: pointer; }
 .rt-group.rt-gpick { cursor: default; }
 .rt-group.rt-gpick.on { background: var(--card-2); }
 .rt-gedit { cursor: default; scroll-margin-top: 12px; }
-.rt-gedit .ehead.fold { cursor: pointer; }
+.rt-gedit .ehead.folds { cursor: pointer; }
+.rt-gedit .ehead.folds:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .rt-gedit .segs { max-width: 100%; }
 /* its hint as close under the choices as every other row's: 4px */
 .rt-gedit .ctx-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }

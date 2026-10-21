@@ -21887,7 +21887,7 @@ let maskDays = 7;            // the card's span, kept per machine
 try { if (localStorage.getItem("magpie.maskDays") === "30") maskDays = 30; } catch {}
 let maskDrawn = "";          // what the card says, so a redraw that changes nothing is skipped
 let maskView = null;         // the records, while they are open
-let maskGrad = 0;
+let maskSaw = null, maskSawAt = 0, maskSawBusy = false; // the newest records, for the lines the vendor saw
 const maskValues = new Map(); // placeholder → what it stood for, as this magpie told it
 const maskKindName = (k) => MASK_KINDS[k] ? t(MASK_KINDS[k]) : k;
 const maskByName = (b) => MASK_BY[b] ? t(MASK_BY[b]) : b;
@@ -22016,7 +22016,9 @@ function drawMaskObs() {
   const s = maskS;
   const sum = maskSumDays === maskDays ? maskSum : null;
   const on = !!(s.redact || s.redactPersonal);
-  const key = JSON.stringify([document.documentElement.lang, maskDays, on, sum, state.agents?.length, (providers || maskProv)?.providers?.length]);
+  if (sum?.requests) maskSawLoad();
+  const saw = maskSawLines();
+  const key = JSON.stringify([document.documentElement.lang, maskDays, on, sum, saw.map((x) => x.text), state.agents?.length, (providers || maskProv)?.providers?.length]);
   if (key === maskDrawn && box.firstChild) return;
   maskDrawn = key;
   // it moves when it first has numbers to say, and for other days: not
@@ -22060,57 +22062,31 @@ function drawMaskObs() {
   count.append(big, el("div", "mo-meta", sum.requests
     ? t(sum.distinct === 1 ? "1 different value" : "{n} different values", { n: fmtN(sum.distinct) }) + " · " + t(sum.requests === 1 ? "1 request" : "{n} requests", { n: fmtN(sum.requests) })
     : t("Nothing yet in these days")));
-  const chart = el("div", "mo-chart");
+  const chart = el("div", "mo-days");
   hero.append(count, chart);
   box.append(hero);
-  maskChart(chart, sum.days, move);
+  maskStrip(chart, sum.days, move);
   if (move && sum.n) maskCountUp(num, sum.n);
   if (!sum.requests) {
     box.append(el("div", "mo-empty", t("A request that carries a key, a password or personal data shows here as it goes")));
     return;
   }
 
-  // what was kept, by kind
-  if (sum.kinds.length) {
-    const sec = el("div", "mo-sec");
-    sec.append(el("div", "label", t("What was kept")));
-    const bar = el("div", "mo-bar");
-    const legend = el("div", "mo-legend");
-    const top = sum.kinds.slice(0, 6), rest = sum.kinds.slice(6);
-    const parts = top.map((k) => ({ ...k, c: maskColor(k.name), label: maskKindName(k.name) }));
-    if (rest.length) parts.push({ name: "", n: rest.reduce((a, k) => a + k.n, 0), c: "var(--faint)", label: t("Other") });
-    for (const p of parts) {
-      const seg = el("span", "mo-seg");
-      seg.style.flexGrow = String(p.n);
-      seg.style.background = p.c;
-      seg.title = `${p.label} · ${fmtN(p.n)}`;
-      bar.append(seg);
-      const chip = el("button", "mo-chip");
-      chip.type = "button";
-      const dot = el("span", "mo-dotc");
-      dot.style.background = p.c;
-      chip.append(dot, el("span", "", p.label), el("b", "", fmtN(p.n)));
-      if (p.name) {
-        chip.title = t("Show the requests with {kind}", { kind: p.label });
-        chip.onclick = () => maskOpenRecords({ kind: p.name });
-      } else chip.disabled = true;
-      legend.append(chip);
-    }
-    sec.append(bar, legend);
-    box.append(sec);
-    if (move) bar.animate([{ clipPath: "inset(0 100% 0 0 round 99px)" }, { clipPath: "inset(0 0 0 0 round 99px)" }], { duration: 900, delay: 120, easing: "cubic-bezier(.32, .72, 0, 1)", fill: "backwards" });
-  }
+  // what the vendor saw: the newest lines, as they went
+  if (saw.length) box.append(maskSawPane(saw, move));
 
-  // what only the model found
-  if (sum.by?.model) {
-    const m = el("div", "mo-model");
-    const sp = el("span", "mo-spark");
-    sp.append(svg(SPARK, 15, 1.3));
-    const b = el("button", "text", t("Show them"));
-    b.onclick = () => maskOpenRecords({ by: "model" });
-    m.append(sp, el("span", "", t(sum.by.model === 1 ? "1 value found by the local model, which no rule recognises" : "{n} values found by the local model, which no rule recognises", { n: fmtN(sum.by.model) })), el("span", "grow"), b);
-    box.append(m);
+  // what was kept, by kind, and what found it
+  const ledger = el("div", "mo-ledger");
+  if (sum.kinds.length) {
+    const top = sum.kinds.slice(0, 6), rest = sum.kinds.slice(6);
+    const rows = top.map((k) => ({ n: k.n, c: maskColor(k.name), label: maskKindName(k.name), open: { kind: k.name }, tip: t("Show the requests with {kind}", { kind: maskKindName(k.name) }) }));
+    if (rest.length) rows.push({ n: rest.reduce((a, k) => a + k.n, 0), c: "var(--faint)", label: t("Other") });
+    ledger.append(maskLedger(t("What was kept"), "kind", rows, move));
   }
+  const by = Object.keys(MASK_BY).filter((b) => sum.by?.[b]).map((b) => ({ n: sum.by[b], label: maskByName(b), open: { by: b }, model: b === "model",
+    tip: b === "model" ? t(sum.by.model === 1 ? "1 value found by the local model, which no rule recognises" : "{n} values found by the local model, which no rule recognises", { n: fmtN(sum.by.model) }) : "" }));
+  if (by.length) ledger.append(maskLedger(t("Found by"), "by", by, move));
+  if (ledger.firstChild) box.append(ledger);
 
   // from which agents, to which providers
   if (sum.agents.length && sum.providers.length) {
@@ -22162,92 +22138,135 @@ function maskCountUp(node, n) {
   requestAnimationFrame(step);
 }
 
-// a path through the points that never overshoots them (Fritsch–Butland)
-function maskCurve(xs, ys) {
-  const n = xs.length;
-  if (n === 1) return `M${xs[0] - 1},${ys[0]}L${xs[0] + 1},${ys[0]}`;
-  const d = [], m = [];
-  for (let i = 0; i < n - 1; i++) d.push((ys[i + 1] - ys[i]) / (xs[i + 1] - xs[i]));
-  m[0] = d[0];
-  m[n - 1] = d[n - 2];
-  for (let i = 1; i < n - 1; i++) m[i] = d[i - 1] * d[i] <= 0 ? 0 : 2 / (1 / d[i - 1] + 1 / d[i]);
-  let p = `M${xs[0]},${ys[0]}`;
-  for (let i = 0; i < n - 1; i++) {
-    const h = (xs[i + 1] - xs[i]) / 3;
-    p += `C${xs[i] + h},${ys[i] + m[i] * h} ${xs[i + 1] - h},${ys[i + 1] - m[i + 1] * h} ${xs[i + 1]},${ys[i + 1]}`;
-  }
-  return p;
-}
-
-// maskChart: the values masked each day, an area under a line, the day
-// pointed at said over it. Drawn again at its width as the window resizes.
-function maskChart(box, days, move) {
-  const H = 78, top = 10, base = H - 16;
-  const s = sv("svg", { class: "mo-svg", height: H, "aria-hidden": "true" });
-  const tip = el("div", "mo-ctip");
-  tip.hidden = true;
-  box.append(s, tip);
+// maskStrip: the values masked each day, a bar a day on a hairline, today
+// in the accent; the day pointed at said over it
+function maskStrip(box, days, move) {
   const total = days.reduce((a, d) => a + d.n, 0);
   box.setAttribute("role", "img");
   box.setAttribute("aria-label", t("{n} values masked over {days} days", { n: fmtN(total), days: days.length }));
-  let xs = [], first = move;
-  const draw = () => {
-    const W = box.clientWidth;
-    if (!W || !days.length) return;
-    s.setAttribute("viewBox", `0 0 ${W} ${H}`);
-    s.setAttribute("width", W);
-    s.replaceChildren();
-    const max = Math.max(1, ...days.map((d) => d.n));
-    const pad = 4;
-    xs = days.map((_, i) => days.length < 2 ? W / 2 : pad + (i * (W - 2 * pad)) / (days.length - 1));
-    const ys = days.map((d) => base - (d.n / max) * (base - top));
-    const line = maskCurve(xs, ys);
-    const id = "moGrad" + ++maskGrad;
-    const defs = sv("defs");
-    const g = sv("linearGradient", { id, x1: 0, y1: 0, x2: 0, y2: 1 });
-    g.append(sv("stop", { offset: "0%", "stop-color": "var(--accent)", "stop-opacity": ".34" }), sv("stop", { offset: "100%", "stop-color": "var(--accent)", "stop-opacity": "0" }));
-    defs.append(g);
-    const area = sv("path", { d: `${line}L${xs.at(-1)},${base}L${xs[0]},${base}Z`, fill: `url(#${id})` });
-    const stroke = sv("path", { d: line, class: "mo-line", pathLength: 1 });
-    const end = sv("circle", { cx: xs.at(-1), cy: ys.at(-1), r: 3.2, class: "mo-dot" });
-    const fmt = (d) => d === days.at(-1).day ? t("Today") : new Date(d + "T00:00").toLocaleDateString(intlLang(), { month: "short", day: "numeric" });
-    const a0 = sv("text", { x: xs[0], y: H - 2, class: "mo-axis" });
-    a0.textContent = fmt(days[0].day);
-    const a1 = sv("text", { x: xs.at(-1), y: H - 2, class: "mo-axis", "text-anchor": "end" });
-    a1.textContent = fmt(days.at(-1).day);
-    const hover = sv("g", { class: "mo-hover", visibility: "hidden" });
-    const vl = sv("line", { y1: top - 4, y2: base });
-    const hd = sv("circle", { r: 3.2, class: "mo-dot" });
-    hover.append(vl, hd);
-    s.append(defs, sv("line", { x1: 0, x2: W, y1: base, y2: base, class: "mo-base" }), area, stroke, end, a0, a1, hover);
-    if (first) {
-      first = false;
-      stroke.style.strokeDasharray = "1";
-      stroke.animate([{ strokeDashoffset: 1 }, { strokeDashoffset: 0 }], { duration: 1200, easing: "cubic-bezier(.65, 0, .35, 1)", fill: "backwards" });
-      area.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 700, delay: 500, easing: "ease-out", fill: "backwards" });
-      end.animate([{ opacity: 0, transform: "scale(.2)" }, { opacity: 1, transform: "none" }], { duration: 420, delay: 1050, easing: "cubic-bezier(.34, 1.56, .64, 1)", fill: "backwards" });
-      end.style.transformBox = "fill-box";
-      end.style.transformOrigin = "center";
-    }
-    s.onpointermove = (e) => {
-      const x = e.clientX - s.getBoundingClientRect().left;
-      let i = 0;
-      for (let k = 1; k < xs.length; k++) if (Math.abs(xs[k] - x) < Math.abs(xs[i] - x)) i = k;
-      const d = days[i];
-      vl.setAttribute("x1", xs[i]);
-      vl.setAttribute("x2", xs[i]);
-      hd.setAttribute("cx", xs[i]);
-      hd.setAttribute("cy", ys[i]);
-      hover.setAttribute("visibility", "visible");
+  if (!days.length) return;
+  const max = Math.max(1, ...days.map((d) => d.n));
+  const bars = el("div", "mo-bars" + (days.length > 14 ? " many" : ""));
+  const tip = el("div", "mo-ctip");
+  tip.hidden = true;
+  const fmt = (d) => d === days.at(-1).day ? t("Today") : new Date(d + "T00:00").toLocaleDateString(intlLang(), { month: "short", day: "numeric" });
+  days.forEach((d, i) => {
+    const b = el("span", "mo-day" + (i === days.length - 1 ? " now" : "") + (d.n ? "" : " zero"));
+    const f = el("i");
+    if (d.n) f.style.height = Math.max(5, (100 * d.n) / max) + "%";
+    b.append(f);
+    b.onpointerenter = () => {
       tip.hidden = false;
       tip.textContent = `${fmt(d.day)} · ${t(d.n === 1 ? "1 value masked" : "{n} values masked", { n: fmtN(d.n) })} · ${t(d.requests === 1 ? "1 request" : "{n} requests", { n: fmtN(d.requests) })}`;
-      const w = tip.offsetWidth;
-      tip.style.left = Math.max(w / 2, Math.min(xs[i], W - w / 2)) + "px";
+      const w = tip.offsetWidth, W = box.clientWidth, x = b.offsetLeft + b.offsetWidth / 2;
+      tip.style.left = Math.max(w / 2, Math.min(x, W - w / 2)) + "px";
     };
-    s.onpointerleave = () => { hover.setAttribute("visibility", "hidden"); tip.hidden = true; };
-  };
-  const ro = new ResizeObserver(() => { if (!box.isConnected) return ro.disconnect(); draw(); });
-  ro.observe(box);
+    b.onpointerleave = () => { tip.hidden = true; };
+    if (move && d.n) f.animate([{ transform: "scaleY(0)" }, { transform: "none" }], { duration: 760, delay: 160 + (i * 520) / days.length, easing: "cubic-bezier(.32, .72, 0, 1)", fill: "backwards" });
+    bars.append(b);
+  });
+  const axis = el("div", "mo-axis");
+  axis.append(el("span", "", fmt(days[0].day)), el("span", "", fmt(days.at(-1).day)));
+  box.append(bars, axis, tip);
+}
+
+// maskLedger: one column of the breakdown, a row each with its count and a
+// hairline meter of its share; a row opens its records
+function maskLedger(title, kind, rows, move) {
+  const col = el("div", "mo-ledg " + kind);
+  col.append(el("div", "label", title));
+  const max = Math.max(1, ...rows.map((r) => r.n));
+  rows.forEach((r, i) => {
+    const b = el("button", "mo-row" + (r.model ? " model" : ""));
+    b.type = "button";
+    if (r.model) {
+      const sp = el("span", "mo-spark");
+      sp.append(svg(SPARK, 12, 1.3));
+      b.append(sp);
+    } else {
+      const d = el("span", "mo-dotc");
+      d.style.background = r.c || "var(--faint)";
+      b.append(d);
+    }
+    const m = el("span", "mo-meter"), f = el("i");
+    f.style.width = (100 * r.n) / max + "%";
+    if (r.c) f.style.background = r.c;
+    m.append(f);
+    b.append(el("span", "nm", r.label), el("b", "", fmtN(r.n)), m);
+    if (r.open) {
+      if (r.tip) b.title = r.tip;
+      b.onclick = () => maskOpenRecords(r.open);
+    } else b.disabled = true;
+    if (move) f.animate([{ transform: "scaleX(0)" }, { transform: "none" }], { duration: 820, delay: 360 + i * 60, easing: "cubic-bezier(.32, .72, 0, 1)", fill: "backwards" });
+    col.append(b);
+  });
+  return col;
+}
+
+// maskSnipTexts: a record's lines around its values, each piece of text
+// once where values side by side share it
+function maskSnipTexts(r) {
+  const core = (x) => x.replace(/^…|…$/g, "");
+  const all = [...new Set(Object.values(r.snips || {}))];
+  return all.filter((x, i) => !all.some((y, j) => j != i && (y.length > x.length || y.length == x.length && j < i) && y.includes(core(x))));
+}
+// the newest records, read again with the summary; their lines live in
+// memory only, so there are none after a restart
+function maskSawLoad() {
+  if (maskSawBusy || Date.now() - maskSawAt < 14000) return;
+  maskSawBusy = true;
+  api("masking/records?limit=12").then((r) => { maskSaw = r?.records || []; })
+    .catch(() => {})
+    .finally(() => { maskSawBusy = false; maskSawAt = Date.now(); drawMaskObs(); });
+}
+// up to three lines, one a record before a second from any
+function maskSawLines() {
+  const out = [], seen = new Set();
+  for (const pass of [0, 1]) for (const r of maskSaw || []) {
+    const texts = maskSnipTexts(r).filter((x) => !seen.has(x));
+    for (const text of pass ? texts : texts.slice(0, 1)) {
+      if (out.length >= 3) return out;
+      seen.add(text);
+      out.push({ text: text.replace(/\s+/g, " "), t: r.t, info: new Map((r.values || []).map((x) => [x.p, x])) });
+    }
+  }
+  return out;
+}
+// maskPlace: a placeholder as the text carried it, in its kind's colour,
+// what it stood for shown while pointed at
+function maskPlace(cls, p, x) {
+  const kind = x?.k || p.slice(2, -2).replace(/_[^_]*$/, "");
+  const mark = el("mark", cls, p);
+  mark.style.setProperty("--k", maskColor(kind));
+  mark.tabIndex = 0;
+  maskTipOn(mark, { p, kind, by: x?.b || "known" });
+  return mark;
+}
+function maskSawPane(lines, move) {
+  const pane = el("div", "mo-saw");
+  const h = el("div", "mo-lh");
+  h.append(el("span", "label", t("What the vendor saw")), el("span", "grow"), el("span", "mo-hint", ago(lines[0].t)));
+  pane.append(h);
+  let k = 0;
+  for (const x of lines) {
+    const s = el("div", "mo-snip");
+    let at = 0;
+    for (const m of x.text.matchAll(PLACEHOLDER)) {
+      s.append(document.createTextNode(x.text.slice(at, m.index)));
+      const mark = maskPlace("mo-ph", m[0], x.info.get(m[0]));
+      // a marker drawn over the value, then lifted to the placeholder
+      if (move) mark.animate([
+        { clipPath: "inset(0 100% 0 0)", backgroundColor: "var(--k)", color: "transparent" },
+        { clipPath: "inset(0 0 0 0)", backgroundColor: "var(--k)", color: "transparent", offset: .55 },
+        { clipPath: "inset(0 0 0 0)" },
+      ], { duration: 900, delay: 520 + k++ * 180, easing: "cubic-bezier(.65, 0, .35, 1)", fill: "backwards" });
+      s.append(mark);
+      at = m.index + m[0].length;
+    }
+    s.append(document.createTextNode(x.text.slice(at)));
+    pane.append(s);
+  }
+  return pane;
 }
 
 // maskFlow: the agents that sent what was masked, each a ribbon as wide
@@ -22277,41 +22296,59 @@ function maskFlow(sum, move) {
   const mid = el("div", "mo-mid");
   const rowH = 34;
   const H = Math.max(fromRows.length, toRows.length) * rowH - 4;
-  const s = sv("svg", { viewBox: `0 0 100 ${H}`, preserveAspectRatio: "none", "aria-hidden": "true" });
   const max = Math.max(...fromRows.map((r) => r.n), ...toRows.map((r) => r.n), 1);
-  const defs = sv("defs");
-  s.append(defs);
   const ys = (rows) => {
     const off = (H - (rows.length * rowH - 4)) / 2;
     return rows.map((_, i) => off + i * rowH + 15);
   };
-  const c = H / 2;
-  const ribs = [];
-  ys(fromRows).forEach((y, i) => {
-    const id = "moRib" + ++maskGrad;
-    const g = sv("linearGradient", { id, gradientUnits: "userSpaceOnUse", x1: 0, y1: 0, x2: 50, y2: 0 });
-    g.append(sv("stop", { offset: "0%", "stop-color": `var(--c${(i % 7) + 1})`, "stop-opacity": ".55" }), sv("stop", { offset: "100%", "stop-color": "var(--accent)", "stop-opacity": ".55" }));
-    defs.append(g);
-    ribs.push(sv("path", { d: `M0,${y}C28,${y} 26,${c} 50,${c}`, class: "mo-rib", stroke: `url(#${id})`, "stroke-width": 2 + (10 * fromRows[i].n) / max, "vector-effect": "non-scaling-stroke", pathLength: 1 }));
-  });
-  ys(toRows).forEach((y, i) => {
-    ribs.push(sv("path", { d: `M50,${c}C74,${c} 72,${y} 100,${y}`, class: "mo-rib out", "stroke-width": 2 + (10 * toRows[i].n) / max, "vector-effect": "non-scaling-stroke", pathLength: 1 }));
-  });
-  s.append(...ribs);
+  const c = H / 2, hubR = 19;
   const hub = el("span", "mo-hub");
   hub.append(svg(SHIELD, 16, 1.6));
   hub.title = t("Masked here, on this computer");
+  // drawn in the middle's own pixels, again as it is resized: a viewBox
+  // stretched to fit would bend the strokes and their dashes
+  const s = sv("svg", { "aria-hidden": "true" });
+  let drawnW = 0, first = true;
+  const draw = () => {
+    const W = Math.round(mid.clientWidth);
+    if (!W || W === drawnW) return;
+    drawnW = W;
+    s.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    s.replaceChildren();
+    const m = W / 2, bend = Math.max(18, (m - hubR) * .55);
+    const ribs = [];
+    const rib = (d, n, out, i) => {
+      const w = 1.5 + 5 * n / max;
+      const path = sv("path", { d, class: "mo-rib" + (out ? " out" : ""), "stroke-width": w, "stroke-opacity": (out ? .34 : .14) + .36 * n / max });
+      s.append(path);
+      ribs.push(path);
+      // what goes along it: a value as it was on the way in, a placeholder
+      // after the shield; more of them on a busier ribbon
+      if (!stillMotion()) for (let k = 0, dots = 1 + Math.round(2 * n / max); k < dots; k++) {
+        const dot = sv("circle", { r: out ? 2.2 : 1.8, class: "mo-dot" + (out ? " out" : "") });
+        const dur = 2.4 + i * .17;
+        dot.append(sv("animateMotion", { path: d, dur: dur + "s", begin: (out ? 1.2 : 0) + k * dur / dots + "s", repeatCount: "indefinite", keyPoints: "0;1", keyTimes: "0;1", calcMode: "spline", keySplines: ".45 0 .55 1" }));
+        dot.append(sv("animate", { attributeName: "opacity", values: "0;1;1;0", keyTimes: "0;.12;.85;1", dur: dur + "s", begin: (out ? 1.2 : 0) + k * dur / dots + "s", repeatCount: "indefinite" }));
+        s.append(dot);
+      }
+    };
+    ys(fromRows).forEach((y, i) => rib(`M0,${y}C${bend},${y} ${m - hubR - bend},${c} ${m - hubR},${c}`, fromRows[i].n, false, i));
+    ys(toRows).forEach((y, i) => rib(`M${m + hubR},${c}C${m + hubR + bend},${c} ${W - bend},${y} ${W},${y}`, toRows[i].n, true, i));
+    if (move && first) ribs.forEach((r, i) => {
+      // drawn in once, by its own length, then left whole
+      const len = r.getTotalLength();
+      r.style.strokeDasharray = `${len} ${len}`;
+      const out = r.classList.contains("out");
+      r.animate([{ strokeDashoffset: len }, { strokeDashoffset: 0 }], { duration: 760, delay: 380 + (out ? 520 : 0) + i * 40, easing: "cubic-bezier(.65, 0, .35, 1)", fill: "backwards" })
+        .finished.then(() => { r.style.strokeDasharray = ""; }, () => { r.style.strokeDasharray = ""; });
+    });
+    first = false;
+  };
   mid.append(s, hub);
   flow.style.height = H + "px";
   flow.append(from, mid, to);
-  if (move) {
-    ribs.forEach((r, i) => {
-      r.style.strokeDasharray = "1";
-      const out = r.classList.contains("out");
-      r.animate([{ strokeDashoffset: 1 }, { strokeDashoffset: 0 }], { duration: 760, delay: 380 + (out ? 520 : 0) + i * 40, easing: "cubic-bezier(.65, 0, .35, 1)", fill: "backwards" });
-    });
-    hub.animate([{ transform: "scale(.4)", opacity: 0 }, { transform: "none", opacity: 1 }], { duration: 520, delay: 760, easing: "cubic-bezier(.34, 1.56, .64, 1)", fill: "backwards" });
-  }
+  new ResizeObserver(draw).observe(mid);
+  if (move) hub.animate([{ transform: "scale(.4)", opacity: 0 }, { transform: "none", opacity: 1 }], { duration: 520, delay: 760, easing: "cubic-bezier(.34, 1.56, .64, 1)", fill: "backwards" });
   return flow;
 }
 
@@ -22507,10 +22544,7 @@ function maskRecordBody(r) {
     vals.append(line);
   }
   body.append(vals);
-  // values side by side share their text: each piece of it is shown once
-  const core = (x) => x.replace(/^…|…$/g, "");
-  const all = [...new Set(Object.values(r.snips || {}))];
-  const snips = all.filter((x, i) => !all.some((y, j) => j != i && (y.length > x.length || y.length == x.length && j < i) && y.includes(core(x)))).map((x) => [, x]);
+  const snips = maskSnipTexts(r).map((x) => [, x]);
   if (!snips.length) body.append(el("div", "mr-note", t("The text around them was kept in memory only, and magpie has restarted since")));
   const info = new Map((r.values || []).map((x) => [x.p, x]));
   for (const [, text] of snips) {
@@ -22518,13 +22552,7 @@ function maskRecordBody(r) {
     let at = 0;
     for (const m of text.matchAll(PLACEHOLDER)) {
       s.append(document.createTextNode(text.slice(at, m.index)));
-      const mark = el("mark", "mr-ph", m[0]);
-      const x = info.get(m[0]);
-      const kind = x?.k || m[0].slice(2, -2).replace(/_[^_]*$/, "");
-      mark.style.setProperty("--k", maskColor(kind));
-      mark.tabIndex = 0;
-      maskTipOn(mark, { p: m[0], kind, by: x?.b || "known" });
-      s.append(mark);
+      s.append(maskPlace("mr-ph", m[0], info.get(m[0])));
       at = m.index + m[0].length;
     }
     s.append(document.createTextNode(text.slice(at)));
