@@ -40,10 +40,17 @@ const streamRetries = 2
 // again on the same account before it fails: once while its stream is
 // held, which the request then asks again, or of another account — or the
 // group of its next member — and as often as a cut reply once the client
-// has the stream, when nobody asks again after it.
+// has the stream, when nobody asks again after it. A held try whose
+// reasoning went through as it came (Gemini's on the last candidate,
+// LuckymanJC on Discord) is past the request's asking again, so it is
+// asked once more here in its place.
 func emptyRetries(w http.ResponseWriter, ctx context.Context) int {
-	if h, ok := w.(*holdWriter); ok && h.mayAskAgain() || inGroupTry(ctx) {
+	h, ok := w.(*holdWriter)
+	if ok && h.mayAskAgain() || inGroupTry(ctx) {
 		return 1
+	}
+	if ok && h.thoughtOnly() {
+		return streamRetries + 1
 	}
 	return streamRetries
 }

@@ -162,7 +162,6 @@ func apiGet(u string) ([]byte, int, bool, error) {
 	req, _ := http.NewRequest("GET", u, nil)
 	req.Header.Set("User-Agent", "magpie")
 	req.Header.Set("Accept", "application/vnd.github+json")
-	token := withGitHubToken(req)
 	etags.Lock()
 	had, cached := etags.m[u]
 	etags.Unlock()
@@ -170,7 +169,7 @@ func apiGet(u string) ([]byte, int, bool, error) {
 		req.Header.Set("If-None-Match", had.etag)
 	}
 	c := &http.Client{Timeout: 20 * time.Second}
-	resp, err := source.Do(c, req)
+	resp, token, err := doGitHub(req, func(r *http.Request) (*http.Response, error) { return source.Do(c, r) })
 	if err != nil {
 		return nil, 0, token, fmt.Errorf("couldn't reach GitHub: %w", err)
 	}

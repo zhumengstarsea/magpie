@@ -197,10 +197,8 @@ func unserved(asked string) bool {
 		return false
 	}
 	id := strings.TrimSuffix(asked, "[1m]")
-	for _, e := range provider.Catalog() {
-		if e.ID == id || e.Model == id {
-			return false
-		}
+	if catalogNames.get(struct{}{}, namesInCatalog)[id] {
+		return false
 	}
 	if pid, _, ok := strings.Cut(id, "/"); ok {
 		if p, err := provider.Find(pid); err == nil && p.On() {
@@ -208,6 +206,22 @@ func unserved(asked string) bool {
 		}
 	}
 	return true
+}
+
+// catalogNames is every catalog entry's id and model id, kept by
+// provider.StampNow. unserved asks it on every request an agent sends
+// (standIn), and each one built the whole catalog to look: 2.26 GB of the
+// 9.8 GB a sandbox gateway allocated in 10 minutes of ~1,000 requests
+// (procmem heap profile), with nothing changed between them.
+var catalogNames stamped[struct{}, map[string]bool]
+
+func namesInCatalog() map[string]bool {
+	cat := provider.Catalog()
+	out := make(map[string]bool, 2*len(cat))
+	for i := range cat {
+		out[cat[i].ID], out[cat[i].Model] = true, true
+	}
+	return out
 }
 
 // switchedOff says a request for model went nowhere because p, which
@@ -325,7 +339,9 @@ type Call struct {
 	// a Codex subagent's (callKind) — "" for a turn
 	Kind string `json:"kind,omitempty"`
 	// For: the request a call of magpie's own (a web search) was made for
-	For      *CallFor          `json:"for,omitempty"`
+	For *CallFor `json:"for,omitempty"`
+	// Masked: what masking swapped in it, nil for nothing
+	Masked   *Masked           `json:"masked,omitempty"`
 	Model    string            `json:"model"`
 	Provider string            `json:"provider"`
 	From     provider.Protocol `json:"from"`
@@ -1572,7 +1588,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	// unmasked (unredactedRoute)
 	plain := body
 	var masked []byte // the masked body, when plain goes instead
-	w, body, unmask, err := redacted(w, body)
+	w, body, unmask, maskedHits, err := redactedHits(w, body)
 	defer unmask()
 	if err != nil { // fails closed: never sent unmasked
 		log.Printf("gateway: %v", err)
@@ -2265,6 +2281,13 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	if watched != nil {
 		watched.routeID = tr.ID
 	}
+	// what masking swapped, recorded for Settings → Privacy, unless the
+	// request went as written
+	if masked == nil {
+		if m := noteMasked(r, "chat", maskedHits, string(body), tr.ID, p.ID, call.Model); m != nil {
+			s.trace.update(tr, func(t *Route) { t.Masked = m })
+		}
+	}
 	// the card's text is the masked body, even where the request went
 	// unmasked
 	textBody := body
@@ -2279,6 +2302,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	wentTier := ""   // the service tier the last try went out at (noteWireTier, #1784)
 	where := ""      // the last try's provider.Where, for the usage
 	again := 0       // times the last one left has been tried again
+	fullRetries := 0 // times a transient Codex route has been tried from its first account again
+	quotaRetries := 0
+	routeTransient := true
+	routeQuota := true
 	resealed := 0    // what of the conversation another account sealed was taken out: its reasoning, then its compaction
 	repicked := 0    // times Copilot's Auto was asked again for a model the account is served
 	floored := false // the reply's length raised to what the provider takes
@@ -2379,9 +2406,13 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		// while another candidate could answer instead: the last one's
 		// refusal isn't asked again, so holding it only kept a lone relay's
 		// thinking from Claude Code and Codex until the text began, all at
-		// once (iTianbao on X). Gemini's stays held on the last one too,
-		// for a reply that only reasoned to be asked again (#667).
-		hw.thinkingShown = !refusesAfterThinking(c.model) || last && modelFamily(c.model) != ""
+		// once (iTianbao on X). Gemini's goes as it comes there too: a
+		// reply that only reasoned is asked again in place, its reasoning
+		// kept and the next try's after it (streamTranslated, #667), so
+		// holding it kept Codex on a Gemini model with nothing at all,
+		// not even response.created, for the whole of its thinking
+		// (LuckymanJC on Discord).
+		hw.thinkingShown = !refusesAfterThinking(c.model) || last
 		hw.ctx, hw.alive, hw.streams = r.Context(), kept, streams
 		report := cacheReport
 		if c.p.Account == nil || c.p.Account.Agent != "claude" {
@@ -2779,6 +2810,12 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			// ended for looping (#1359): the agent had its 200 and the
 			// stream's error; logged apart from the vendor's own errors
 			call.Status, call.Error, call.Usage.ErrType = hw.status, c.p.Name+": "+hw.looped, loopErrType
+		}
+		if !hw.passing && !wholeRouteRetryable(hw.code(), hw.errBody()) {
+			routeTransient = false
+		}
+		if !hw.passing && failure(hw.code(), hw.errBody()) != failQuota {
+			routeQuota = false
 		}
 		if wentAt = sent; at.set {
 			wentAt = at.effort
@@ -3335,6 +3372,82 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			}
 			break
 		}
+		// A Codex request can reach every account while ChatGPT's front is
+		// briefly returning EOF/502/529. The last account's short retry budget
+		// is not enough for that outage: start one fresh pass through the
+		// account pool so Codex does not need the user to press Continue.
+		if last && from == provider.Responses && c.p.ID == "codex" && len(cands) > 1 && fullRetries == 0 && routeTransient && wholeRouteRetryable(hw.code(), hw.errBody()) {
+			fullRetries++
+			routeTransient = true
+			again = 0
+			wait := retryPause << lastRetries
+			select {
+			case <-time.After(wait):
+				i = -1
+				continue
+			case <-r.Context().Done():
+				call.Status, call.Error = canceled(r.Context())
+				try.Gone = true
+				s.trace.update(tr, func(t *Route) { t.Tries[len(t.Tries)-1] = try })
+			}
+		}
+		// If every Codex account has just answered with its own quota limit,
+		// keep this Responses request alive until the first account's window
+		// renews, then make the request again from the start of the pool.
+		if last && pin == "" && from == provider.Responses && c.p.ID == "codex" && len(cands) > 1 && quotaRetries == 0 && routeQuota && !hw.passing && failure(hw.code(), hw.errBody()) == failQuota {
+			rest := s.restAfterMarked(c, hw.code(), hw.header, hw.errBody(), hw.sharedPool)
+			try.Fail, try.Rest = rest.Why, &rest
+			if back, ok := codexQuotaBack(cands); ok {
+				restartPool := false
+				for {
+					wait := time.Until(back)
+					if wait < 0 {
+						wait = 0
+					}
+					if wait > codexQuotaResumeMax {
+						break
+					}
+					try.Fail, try.Again = failQuota, wait.Milliseconds()
+					s.trace.update(tr, func(t *Route) { t.Tries[len(t.Tries)-1] = try })
+					if !pauseAlive(r.Context(), w, kept, streams, start, wait, provider.AccountChanges()) {
+						call.Status, call.Error = canceled(r.Context())
+						try.Gone = true
+						s.trace.update(tr, func(t *Route) { t.Tries[len(t.Tries)-1] = try })
+						break
+					}
+					if fresh, err := provider.Find("codex"); err == nil {
+						freshCands, freshPlan := s.plan(*fresh, model, from)
+						freshCands, freshPlan, freshSmall, freshSmallW := roomy(freshCands, freshPlan, from, body)
+						if slices.ContainsFunc(freshCands, func(x candidate) bool {
+							_, resting := restingOf(x)
+							return !resting
+						}) {
+							all = freshCands
+							cands, pl, small, smallW = probeOne(freshCands), freshPlan, freshSmall, freshSmallW
+							quotaRetries++
+							s.trace.update(tr, func(t *Route) {
+								t.Order, t.Left = freshPlan.order, freshPlan.left
+							})
+							i = -1
+							again = 0
+							routeTransient, routeQuota = true, true
+							restartPool = true
+							break
+						}
+					}
+					if next, ok := codexQuotaBack(cands); ok {
+						back = next
+						if time.Until(back) > 0 {
+							continue
+						}
+					}
+					break
+				}
+				if restartPool {
+					continue
+				}
+			}
+		}
 		// (not for one account pinned: the others weren't asked)
 		if !autoReset && pin == "" && last && other == nil && hw.failed() && !hw.passing && !hw.turnedAway && failure(hw.code(), hw.errBody()) == failQuota {
 			// everyone is out of their allowance: a Codex or Claude account
@@ -3561,6 +3674,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		t.Archive = call.archiveName()
 	})
 	call.Route = tr.ID
+	call.Masked = s.trace.maskedOf(tr)
 	s.record(call)
 	if call.To != "" {
 		rec := usage.Record{RouteID: tr.ID, Time: start, Agent: call.Agent, Via: call.Via, Provider: call.Provider, Host: where, Model: model,

@@ -113,7 +113,13 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           assert.equal(await opts.nth(1).evaluate((b) => b.classList.contains("on")), true, "On by default");
 
           const row = box.locator(".row");
-          await row.scrollIntoViewIfNeeded();
+          // scrolled to with the wheel, as a reader does: Playwright's own
+          // scroll into view is code, which the click guard puts back
+          await page.mouse.move(width / 2, 300);
+          for (let i = 0; i < 20 && await row.evaluate((r) => r.getBoundingClientRect().bottom > (document.querySelector("footer.foot")?.getBoundingClientRect().top ?? innerHeight) - 4); i++) {
+            await page.mouse.wheel(0, 200);
+            await page.waitForTimeout(80);
+          }
           await page.waitForTimeout(300);
           const fit = await row.evaluate((r) => {
             const b = r.getBoundingClientRect(), segs = r.querySelector(".val").getBoundingClientRect();

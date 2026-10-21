@@ -468,12 +468,14 @@ func (s *Server) images(edit bool) http.HandlerFunc {
 			}
 		}
 		var unmask func()
-		w, d.Prompt, unmask, err = redactedPrompt(w, d.Prompt)
+		var hits maskHits
+		w, d.Prompt, unmask, hits, err = redactedPromptHits(w, d.Prompt)
 		defer unmask()
 		if err != nil {
 			fail(http.StatusServiceUnavailable, err.Error())
 			return
 		}
+		noteMasked(r, "image", hits, d.Prompt, 0, p.ID, call.Model)
 		call.Provider, call.To = p.ID, provider.Chat
 		ctx, cancel := drawWithin(r.Context(), drawTimeout())
 		defer cancel()

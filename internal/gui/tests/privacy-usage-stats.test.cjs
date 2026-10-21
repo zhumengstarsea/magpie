@@ -55,15 +55,24 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await watchSettingsReads(page);
       await page.goto("http://magpie.test/?view=settings&tab=privacy");
       await settingsDrawn(page); // rows found are the ones that stay (#1659)
-      const row = (name) => page.locator("#redactList .row", { has: page.locator(".name", { hasText: new RegExp("^" + name + "$") }) });
-      const isOn = (name) => page.waitForFunction(([name, on]) => [...document.querySelectorAll("#redactList .row")].some((r) => r.querySelector(".name")?.textContent === name && r.querySelector(".opt.on")?.textContent === on), [name, w.on]);
-      const isOff = (name) => page.waitForFunction(([name, off]) => [...document.querySelectorAll("#redactList .row")].some((r) => r.querySelector(".name")?.textContent === name && r.querySelector(".opt.on")?.textContent === off), [name, w.off]);
+      const row = (name) => page.locator("#setPage-privacy .list .row", { has: page.locator(".name", { hasText: new RegExp("^" + name + "$") }) });
+      const isOn = (name) => page.waitForFunction(([name, on]) => [...document.querySelectorAll("#setPage-privacy .list .row")].some((r) => r.querySelector(".name")?.textContent === name && r.querySelector(".opt.on")?.textContent === on), [name, w.on]);
+      const isOff = (name) => page.waitForFunction(([name, off]) => [...document.querySelectorAll("#setPage-privacy .list .row")].some((r) => r.querySelector(".name")?.textContent === name && r.querySelector(".opt.on")?.textContent === off), [name, w.off]);
 
       // on by default, right below Count me as a user
       await isOn(w.share);
-      const names = await page.$$eval("#redactList .row .name", (ns) => ns.map((n) => n.textContent));
+      const names = await page.$$eval("#setPage-privacy .list .row .name", (ns) => ns.map((n) => n.textContent));
       assert.equal(names.indexOf(w.share), names.indexOf(w.count) + 1, names.join(" | "));
 
+      // below the card, scrolled to with the wheel as a reader does
+      const reveal = async (name) => {
+        await page.mouse.move(450, 300);
+        for (let i = 0; i < 20 && (await row(name).boundingBox()).y > 600; i++) {
+          await page.mouse.wheel(0, 200);
+          await page.waitForTimeout(80);
+        }
+      };
+      await reveal(w.share);
       await row(w.share).getByRole("button", { name: w.off, exact: true }).click();
       await isOff(w.share);
       assert.equal(saved.at(-1).noUsageStats, true, JSON.stringify(saved));
@@ -77,11 +86,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       // not counted at all: nothing to share, no switch. With personal data
       // masked, its kinds' rows put this one below the window: scrolled to
       // as a reader does, since a script doesn't scroll Settings in WebKit
-      await page.mouse.move(450, 300);
-      for (let i = 0; i < 20 && (await row(w.count).boundingBox()).y > 600; i++) {
-        await page.mouse.wheel(0, 200);
-        await page.waitForTimeout(80);
-      }
+      await reveal(w.count);
       await row(w.count).getByRole("button", { name: w.off, exact: true }).click();
       await isOff(w.count);
       await row(w.share).waitFor({ state: "detached" });

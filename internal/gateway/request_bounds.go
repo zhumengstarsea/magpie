@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
@@ -82,11 +83,13 @@ func decodedBody(r *http.Request) (io.ReadCloser, error) {
 	switch enc := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Encoding"))); enc {
 	case "", "identity":
 	case "zstd":
-		d, err := zstd.NewReader(r.Body, zstd.WithDecoderMaxMemory(defaultBodyLimit))
-		if err != nil {
+		d := bodyDecoders.Get().(*zstd.Decoder)
+		if err := d.Reset(r.Body); err != nil {
+			d.Reset(nil)
+			bodyDecoders.Put(d)
 			return nil, err
 		}
-		rd = d.IOReadCloser()
+		rd = &pooledZstd{d}
 	case "gzip", "x-gzip":
 		g, err := gzip.NewReader(r.Body)
 		if err != nil {
@@ -98,6 +101,40 @@ func decodedBody(r *http.Request) (io.ReadCloser, error) {
 	}
 	r.Header.Del("Content-Encoding")
 	return rd, nil
+}
+
+// bodyDecoders keeps zstd decoders between requests' bodies. One made for
+// each body (concurrent, the package's default) allocated its window and
+// block buffers again every time: 1.7 GB of 9.8 GB allocated in 10 minutes
+// of three Codex sessions' turns (procmem heap profile). One decodes in
+// step with its reader, as the body is read through to its end anyway, and
+// is let go with the pool's other idle ones by the garbage collector.
+var bodyDecoders = sync.Pool{New: func() any {
+	d, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxMemory(defaultBodyLimit))
+	if err != nil {
+		panic(err) // only for options it doesn't know
+	}
+	return d
+}}
+
+// pooledZstd is a body read through a pooled decoder, which goes back to
+// the pool at Close; a read after it can't reach the decoder.
+type pooledZstd struct{ d *zstd.Decoder }
+
+func (z *pooledZstd) Read(p []byte) (int, error) {
+	if z.d == nil {
+		return 0, net.ErrClosed
+	}
+	return z.d.Read(p)
+}
+
+func (z *pooledZstd) Close() error {
+	if z.d != nil {
+		z.d.Reset(nil)
+		bodyDecoders.Put(z.d)
+		z.d = nil
+	}
+	return nil
 }
 
 // Read one bounded body, decoded; callers choose their protocol's error

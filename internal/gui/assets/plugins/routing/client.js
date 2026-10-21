@@ -1890,13 +1890,15 @@ function routingPage(part) {
     log.hidden = !r;
     if (!r) return;
     const on = () => listed().filter((x) => x.id >= logR.id);
-    const head = JSON.stringify([document.documentElement.lang, !!rp, pinned?.id, r.id, r.time, r.done, !!pinned && on().length > 1, bodiesFor === r.id]);
+    const head = JSON.stringify([document.documentElement.lang, !!rp, pinned?.id, r.id, r.time, r.done, !!pinned && on().length > 1, bodiesFor === r.id, r.masked?.key, r.masked?.n]);
     if (headKey !== head) {
       headKey = head;
       logHead.replaceChildren(
         el("span", "", rp ? t("How the request at {time} was routed", { time: clock(r.time) })
-          : pinned ? t("How the request at {time} was routed", { time: clock(r.time) }) : t("How the last request was routed")),
-        el("span", "grow"));
+          : pinned ? t("How the request at {time} was routed", { time: clock(r.time) }) : t("How the last request was routed")));
+      // what masking kept from the vendor, its record a click away
+      if (r.masked?.n && !rp) logHead.append(maskedBadge(r.masked));
+      logHead.append(el("span", "grow"));
       if (!rp && r.done) {
         const usage = el("button", "text", t("View usage"));
         usage.dataset.feature = "usage"; // it opens on the Usage page

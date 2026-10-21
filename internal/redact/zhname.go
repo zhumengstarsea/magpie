@@ -87,7 +87,7 @@ func zhNameSpans(s string, person []span) []span {
 		if ok {
 			kind = "PERSON"
 		}
-		cs = append(cs, span{a, b, kind})
+		cs = append(cs, span{a, b, kind, ByModel})
 		i = b
 	}
 	// a name joined by 和, 与, 跟, 及 or 、 to one that is a name is one

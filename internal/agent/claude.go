@@ -1142,13 +1142,13 @@ func claudeIn(at place) *Agent {
 			for _, t := range claudeTiers {
 				refs = append(refs, tiers[t])
 			}
-			for i, v := range refs {
+			for _, v := range refs {
 				m, _ := tierAt(v)
 				bare := strings.TrimSuffix(m, "[1m]")
 				if v == "" || claudeModel(bare) || provider.ClaudeGroup(bare) {
 					continue
 				}
-				models = append(models, claudeBudget{id: spell(v), window: window[bare], long: strings.HasSuffix(v, "[1m]"), main: i == 0, compact: work(bare)})
+				models = append(models, claudeBudget{id: spell(v), window: window[bare], long: strings.HasSuffix(v, "[1m]"), compact: work(bare)})
 			}
 			// the one for every model else, as the variable gave it: none
 			// on a Claude main model, which Anthropic runs to its own

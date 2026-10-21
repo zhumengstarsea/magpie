@@ -3,8 +3,10 @@
 package agent
 
 import (
+	"bytes"
 	"debug/buildinfo"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -441,12 +443,48 @@ func goProgram(bin string) bool {
 	if v, ok := goPrograms.m[key]; ok {
 		return v
 	}
-	_, err = buildinfo.ReadFile(bin)
+	is := hasGoMagic(bin)
+	if is {
+		_, err = buildinfo.ReadFile(bin)
+		is = err == nil
+	}
 	if goPrograms.m == nil {
 		goPrograms.m = map[goProgramKey]bool{}
 	}
-	goPrograms.m[key] = err == nil
-	return err == nil
+	goPrograms.m[key] = is
+	return is
+}
+
+// goBuildInfoMagic begins a Go program's build info, the bytes
+// debug/buildinfo looks for.
+var goBuildInfoMagic = []byte("\xff Go buildinf:")
+
+// hasGoMagic reports whether bin holds Go's build-info magic anywhere,
+// read through a small buffer. buildinfo.ReadFile parses the binary's
+// whole symbol and string tables first: for Block's goose, a 260 MB Rust
+// program, that was 200 MB allocated on the first state the window asked
+// for, which the heap kept as room long after. A file without the magic
+// is no Go program; one with it is still asked of buildinfo.
+func hasGoMagic(bin string) bool {
+	f, err := os.Open(bin)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	n := len(goBuildInfoMagic)
+	buf := make([]byte, 256<<10)
+	kept := 0 // the last n-1 bytes of the read before, for a magic across two reads
+	for {
+		m, err := io.ReadFull(f, buf[kept:])
+		if bytes.Contains(buf[:kept+m], goBuildInfoMagic) {
+			return true
+		}
+		if err != nil {
+			return false
+		}
+		kept = n - 1
+		copy(buf, buf[len(buf)-kept:])
+	}
 }
 
 type goProgramKey struct {

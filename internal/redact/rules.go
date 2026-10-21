@@ -130,7 +130,7 @@ func customRules(in []Rule) []rule {
 		if re == nil {
 			continue
 		}
-		c := rule{kind: RuleKind(r.Kind), re: re, ok: func(v string) bool { return len(v) >= minCustomLen }}
+		c := rule{kind: RuleKind(r.Kind), yours: true, re: re, ok: func(v string) bool { return len(v) >= minCustomLen }}
 		if r.Prefix != "" {
 			c.markers = []string{r.Prefix}
 		}

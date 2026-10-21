@@ -116,14 +116,27 @@ func TestPluginPicksComeBackWithTheirList(t *testing.T) {
 	}
 
 	answers <- full
+	// the loop takes the full list in its own time (a fixed 200ms read
+	// the picks before it had, under load: #3051), so wait for its state
+	want := []string{"pool-a", "pool-b", "qoder/claude-x", "kiro/claude-y"}
+	for deadline := time.Now().Add(10 * time.Second); ; {
+		select {
+		case <-asked:
+			t.Fatal("asked again soon after a list that left nothing out")
+		case <-time.After(10 * time.Millisecond):
+		}
+		if p, err = Find("our-free-model"); err != nil {
+			t.Fatal(err)
+		}
+		if slices.Equal(p.Models, want) && len(p.Delisted) == 0 || time.Now().After(deadline) {
+			break
+		}
+	}
+	// and with the list taken, it isn't asked for again soon
 	select {
 	case <-asked:
 		t.Fatal("asked again soon after a list that left nothing out")
-	case <-time.After(200 * time.Millisecond):
-	}
-	p, err = Find("our-free-model")
-	if err != nil {
-		t.Fatal(err)
+	case <-time.After(100 * time.Millisecond):
 	}
 	if !slices.Equal(p.Models, []string{"pool-a", "pool-b", "qoder/claude-x", "kiro/claude-y"}) || len(p.Delisted) != 0 {
 		t.Fatalf("full list again: picks %v, set aside %v", p.Models, p.Delisted)

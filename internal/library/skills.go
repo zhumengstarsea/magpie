@@ -770,9 +770,7 @@ func fetch(src Source) (string, error) {
 	get := func(u string) (*http.Response, bool, error) {
 		req, _ := http.NewRequest("GET", u, nil)
 		req.Header.Set("User-Agent", "magpie")
-		token := withGitHubToken(req)
-		resp, err := source.DoOfficial(c, req)
-		return resp, token, err
+		return doGitHub(req, func(r *http.Request) (*http.Response, error) { return source.DoOfficial(c, r) })
 	}
 	if tooBig.has(src) {
 		return fetchSkillFiles(src)

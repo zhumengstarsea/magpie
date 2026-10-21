@@ -87,6 +87,27 @@ type Masker interface {
 	Writer(w http.ResponseWriter) (http.ResponseWriter, func())
 }
 
+// Hit is one value a masker swapped, told without the value: its kind,
+// the finder that found it (rule, yours, word, model or known), its
+// placeholder, and as much of it as may be kept where it may not (Head,
+// its first character or a key's prefix, and Len, how many it has).
+type Hit struct {
+	Kind, By, Placeholder, Head string
+	Len                         int
+}
+
+// Teller is a Masker that says what it masked too, for the record of
+// what was masked; one that doesn't is counted only.
+type Teller interface {
+	// JSONHits is JSON, with each value it swapped, once for each place
+	JSONHits(body []byte) ([]byte, []Hit)
+	// TextHits is Text, with each value it swapped
+	TextHits(s string) (string, []Hit)
+	// Value is the value behind a placeholder, while the masker remembers
+	// it
+	Value(placeholder string) (string, bool)
+}
+
 var (
 	mu      sync.Mutex
 	agents  []*Agent

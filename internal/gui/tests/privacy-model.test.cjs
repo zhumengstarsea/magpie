@@ -75,7 +75,7 @@ async function open(engine, lang, width, masking, model, posts) {
 // what the row shows: its words, whether they are cut, and that it is
 // inside the list
 const look = (page) => page.evaluate(() => {
-  const r = document.querySelector("#privacyModelRow"), list = document.querySelector("#redactList").getBoundingClientRect();
+  const r = document.querySelector("#privacyModelRow"), list = r.closest(".list").getBoundingClientRect();
   const sub = r.querySelector(".sub"), b = r.getBoundingClientRect(), v = r.querySelector(".val").getBoundingClientRect();
   return {
     name: r.querySelector(".name").textContent, sub: sub.textContent,
@@ -149,11 +149,18 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     assert.deepEqual(errors, []);
   });
 
-  test(`${engine}: no model row while nothing is masked, and none to turn on where it can't run`, async (t) => {
+  test(`${engine}: while nothing is masked the model row waits under Rules, and none to turn on where it can't run`, async (t) => {
     const { browser, page, errors } = await open(engine, "en", 1100, false, { supported: true, size }, []);
     t.after(() => browser.close());
     await page.locator("#redactList .row", { hasText: "Mask personal data" }).waitFor();
-    assert.equal(await page.locator("#privacyModelRow").count(), 0);
+    // How it's found: the rules first, then the model, both waiting on
+    // something to mask, with nothing to press
+    const found = await page.$$eval("#findList > .row", (rs) => rs.map((r) => [r.id, r.querySelector(".name").textContent, r.querySelector(".sub").textContent, r.querySelectorAll("button").length]));
+    assert.deepEqual(found, [
+      ["maskRulesRow", "Rules", "Turn on Mask secrets or Mask personal data first", 0],
+      ["privacyModelRow", "Find with a local model", "Turn on Mask secrets or Mask personal data first", 0],
+    ]);
+    assert.equal(await page.locator("#privacyModelRow.pm-wait").count(), 1);
     await browser.close();
 
     const two = await open(engine, "en", 1100, true, { supported: false, size }, []);

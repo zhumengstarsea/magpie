@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Clean no-update checks and expired auxiliary CI records, preserving releases.
+# Keep Actions history short and disable scheduled sync after repeated failures.
 set -euo pipefail
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
@@ -9,6 +9,7 @@ case "${1:-}" in
   --dry-run) dry_run=true ;;
   *) echo "Usage: cleanup-actions-runs.sh [--dry-run]" >&2; exit 1 ;;
 esac
+
 delete_run() {
   if [ "$dry_run" = true ]; then
     echo "Would delete run $1: $2"
@@ -18,33 +19,46 @@ delete_run() {
   fi
 }
 
-gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/release.yml/runs?status=completed&per_page=100" \
-  --jq '.workflow_runs[] | select(.status == "completed" and .conclusion == "success") | .id' > "$RUNNER_TEMP/no-update-candidates.txt"
-while IFS= read -r run_id; do
-  [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "Invalid run ID" >&2; exit 1; }
-  [ "$run_id" != "${GITHUB_RUN_ID:-}" ] || continue
-  marker=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?per_page=100" \
-    --jq '.jobs[].steps[]? | select((.name == "No upstream update" or .name == "未发现上游更新") and .conclusion == "success") | .number')
-  if [ -n "$marker" ]; then
-    delete_run "$run_id" '未发现上游更新'
+# Count the current scheduled sync failure together with the immediately
+# preceding scheduled sync failures. Manual runs and successful runs reset the
+# streak. Stop the schedule after three consecutive failures.
+if [ "${GITHUB_EVENT_NAME:-}" = schedule ] && [ "${CURRENT_SYNC_OUTCOME:-}" = failure ]; then
+  consecutive=1
+  gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/release.yml/runs?event=schedule&branch=master&status=completed&per_page=100" \
+    --jq '.workflow_runs[] | [.id, .conclusion, .updated_at] | @tsv' > "$RUNNER_TEMP/scheduled-sync-history.txt"
+  while IFS=$'\t' read -r run_id conclusion updated; do
+    [ "$run_id" != "${GITHUB_RUN_ID:-}" ] || continue
+    if [ "$conclusion" = failure ]; then
+      consecutive=$((consecutive + 1))
+    else
+      break
+    fi
+  done < "$RUNNER_TEMP/scheduled-sync-history.txt"
+  if [ "$consecutive" -ge 3 ]; then
+    if [ "$dry_run" = true ]; then
+      echo "Would disable scheduled release workflow after $consecutive consecutive failures"
+    else
+      gh api --method PUT "repos/$GITHUB_REPOSITORY/actions/workflows/release.yml/disable"
+      echo "连续 $consecutive 次定时同步失败，已停止发布工作流"
+    fi
   fi
-done < "$RUNNER_TEMP/no-update-candidates.txt"
+fi
 
-# Test/Docker/privacy-filter runs come from upstream branch synchronization.
-# Keep successful auxiliary runs for 7 days and unsuccessful ones for 30 days.
+# Keep every completed workflow run for six hours when successful and one day
+# when it failed or was cancelled. Releases and artifacts are unaffected.
 gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?status=completed&per_page=100" \
-  --jq '.workflow_runs[] | select(.status == "completed") | select(.name == "Test" or .name == "代码测试" or .name == "Docker" or .name == "Docker 镜像构建" or .name == "privacy-filter" or .name == "隐私过滤检查") | [.id, .conclusion, .updated_at] | @tsv' > "$RUNNER_TEMP/auxiliary-run-candidates.txt"
+  --jq '.workflow_runs[] | select(.status == "completed") | [.id, .conclusion, .updated_at] | @tsv' > "$RUNNER_TEMP/action-run-candidates.txt"
 now=$(date -u +%s)
 while IFS=$'\t' read -r run_id conclusion finished; do
   [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "Invalid run ID" >&2; exit 1; }
   [ "$run_id" != "${GITHUB_RUN_ID:-}" ] || continue
   case "$conclusion" in
-    success) keep_days=7 ;;
-    failure|cancelled|timed_out|action_required|neutral|skipped|stale|startup_failure) keep_days=30 ;;
+    success) keep_seconds=$((6 * 3600)); label='成功记录超过 6 小时' ;;
+    failure|cancelled|timed_out|action_required|neutral|skipped|stale|startup_failure) keep_seconds=$((24 * 3600)); label='失败记录超过 1 天' ;;
     *) continue ;;
   esac
   finished_epoch=$(date -u -d "$finished" +%s)
-  if [ "$((now - finished_epoch))" -ge "$((keep_days * 86400))" ]; then
-    delete_run "$run_id" "辅助检查记录已超过 $keep_days 天"
+  if [ "$((now - finished_epoch))" -ge "$keep_seconds" ]; then
+    delete_run "$run_id" "$label"
   fi
-done < "$RUNNER_TEMP/auxiliary-run-candidates.txt"
+done < "$RUNNER_TEMP/action-run-candidates.txt"

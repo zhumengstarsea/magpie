@@ -1256,6 +1256,7 @@ func serve() error {
 	// Codex's background app-server, restarted when it has the list from
 	// before a change and no codex session is on it
 	go agent.KeepCodexDaemonCurrent(context.Background())
+	go agent.KeepCodexRolloutsPortable(context.Background())
 	public := advertisedURL()
 	fmt.Println(green.Render("●"), "magpie gateway on", bold.Render(gateway.URL()))
 	fmt.Println(muted.Render("  OpenAI  "), public+"/v1/chat/completions", muted.Render("·"), public+"/v1/responses")

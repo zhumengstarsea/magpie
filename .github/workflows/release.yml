@@ -64,14 +64,21 @@ jobs:
         run: bash scripts/sync-upstream-branches.sh
       - name: 检查并同步上游发布
         id: sync
+        continue-on-error: true
         run: |
           export GNUPGHOME="$RUNNER_TEMP/release-gnupg"
           bash scripts/sync-upstream.sh
       - name: 清理无更新及过期检查记录
+        if: always()
+        env:
+          CURRENT_SYNC_OUTCOME: ${{ steps.sync.outcome }}
         run: bash scripts/cleanup-actions-runs.sh
       - name: 未发现上游更新
-        if: steps.sync.outputs.result == 'no-update' && steps.branches.outputs.changed != 'true'
+        if: steps.sync.outcome == 'success' && steps.sync.outputs.result == 'no-update' && steps.branches.outputs.changed != 'true'
         run: echo "未发现上游新版本，本次成功检查记录将在后续扫描中清理。"
+      - name: 保留同步失败状态
+        if: ${{ failure() || steps.sync.outcome == 'failure' }}
+        run: exit 1
       - name: 清理临时 GPG 密钥
         if: always()
         run: |

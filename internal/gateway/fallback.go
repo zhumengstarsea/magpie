@@ -935,6 +935,30 @@ func quotaHeld(cs []candidate) (Rest, time.Time, bool) {
 	return first, back, len(cs) > 0
 }
 
+// codexQuotaBack is the earliest reset of a Codex account pool whose every
+// account just answered with its usage limit. It is used only while the
+// current Responses request is still alive; other providers keep returning
+// their normal Retry-After response instead of holding a request open.
+func codexQuotaBack(cs []candidate) (time.Time, bool) {
+	var back time.Time
+	if len(cs) == 0 {
+		return time.Time{}, false
+	}
+	for _, c := range cs {
+		if c.p.ID != "codex" || c.p.Account == nil {
+			return time.Time{}, false
+		}
+		r, ok := restingOf(c)
+		if !ok || r.Why != failQuota {
+			return time.Time{}, false
+		}
+		if back.IsZero() || r.Until.Before(back) {
+			back = r.Until
+		}
+	}
+	return back, !back.IsZero()
+}
+
 // quotaStatus is a status a vendor says a key is out of its allowance with.
 func quotaStatus(status int) bool {
 	return status == http.StatusTooManyRequests || status == http.StatusPaymentRequired
@@ -1412,6 +1436,24 @@ func passing(status int, header http.Header, body []byte, again int) (time.Durat
 // answer a request of about tokens that c's model found too long: not an
 // account of c's model at c's provider, which holds it no better, nor one
 // whose window it is known to be past.
+// wholeRouteRetryable says whether a failed route may be worth asking from
+// its first candidate again. A 529 overload is transient, while a 502
+// qualifies only when it reports a transport EOF or closed connection.
+func wholeRouteRetryable(status int, body []byte) bool {
+	if status == 529 {
+		return true
+	}
+	if status != http.StatusBadGateway {
+		return false
+	}
+	s := strings.ToLower(string(body))
+	return strings.Contains(s, "eof") ||
+		strings.Contains(s, "forcibly closed") ||
+		strings.Contains(s, "connection reset") ||
+		strings.Contains(s, "connection refused") ||
+		strings.Contains(s, "wsarecv")
+}
+
 func withRoom(left []candidate, c candidate, tokens int) []candidate {
 	var out []candidate
 	for _, x := range left {
@@ -1612,6 +1654,10 @@ type holdWriter struct {
 	// thinkingShown: the model's vendor never refuses after reasoning
 	// (refusesAfterThinking), so its reasoning goes through as it comes
 	thinkingShown bool
+	// thoughtThrough: the try went through on its reasoning alone
+	// (thinkingShown) while the request could still have asked again, so
+	// an empty reply is asked again in place as often (emptyRetries)
+	thoughtThrough bool
 
 	ended bool   // the stream's last event was written: the reply is whole
 	tail  []byte // the end of the last write, for a marker split across two
@@ -2025,6 +2071,7 @@ func (h *holdWriter) scan() {
 			continue
 		case eventThinking:
 			if h.thinkingShown && !h.wantWhole {
+				h.thoughtThrough = h.hold
 				h.flow()
 				return
 			}
@@ -2338,6 +2385,14 @@ func (h *holdWriter) mayAskAgain() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.hold && !h.passing
+}
+
+// thoughtOnly tells whether the try went through on its reasoning while
+// it was still held for the request to ask again (thoughtThrough).
+func (h *holdWriter) thoughtOnly() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.thoughtThrough
 }
 
 // handBack sends a refusal held with nothing said as the vendor's own

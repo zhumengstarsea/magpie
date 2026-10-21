@@ -93,6 +93,11 @@ func fakeGitHub(t *testing.T, up *atomic.Bool, asked *atomic.Int32) {
 		if h := holding.Load(); h != nil && q.URL.Path == h.path {
 			<-h.go_
 		}
+		if q.Header.Get("Authorization") == "Bearer "+staleToken {
+			w.WriteHeader(401)
+			w.Write([]byte(`{"message":"Bad credentials"}`))
+			return
+		}
 		if !up.Load() || q.URL.Path == "/raw/someone/flaky-entry/main/index.js" {
 			http.Error(w, "down", 503)
 			return
@@ -486,6 +491,27 @@ func TestPkgEntry(t *testing.T) {
 // couldn't be read and why, not that none are tagged (till on Discord:
 // on their desktop the section wasn't there, on their server it had many).
 // One read before is kept and isn't counted.
+// staleToken is a token fakeGitHub answers 401, as GitHub does an
+// expired one.
+const staleToken = "stale-till"
+
+// till on Discord: a stale GITHUB_TOKEN in the environment, which GitHub
+// refuses, left the Plugins page's GitHub section saying "GitHub refused
+// GITHUB_TOKEN" while GitHub answered fine without it. The search is
+// asked again without the token, and the list is GitHub's.
+func TestTaggedReposStaleEnvTokenDropped(t *testing.T) {
+	var up atomic.Bool
+	var asked atomic.Int32
+	up.Store(true)
+	fakeGitHub(t, &up, &asked)
+	t.Setenv("GITHUB_TOKEN", staleToken)
+	t.Setenv("GH_TOKEN", "")
+	l, err := TaggedRepos(context.Background())
+	if err != nil || len(l) != 7 {
+		t.Fatalf("with a stale GITHUB_TOKEN: %v, %d repos", err, len(l))
+	}
+}
+
 func TestTaggedReposUnreadable(t *testing.T) {
 	var up atomic.Bool
 	var asked atomic.Int32

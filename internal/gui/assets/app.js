@@ -21704,19 +21704,26 @@ async function discoveryOffWarning() {
 
 // renderRedact: what the gateway masks before a request goes to a vendor —
 // secrets, personal data, the user's own words — and puts back in what the
-// vendor answers.
+// vendor answers. The page says it in three parts under what masking did
+// (renderMaskObs): what to mask, how it is found (the rules always, the
+// local model beside them: layered, not one or the other) and what is
+// shared.
 function renderRedact(s, keep) {
-  const box = $("#redactList");
+  const box = $("#redactList"), find = $("#findList"), share = $("#shareList");
   box.replaceChildren();
-  const row = (name, sub, ...tools) => {
+  find.replaceChildren();
+  share.replaceChildren();
+  const rowIn = (into, name, sub, ...tools) => {
     const r = el("div", "row pref");
     const who = el("div", "who");
     who.append(el("div", "name", name), el("div", "sub", sub));
     const val = el("div", "val");
     val.append(...tools);
     r.append(who, val);
-    box.append(r);
+    into.append(r);
+    return r;
   };
+  const row = (...a) => rowIn(box, ...a);
   const onOff = (on, fn) => segs([["off", t("Off")], ["on", t("On")]], on ? "on" : "off", (v) => fn(v === "on"));
   row(t("Mask secrets"), t("API keys, private keys, tokens and passwords go to vendors as placeholders, and come back as they were"),
     onOff(s.redact, (redact) => savePrefs({ ...keep, redact })));
@@ -21739,11 +21746,6 @@ function renderRedact(s, keep) {
     r.append(who, val);
     box.append(r);
   }
-  // the local model finds more of what the switches above mask
-  if (s.redact || s.redactPersonal) privacyModelRow(box);
-  // Routing's and Usage's Hide accounts, here too, where privacy is looked for
-  if (window.hideAccounts) row(t("Hide accounts"), t("Email addresses and account names on Usage and Routing are blurred, for a screenshot to share"),
-    onOff(window.hideAccounts.on(), (on) => { window.hideAccounts.set(on); renderSettings(); }));
   const words = (s.redactWords || []).join(", ");
   const i = input(words, t("names, codenames, hosts"));
   i.className = "words";
@@ -21756,11 +21758,22 @@ function renderRedact(s, keep) {
   i.onblur = save;
   row(t("Masked words"), t("Your own words to keep from vendors, separated by commas"), i);
   renderRedactRules(s, row);
-  row(t("Count me as a user"), t("Once a day, a random id for this computer with magpie's version and system"),
+  // how it is found: the rules on every request that masks anything, and
+  // the local model on top of them, for what no pattern can tell
+  const masking = s.redact || s.redactPersonal;
+  const why = t("Turn on Mask secrets or Mask personal data first");
+  const always = el("span", "static-pill" + (masking ? " on" : ""), masking ? t("Always on") : t("Off"));
+  rowIn(find, t("Rules"), masking ? t("Keys, tokens, emails and numbers whose checksum adds up: patterns that are certain, checked on every request") : why, always).id = "maskRulesRow";
+  privacyModelRow(find, masking ? "" : why);
+  // Routing's and Usage's Hide accounts, here too, where privacy is looked for
+  if (window.hideAccounts) rowIn(share, t("Hide accounts"), t("Email addresses and account names on Usage and Routing are blurred, for a screenshot to share"),
+    onOff(window.hideAccounts.on(), (on) => { window.hideAccounts.set(on); renderSettings(); }));
+  rowIn(share, t("Count me as a user"), t("Once a day, a random id for this computer with magpie's version and system"),
     onOff(!s.noStats, (on) => savePrefs({ ...keep, noStats: !on })));
   // rides on that event: nothing goes without it
-  if (!s.noStats) row(t("Share the agents, providers and models I use"), t("Sent with that event, by magpie's own ids, with how many of each, and how often each partner was shown, opened and added; a provider you added yourself is only “custom”. No names, addresses, accounts, keys or usage"),
+  if (!s.noStats) rowIn(share, t("Share the agents, providers and models I use"), t("Sent with that event, by magpie's own ids, with how many of each, and how often each partner was shown, opened and added; a provider you added yourself is only “custom”. No names, addresses, accounts, keys or usage"),
     onOff(!s.noUsageStats, (on) => savePrefs({ ...keep, noUsageStats: !on })));
+  renderMaskObs(s);
 }
 
 // privacyModelRow: the local masking model (internal/pii), downloaded when
@@ -21768,10 +21781,18 @@ function renderRedact(s, keep) {
 // (privacy-model): read when the row is drawn, and each second while it
 // downloads or starts.
 let pmState = null, pmTimer = 0;
-function privacyModelRow(box) {
-  const r = el("div", "row pref");
+function privacyModelRow(box, why) {
+  const r = el("div", "row pref" + (why ? " pm-wait" : ""));
   r.id = "privacyModelRow";
   box.append(r);
+  // nothing is masked: the model has nothing to find more of
+  if (why) {
+    clearTimeout(pmTimer);
+    const who = el("div", "who");
+    who.append(el("div", "name", t("Find with a local model")), el("div", "sub", why));
+    r.append(who);
+    return;
+  }
   let tries = 0;
   const draw = (m) => {
     if (!r.isConnected) return;
@@ -21816,6 +21837,699 @@ function pmSub(m) {
   if (m.on) return t("On: the model starts with the next request");
   if (m.installed) return t("Off. The model is downloaded ({size})", { size: fmtBytes(m.size) });
   return t("Names, addresses and passwords no rule can find, found by a model that runs on this computer. Turning it on downloads {size} once", { size: fmtBytes(m.size) });
+}
+
+// ---------- what masking swapped (maskrec) ----------
+// Settings › Privacy opens on what masking kept from vendors: how much, of
+// which kinds, found how, from which agents to which providers, over 7 or
+// 30 days (/api/masking/summary), and each request's record under it
+// (/api/masking/records). What a placeholder stood for is asked only while
+// the reader points at it (/api/masking/value): it is in this magpie's
+// memory alone, never on disk, so after a restart it is gone.
+const MASK_KINDS = {
+  API_KEY: "API keys", PRIVATE_KEY: "Private keys", TOKEN: "Tokens", PASSWORD: "Passwords", SECRET: "Secrets",
+  EMAIL: "Emails", PHONE: "Phone numbers", ID_CARD: "ID numbers", BANK_CARD: "Bank cards",
+  PERSON: "Names", ADDRESS: "Addresses", ACCOUNT: "Account numbers",
+  SSN: "SSNs", PASSPORT: "Passports", IBAN: "IBANs", BIRTHDAY: "Birthdays", MAC: "MAC addresses", SERIAL: "Serial numbers",
+  USERNAME: "User names", HOSTNAME: "Computer names", IP: "IP addresses", BUCKET: "Buckets", TERM: "Your words",
+};
+// who found a value (redact.By*)
+const MASK_BY = { rule: "Rules", yours: "Your rules", word: "Your words", model: "Local model", known: "Seen before" };
+// what a request was, beside a chat (gateway's noteMasked)
+const MASK_WHAT = { search: "Web search", image: "Image", video: "Video", decide: "System One", embeddings: "Embeddings", audio: "Audio" };
+const SHIELD = "M8 1.8 13 3.6v4.1c0 3-2.1 5.4-5 6.5-2.9-1.1-5-3.5-5-6.5V3.6Z";
+const SPARK = "M7 2.2c.5 2.9 1.4 3.8 4.3 4.3-2.9.5-3.8 1.4-4.3 4.3-.5-2.9-1.4-3.8-4.3-4.3 2.9-.5 3.8-1.4 4.3-4.3Z M12.2 10.2c.2 1.1.6 1.5 1.7 1.7-1.1.2-1.5.6-1.7 1.7-.2-1.1-.6-1.5-1.7-1.7 1.1-.2 1.5-.6 1.7-1.7Z";
+const PLACEHOLDER = /\{\{[^{}\s]{1,64}\}\}/g;
+let maskS = null;            // the settings the card was drawn with
+let maskSum = null, maskSumDays = 0, maskAt = 0, maskBusy = null, maskBusyDays = 0;
+let maskDays = 7;            // the card's span, kept per machine
+try { if (localStorage.getItem("magpie.maskDays") === "30") maskDays = 30; } catch {}
+let maskDrawn = "";          // what the card says, so a redraw that changes nothing is skipped
+let maskView = null;         // the records, while they are open
+let maskGrad = 0;
+const maskValues = new Map(); // placeholder → what it stood for, as this magpie told it
+const maskKindName = (k) => MASK_KINDS[k] ? t(MASK_KINDS[k]) : k;
+const maskByName = (b) => MASK_BY[b] ? t(MASK_BY[b]) : b;
+const stillMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+// a kind's colour is its place in the summary's ranking, so the bar, the
+// legend, the chips and the records say a kind in one colour
+function maskColor(k) {
+  let i = (maskSum?.kinds || []).findIndex((x) => x.name === k);
+  if (i < 0) { i = 0; for (const c of k || "") i = (i * 31 + c.charCodeAt(0)) >>> 0; }
+  return `var(--c${(i % 7) + 1})`;
+}
+// what a value looks like masked: what it starts with, the rest dots
+function maskShape(head, len) {
+  head = head || "";
+  const rest = Math.max(1, Math.min((len || 0) - [...head].length, 8));
+  return head + "•".repeat(rest);
+}
+// the providers' names, read once when Settings opened before any page
+// that loads them
+let maskProv = null, maskProvAsked = false;
+function maskWho(id, kind) {
+  const x = kind === "agent" ? state.agents?.find((a) => a.id === id) : (providers || maskProv)?.providers?.find((p) => p.id === id);
+  return { name: x?.name || id || t("Unknown"), icon: x?.icon };
+}
+function maskDot(k) {
+  const d = el("span", "mo-dotc");
+  d.style.background = maskColor(k);
+  return d;
+}
+function maskDayName(when) {
+  const d = new Date(when), now = new Date();
+  const days = Math.round((new Date(now.toDateString()) - new Date(d.toDateString())) / 86400000);
+  if (days === 0) return t("Today");
+  if (days === 1) return t("Yesterday");
+  return d.toLocaleDateString(intlLang(), { weekday: "short", month: "short", day: "numeric" });
+}
+
+// maskValue: what placeholder p stood for, or null where this magpie no
+// longer knows. A value it doesn't know isn't kept as such: the same value
+// masked again after a restart is known again.
+function maskValue(p) {
+  if (maskValues.has(p)) return Promise.resolve(maskValues.get(p));
+  return api("masking/value?p=" + encodeURIComponent(p)).then((r) => {
+    if (typeof r?.value !== "string") return null;
+    maskValues.set(p, r.value);
+    return r.value;
+  }).catch(() => null);
+}
+// maskTip shows what a masked value was beside it, while it is pointed at
+// or focused: its kind, who found it, and the value itself, asked for then
+let maskTipEl = null;
+function maskTip(anchor, v) {
+  maskTipOff();
+  const tip = maskTipEl = el("div", "mask-tip");
+  tip.setAttribute("role", "tooltip");
+  const k = el("div", "k");
+  k.append(maskDot(v.kind), el("span", "", maskKindName(v.kind) + " · " + maskByName(v.by)));
+  const val = el("div", "v", "…");
+  tip.append(k, val);
+  if (v.meta) tip.append(el("div", "m", v.meta));
+  document.body.append(tip);
+  const place = () => {
+    const a = anchor.getBoundingClientRect(), b = tip.getBoundingClientRect();
+    const left = Math.max(8, Math.min(a.left + a.width / 2 - b.width / 2, innerWidth - b.width - 8));
+    const above = a.top - b.height - 8;
+    tip.style.left = left + "px";
+    tip.style.top = (above > 8 ? above : a.bottom + 8) + "px";
+  };
+  place();
+  maskValue(v.p).then((s) => {
+    if (maskTipEl !== tip) return;
+    if (s === null) {
+      val.className = "v gone";
+      val.textContent = t("Not in memory: magpie has restarted since. The value itself is never written to disk");
+    } else val.textContent = s;
+    place();
+  });
+}
+function maskTipOff() {
+  maskTipEl?.remove();
+  maskTipEl = null;
+}
+function maskTipOn(anchor, v) {
+  anchor.onmouseenter = anchor.onfocus = () => maskTip(anchor, v);
+  anchor.onmouseleave = anchor.onblur = maskTipOff;
+}
+
+// maskLoad reads the summary for the days shown, when what is kept is
+// older than 10s or for other days; forced, it reads again whatever is kept
+function maskLoad(force) {
+  const days = maskDays;
+  if (maskBusy && maskBusyDays === days) return maskBusy;
+  if (!force && maskSum && maskSumDays === days && Date.now() - maskAt < 10000) return null;
+  maskBusyDays = days;
+  const p = maskBusy = api("masking/summary?days=" + days).then((sum) => {
+    if (days !== maskDays) return;
+    maskSum = { days: [], kinds: [], agents: [], providers: [], values: [], by: {}, n: 0, distinct: 0, requests: 0, ...(sum || {}) };
+    maskSumDays = days;
+    maskAt = Date.now();
+  }).catch(() => {}).finally(() => { if (maskBusy === p) maskBusy = null; });
+  return p;
+}
+
+// renderMaskObs draws the card with the summary kept, and again when a
+// fresh one is in
+function renderMaskObs(s) {
+  maskS = s;
+  if (!providers && !maskProvAsked) {
+    maskProvAsked = true;
+    api("providers").then((r) => { maskProv = r; drawMaskObs(); if (maskView) drawMaskRecs(); }).catch(() => { maskProvAsked = false; });
+  }
+  if (maskView && maskView.lang !== document.documentElement.lang) drawMaskRecs();
+  drawMaskObs();
+  maskLoad()?.then(drawMaskObs);
+}
+// while Privacy is on screen the card keeps up with requests as they go
+setInterval(() => {
+  if (view !== "settings" || setShown !== "privacy" || document.hidden || !maskS) return;
+  maskLoad(true)?.then(drawMaskObs);
+  if (maskView && !maskView.busy) maskRefreshRecs();
+}, 15000);
+
+function drawMaskObs() {
+  const box = $("#maskObs");
+  if (!box || !maskS) return;
+  const s = maskS;
+  const sum = maskSumDays === maskDays ? maskSum : null;
+  const on = !!(s.redact || s.redactPersonal);
+  const key = JSON.stringify([document.documentElement.lang, maskDays, on, sum, state.agents?.length, (providers || maskProv)?.providers?.length]);
+  if (key === maskDrawn && box.firstChild) return;
+  maskDrawn = key;
+  // it moves when it first has numbers to say, and for other days: not
+  // on every poll
+  const move = !!sum && box.dataset.drawn !== String(maskDays) && !stillMotion();
+  if (sum) box.dataset.drawn = String(maskDays);
+  maskTipOff();
+  box.replaceChildren();
+  box.classList.toggle("off", !on);
+
+  const head = el("div", "mo-head");
+  const shield = el("span", "mo-shield");
+  shield.append(svg(SHIELD, 17, 1.5));
+  const words = el("div", "mo-title");
+  words.append(el("div", "mo-name", t("Kept from vendors")),
+    el("div", "mo-sub", on ? t("Masked on this computer before each request left it, and put back in each answer") : t("Masking is off: requests go to vendors as they are")));
+  head.append(shield, words, el("span", "grow"));
+  if (sum?.requests || maskDays === 30) head.append(segs([["7", t("7 days")], ["30", t("30 days")]], String(maskDays), (v) => {
+    maskDays = +v;
+    try { localStorage.setItem("magpie.maskDays", v); } catch {}
+    maskLoad(true)?.then(drawMaskObs);
+  }));
+  box.append(head);
+  if (!sum) {
+    const sk = el("div", "mo-hero");
+    sk.append(el("span", "skeleton mo-sk-num"), el("span", "skeleton mo-sk-chart"));
+    box.append(sk);
+    return;
+  }
+  if (!sum.requests && !on) {
+    box.append(el("div", "mo-empty", t("Turn on Mask secrets or Mask personal data below, and what is kept from vendors shows here, request by request")));
+    return;
+  }
+
+  // the number, and the days under it
+  const hero = el("div", "mo-hero");
+  const count = el("div", "mo-count");
+  const big = el("div", "mo-big");
+  const num = el("span", "mo-num", fmtN(sum.n));
+  big.append(num, el("span", "mo-unit", t(sum.n === 1 ? "value masked" : "values masked")));
+  count.append(big, el("div", "mo-meta", sum.requests
+    ? t(sum.distinct === 1 ? "1 different value" : "{n} different values", { n: fmtN(sum.distinct) }) + " · " + t(sum.requests === 1 ? "1 request" : "{n} requests", { n: fmtN(sum.requests) })
+    : t("Nothing yet in these days")));
+  const chart = el("div", "mo-chart");
+  hero.append(count, chart);
+  box.append(hero);
+  maskChart(chart, sum.days, move);
+  if (move && sum.n) maskCountUp(num, sum.n);
+  if (!sum.requests) {
+    box.append(el("div", "mo-empty", t("A request that carries a key, a password or personal data shows here as it goes")));
+    return;
+  }
+
+  // what was kept, by kind
+  if (sum.kinds.length) {
+    const sec = el("div", "mo-sec");
+    sec.append(el("div", "label", t("What was kept")));
+    const bar = el("div", "mo-bar");
+    const legend = el("div", "mo-legend");
+    const top = sum.kinds.slice(0, 6), rest = sum.kinds.slice(6);
+    const parts = top.map((k) => ({ ...k, c: maskColor(k.name), label: maskKindName(k.name) }));
+    if (rest.length) parts.push({ name: "", n: rest.reduce((a, k) => a + k.n, 0), c: "var(--faint)", label: t("Other") });
+    for (const p of parts) {
+      const seg = el("span", "mo-seg");
+      seg.style.flexGrow = String(p.n);
+      seg.style.background = p.c;
+      seg.title = `${p.label} · ${fmtN(p.n)}`;
+      bar.append(seg);
+      const chip = el("button", "mo-chip");
+      chip.type = "button";
+      const dot = el("span", "mo-dotc");
+      dot.style.background = p.c;
+      chip.append(dot, el("span", "", p.label), el("b", "", fmtN(p.n)));
+      if (p.name) {
+        chip.title = t("Show the requests with {kind}", { kind: p.label });
+        chip.onclick = () => maskOpenRecords({ kind: p.name });
+      } else chip.disabled = true;
+      legend.append(chip);
+    }
+    sec.append(bar, legend);
+    box.append(sec);
+    if (move) bar.animate([{ clipPath: "inset(0 100% 0 0 round 99px)" }, { clipPath: "inset(0 0 0 0 round 99px)" }], { duration: 900, delay: 120, easing: "cubic-bezier(.32, .72, 0, 1)", fill: "backwards" });
+  }
+
+  // what only the model found
+  if (sum.by?.model) {
+    const m = el("div", "mo-model");
+    const sp = el("span", "mo-spark");
+    sp.append(svg(SPARK, 15, 1.3));
+    const b = el("button", "text", t("Show them"));
+    b.onclick = () => maskOpenRecords({ by: "model" });
+    m.append(sp, el("span", "", t(sum.by.model === 1 ? "1 value found by the local model, which no rule recognises" : "{n} values found by the local model, which no rule recognises", { n: fmtN(sum.by.model) })), el("span", "grow"), b);
+    box.append(m);
+  }
+
+  // from which agents, to which providers
+  if (sum.agents.length && sum.providers.length) {
+    const sec = el("div", "mo-sec");
+    sec.append(el("div", "label", t("From your agents, masked, to vendors")));
+    sec.append(maskFlow(sum, move));
+    box.append(sec);
+  }
+
+  // the values masked most, shown while pointed at
+  if (sum.values.length) {
+    const sec = el("div", "mo-sec");
+    const lh = el("div", "mo-lh");
+    lh.append(el("span", "label", t("Masked most")), el("span", "mo-hint", t("Point at one to see what it was")));
+    sec.append(lh);
+    const wrap = el("div", "mo-values");
+    for (const v of sum.values.slice(0, 12)) {
+      const c = el("button", "mo-val");
+      c.type = "button";
+      c.setAttribute("aria-label", maskKindName(v.kind) + " " + maskShape(v.head, v.len));
+      c.append(maskDot(v.kind), el("span", "sh", maskShape(v.head, v.len)), el("span", "x", "×" + fmtN(v.n)));
+      maskTipOn(c, { p: v.p, kind: v.kind, by: v.by, meta: t(v.requests === 1 ? "In 1 request, {when}" : "In {n} requests, most recently {when}", { n: fmtN(v.requests), when: ago(v.last) }) });
+      c.onclick = () => maskOpenRecords({ kind: v.kind });
+      wrap.append(c);
+    }
+    sec.append(wrap);
+    box.append(sec);
+  }
+
+  const foot = el("div", "mo-foot");
+  foot.append(el("span", "mo-note", t("Kept on this computer for 30 days, without the values themselves")));
+  const open = el("button", "text mo-open");
+  open.append(el("span", "", t("View records")), svg(CHEV_R, 11, 1.7));
+  open.onclick = () => maskOpenRecords({});
+  foot.append(open);
+  box.append(foot);
+  if (move) for (const [i, n] of [...box.children].slice(2).entries()) n.animate([{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], { duration: 520, delay: 160 + i * 70, easing: "cubic-bezier(.32, .72, 0, 1)", fill: "backwards" });
+}
+
+function maskCountUp(node, n) {
+  const start = performance.now(), ms = 1100;
+  const step = (now) => {
+    if (!node.isConnected) return;
+    const p = Math.min(1, (now - start) / ms);
+    const e = p === 1 ? 1 : 1 - Math.pow(2, -10 * p);
+    node.textContent = fmtN(Math.round(n * e));
+    if (p < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+// a path through the points that never overshoots them (Fritsch–Butland)
+function maskCurve(xs, ys) {
+  const n = xs.length;
+  if (n === 1) return `M${xs[0] - 1},${ys[0]}L${xs[0] + 1},${ys[0]}`;
+  const d = [], m = [];
+  for (let i = 0; i < n - 1; i++) d.push((ys[i + 1] - ys[i]) / (xs[i + 1] - xs[i]));
+  m[0] = d[0];
+  m[n - 1] = d[n - 2];
+  for (let i = 1; i < n - 1; i++) m[i] = d[i - 1] * d[i] <= 0 ? 0 : 2 / (1 / d[i - 1] + 1 / d[i]);
+  let p = `M${xs[0]},${ys[0]}`;
+  for (let i = 0; i < n - 1; i++) {
+    const h = (xs[i + 1] - xs[i]) / 3;
+    p += `C${xs[i] + h},${ys[i] + m[i] * h} ${xs[i + 1] - h},${ys[i + 1] - m[i + 1] * h} ${xs[i + 1]},${ys[i + 1]}`;
+  }
+  return p;
+}
+
+// maskChart: the values masked each day, an area under a line, the day
+// pointed at said over it. Drawn again at its width as the window resizes.
+function maskChart(box, days, move) {
+  const H = 78, top = 10, base = H - 16;
+  const s = sv("svg", { class: "mo-svg", height: H, "aria-hidden": "true" });
+  const tip = el("div", "mo-ctip");
+  tip.hidden = true;
+  box.append(s, tip);
+  const total = days.reduce((a, d) => a + d.n, 0);
+  box.setAttribute("role", "img");
+  box.setAttribute("aria-label", t("{n} values masked over {days} days", { n: fmtN(total), days: days.length }));
+  let xs = [], first = move;
+  const draw = () => {
+    const W = box.clientWidth;
+    if (!W || !days.length) return;
+    s.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    s.setAttribute("width", W);
+    s.replaceChildren();
+    const max = Math.max(1, ...days.map((d) => d.n));
+    const pad = 4;
+    xs = days.map((_, i) => days.length < 2 ? W / 2 : pad + (i * (W - 2 * pad)) / (days.length - 1));
+    const ys = days.map((d) => base - (d.n / max) * (base - top));
+    const line = maskCurve(xs, ys);
+    const id = "moGrad" + ++maskGrad;
+    const defs = sv("defs");
+    const g = sv("linearGradient", { id, x1: 0, y1: 0, x2: 0, y2: 1 });
+    g.append(sv("stop", { offset: "0%", "stop-color": "var(--accent)", "stop-opacity": ".34" }), sv("stop", { offset: "100%", "stop-color": "var(--accent)", "stop-opacity": "0" }));
+    defs.append(g);
+    const area = sv("path", { d: `${line}L${xs.at(-1)},${base}L${xs[0]},${base}Z`, fill: `url(#${id})` });
+    const stroke = sv("path", { d: line, class: "mo-line", pathLength: 1 });
+    const end = sv("circle", { cx: xs.at(-1), cy: ys.at(-1), r: 3.2, class: "mo-dot" });
+    const fmt = (d) => d === days.at(-1).day ? t("Today") : new Date(d + "T00:00").toLocaleDateString(intlLang(), { month: "short", day: "numeric" });
+    const a0 = sv("text", { x: xs[0], y: H - 2, class: "mo-axis" });
+    a0.textContent = fmt(days[0].day);
+    const a1 = sv("text", { x: xs.at(-1), y: H - 2, class: "mo-axis", "text-anchor": "end" });
+    a1.textContent = fmt(days.at(-1).day);
+    const hover = sv("g", { class: "mo-hover", visibility: "hidden" });
+    const vl = sv("line", { y1: top - 4, y2: base });
+    const hd = sv("circle", { r: 3.2, class: "mo-dot" });
+    hover.append(vl, hd);
+    s.append(defs, sv("line", { x1: 0, x2: W, y1: base, y2: base, class: "mo-base" }), area, stroke, end, a0, a1, hover);
+    if (first) {
+      first = false;
+      stroke.style.strokeDasharray = "1";
+      stroke.animate([{ strokeDashoffset: 1 }, { strokeDashoffset: 0 }], { duration: 1200, easing: "cubic-bezier(.65, 0, .35, 1)", fill: "backwards" });
+      area.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 700, delay: 500, easing: "ease-out", fill: "backwards" });
+      end.animate([{ opacity: 0, transform: "scale(.2)" }, { opacity: 1, transform: "none" }], { duration: 420, delay: 1050, easing: "cubic-bezier(.34, 1.56, .64, 1)", fill: "backwards" });
+      end.style.transformBox = "fill-box";
+      end.style.transformOrigin = "center";
+    }
+    s.onpointermove = (e) => {
+      const x = e.clientX - s.getBoundingClientRect().left;
+      let i = 0;
+      for (let k = 1; k < xs.length; k++) if (Math.abs(xs[k] - x) < Math.abs(xs[i] - x)) i = k;
+      const d = days[i];
+      vl.setAttribute("x1", xs[i]);
+      vl.setAttribute("x2", xs[i]);
+      hd.setAttribute("cx", xs[i]);
+      hd.setAttribute("cy", ys[i]);
+      hover.setAttribute("visibility", "visible");
+      tip.hidden = false;
+      tip.textContent = `${fmt(d.day)} · ${t(d.n === 1 ? "1 value masked" : "{n} values masked", { n: fmtN(d.n) })} · ${t(d.requests === 1 ? "1 request" : "{n} requests", { n: fmtN(d.requests) })}`;
+      const w = tip.offsetWidth;
+      tip.style.left = Math.max(w / 2, Math.min(xs[i], W - w / 2)) + "px";
+    };
+    s.onpointerleave = () => { hover.setAttribute("visibility", "hidden"); tip.hidden = true; };
+  };
+  const ro = new ResizeObserver(() => { if (!box.isConnected) return ro.disconnect(); draw(); });
+  ro.observe(box);
+}
+
+// maskFlow: the agents that sent what was masked, each a ribbon as wide
+// as its share into the shield, and from it to the providers it went to
+function maskFlow(sum, move) {
+  const flow = el("div", "mo-flow");
+  const side = (list, kind) => {
+    const shown = list.slice(0, 4), rest = list.slice(4);
+    const rows = shown.map((x) => ({ id: x.name, n: x.n, ...maskWho(x.name, kind) }));
+    if (rest.length) rows.push({ id: "", n: rest.reduce((a, x) => a + x.n, 0), name: t("{n} more", { n: rest.length }) });
+    const col = el("div", "mo-col " + kind);
+    for (const r of rows) {
+      const b = el("button", "mo-node");
+      b.type = "button";
+      if (r.icon) b.append(icon(r.icon));
+      b.append(el("span", "nm", r.name), el("span", "ct", fmtN(r.n)));
+      if (r.id) {
+        b.title = t("Show what {name} sent masked", { name: r.name });
+        b.onclick = () => maskOpenRecords({ [kind]: r.id });
+      } else b.disabled = true;
+      col.append(b);
+    }
+    return [col, rows];
+  };
+  const [from, fromRows] = side(sum.agents, "agent");
+  const [to, toRows] = side(sum.providers, "provider");
+  const mid = el("div", "mo-mid");
+  const rowH = 34;
+  const H = Math.max(fromRows.length, toRows.length) * rowH - 4;
+  const s = sv("svg", { viewBox: `0 0 100 ${H}`, preserveAspectRatio: "none", "aria-hidden": "true" });
+  const max = Math.max(...fromRows.map((r) => r.n), ...toRows.map((r) => r.n), 1);
+  const defs = sv("defs");
+  s.append(defs);
+  const ys = (rows) => {
+    const off = (H - (rows.length * rowH - 4)) / 2;
+    return rows.map((_, i) => off + i * rowH + 15);
+  };
+  const c = H / 2;
+  const ribs = [];
+  ys(fromRows).forEach((y, i) => {
+    const id = "moRib" + ++maskGrad;
+    const g = sv("linearGradient", { id, gradientUnits: "userSpaceOnUse", x1: 0, y1: 0, x2: 50, y2: 0 });
+    g.append(sv("stop", { offset: "0%", "stop-color": `var(--c${(i % 7) + 1})`, "stop-opacity": ".55" }), sv("stop", { offset: "100%", "stop-color": "var(--accent)", "stop-opacity": ".55" }));
+    defs.append(g);
+    ribs.push(sv("path", { d: `M0,${y}C28,${y} 26,${c} 50,${c}`, class: "mo-rib", stroke: `url(#${id})`, "stroke-width": 2 + (10 * fromRows[i].n) / max, "vector-effect": "non-scaling-stroke", pathLength: 1 }));
+  });
+  ys(toRows).forEach((y, i) => {
+    ribs.push(sv("path", { d: `M50,${c}C74,${c} 72,${y} 100,${y}`, class: "mo-rib out", "stroke-width": 2 + (10 * toRows[i].n) / max, "vector-effect": "non-scaling-stroke", pathLength: 1 }));
+  });
+  s.append(...ribs);
+  const hub = el("span", "mo-hub");
+  hub.append(svg(SHIELD, 16, 1.6));
+  hub.title = t("Masked here, on this computer");
+  mid.append(s, hub);
+  flow.style.height = H + "px";
+  flow.append(from, mid, to);
+  if (move) {
+    ribs.forEach((r, i) => {
+      r.style.strokeDasharray = "1";
+      const out = r.classList.contains("out");
+      r.animate([{ strokeDashoffset: 1 }, { strokeDashoffset: 0 }], { duration: 760, delay: 380 + (out ? 520 : 0) + i * 40, easing: "cubic-bezier(.65, 0, .35, 1)", fill: "backwards" });
+    });
+    hub.animate([{ transform: "scale(.4)", opacity: 0 }, { transform: "none", opacity: 1 }], { duration: 520, delay: 760, easing: "cubic-bezier(.34, 1.56, .64, 1)", fill: "backwards" });
+  }
+  return flow;
+}
+
+// ---- the records: each request masking changed, newest first ----
+function maskOpenRecords(filter, focus) {
+  maskTipOff();
+  maskView = { filter: { kind: "", by: "", agent: "", provider: "", ...filter }, records: [], more: false, busy: true, open: new Set(), focus: focus || 0, one: null, lang: "" };
+  $("#setPage-privacy").classList.add("recs");
+  drawMaskRecs();
+  maskFetchRecs();
+  if (focus) api("masking/record?key=" + focus)
+    .then((r) => { if (maskView?.focus === focus) { maskView.one = r; maskView.open.add(focus); drawMaskRecs(); } })
+    .catch(() => { if (maskView?.focus === focus) { maskView.one = false; drawMaskRecs(); } });
+}
+function maskCloseRecords() {
+  maskTipOff();
+  maskView = null;
+  $("#setPage-privacy").classList.remove("recs");
+  const box = $("#maskRecs");
+  box.hidden = true;
+  box.replaceChildren();
+}
+function maskQuery(before) {
+  const q = new URLSearchParams({ limit: "40" });
+  if (before) q.set("before", before);
+  for (const [k, v] of Object.entries(maskView.filter)) if (v) q.set(k, v);
+  return "masking/records?" + q;
+}
+function maskFetchRecs(more) {
+  const v = maskView;
+  v.busy = true;
+  v.error = "";
+  if (more) drawMaskRecs();
+  api(maskQuery(more ? v.records.at(-1)?.key : 0))
+    .then((r) => {
+      if (maskView !== v) return;
+      const got = r?.records || [];
+      v.records = more ? [...v.records, ...got] : got;
+      v.more = !!r?.more;
+    })
+    .catch((e) => { if (maskView === v) v.error = e.message; })
+    .finally(() => { if (maskView === v) { v.busy = false; drawMaskRecs(); } });
+}
+// new records come in over the ones shown, which keep their place
+function maskRefreshRecs() {
+  const v = maskView;
+  if (!v.records.length) return maskFetchRecs();
+  api(maskQuery(0)).then((r) => {
+    if (maskView !== v || !v.records.length) return;
+    const fresh = (r?.records || []).filter((x) => x.key > v.records[0].key);
+    if (fresh.length) { v.records = [...fresh, ...v.records]; drawMaskRecs(); }
+  }).catch(() => {});
+}
+
+function drawMaskRecs() {
+  const v = maskView, box = $("#maskRecs");
+  if (!v || !box) return;
+  v.lang = document.documentElement.lang;
+  maskTipOff();
+  box.hidden = false;
+  box.replaceChildren();
+  const head = el("div", "mr-head");
+  const back = el("button", "text mr-back");
+  back.type = "button";
+  back.append(svg("m9.5 4.5-3 3.5 3 3.5", 12, 1.7), el("span", "", t("Privacy")));
+  back.onclick = maskCloseRecords;
+  head.append(back, el("span", "mr-title", t("What was masked")));
+  box.append(head);
+
+  const sum = maskSum || {};
+  const bar = el("div", "mr-filters");
+  const pick = (key, all, title, opts) => {
+    const b = el("button", "sess-pick");
+    b.type = "button";
+    if (v.filter[key] && !opts.some((o) => o.v === v.filter[key])) opts.unshift({ v: v.filter[key], name: v.filter[key] });
+    sessPick(b, all, v.filter[key], opts, title, (val) => {
+      v.filter[key] = val || "";
+      v.focus = 0;
+      v.one = null;
+      maskFetchRecs();
+    });
+    if (v.filter[key]) b.firstChild.textContent = opts.find((o) => o.v === v.filter[key])?.name || v.filter[key];
+    bar.append(b);
+  };
+  pick("kind", "Every kind", "Kind", (sum.kinds || []).map((k) => ({ v: k.name, name: maskKindName(k.name) })));
+  pick("by", "Found by anything", "Found by", Object.keys(sum.by || {}).filter((b) => sum.by[b]).map((b) => ({ v: b, name: maskByName(b) })));
+  pick("agent", "Every agent", "Agent", (sum.agents || []).map((a) => ({ v: a.name, name: maskWho(a.name, "agent").name })));
+  pick("provider", "Every provider", "Provider", (sum.providers || []).map((p) => ({ v: p.name, name: maskWho(p.name, "provider").name })));
+  box.append(bar);
+
+  // the request a badge was clicked on, first and open
+  if (v.focus) {
+    const h = el("div", "row-head");
+    h.append(el("span", "label", t("This request")));
+    const list = el("div", "list mr-group");
+    if (v.one) list.append(maskRecordRow(v.one, v));
+    else list.append(el("div", "mr-none", v.one === false ? t("This request's record is gone: records are kept for 30 days") : t("Loading…")));
+    box.append(h, list);
+  }
+  if (v.error) box.append(el("div", "mr-none err", t(v.error)));
+  else if (!v.records.length) {
+    if (!v.busy) box.append(el("div", "mr-none", Object.values(v.filter).some(Boolean) ? t("Nothing masked matches these filters") : t("Nothing masked yet")));
+    else if (!v.focus) box.append(el("div", "mr-none", t("Loading…")));
+  }
+  let day = "", list = null;
+  for (const r of v.records) {
+    if (r.key === v.focus && v.one) continue;
+    const d = new Date(r.t).toDateString();
+    if (d !== day) {
+      day = d;
+      const h = el("div", "row-head");
+      h.append(el("span", "label", maskDayName(r.t)));
+      list = el("div", "list mr-group");
+      box.append(h, list);
+    }
+    list.append(maskRecordRow(r, v));
+  }
+  if (v.more) {
+    const more = el("button", "text mr-more", v.busy ? t("Loading…") : t("Load more"));
+    more.disabled = v.busy;
+    more.onclick = () => maskFetchRecs(true);
+    box.append(more);
+  }
+}
+
+function maskRecordRow(r, v) {
+  const item = el("div", "mr-item");
+  const row = el("button", "mr-row");
+  row.type = "button";
+  const chev = el("span", "mr-chev");
+  chev.append(svg(CHEV_R, 11, 1.6));
+  const when = el("span", "mr-time", new Date(r.t).toLocaleTimeString(intlLang(), { hour: "2-digit", minute: "2-digit" }));
+  const route = el("span", "mr-route");
+  const a = maskWho(r.agent, "agent"), p = maskWho(r.provider, "provider");
+  if (r.agent) {
+    if (a.icon) route.append(icon(a.icon));
+    route.append(el("span", "who", a.name), el("span", "arrow", "→"));
+  }
+  if (p.icon && r.provider) route.append(icon(p.icon));
+  route.append(el("span", "who", r.provider ? p.name : t("A vendor")));
+  if (r.model) route.append(el("span", "model", "· " + r.model));
+  if (r.what && r.what !== "chat") route.append(el("span", "what", MASK_WHAT[r.what] ? t(MASK_WHAT[r.what]) : r.what));
+  const kinds = el("span", "mr-kinds");
+  const by = {};
+  for (const x of r.values || []) by[x.k] = (by[x.k] || 0) + (x.n || 1);
+  const ranked = Object.entries(by).sort((x, y) => y[1] - x[1]);
+  for (const [k, n] of ranked.slice(0, 3)) {
+    const c = el("span", "mr-kind");
+    c.append(maskDot(k), el("span", "", maskKindName(k)), el("b", "", "×" + fmtN(n)));
+    kinds.append(c);
+  }
+  if (ranked.length > 3) kinds.append(el("span", "mr-kind more", "+" + (ranked.length - 3)));
+  const n = el("span", "mr-n", fmtN(r.n));
+  n.title = t(r.n === 1 ? "1 value masked" : "{n} values masked", { n: fmtN(r.n) });
+  row.append(chev, when, route, kinds, n);
+  item.append(row);
+  const set = (open) => {
+    item.classList.toggle("open", open);
+    row.setAttribute("aria-expanded", String(open));
+  };
+  set(v.open.has(r.key));
+  if (v.open.has(r.key)) item.append(maskRecordBody(r));
+  row.onclick = () => {
+    const open = !v.open.has(r.key);
+    if (open) v.open.add(r.key); else v.open.delete(r.key);
+    set(open);
+    maskTipOff();
+    const had = item.querySelector(".mr-body");
+    if (!open) { if (had) sheet(had, false, () => had.remove()); return; }
+    had?.remove();
+    const body = maskRecordBody(r);
+    item.append(body);
+    sheet(body, true);
+  };
+  return item;
+}
+
+// maskRecordBody: each value the request had masked, and the text around
+// it as the vendor saw it, each placeholder showing what it was while it is
+// pointed at
+function maskRecordBody(r) {
+  const body = el("div", "mr-body");
+  const vals = el("div", "mr-vals");
+  for (const x of r.values || []) {
+    const line = el("div", "mr-val");
+    const shape = el("span", "mr-shape" + (x.known ? " known" : ""), maskShape(x.h, x.l));
+    if (x.known) {
+      shape.tabIndex = 0;
+      maskTipOn(shape, { p: x.p, kind: x.k, by: x.b });
+    }
+    line.append(maskDot(x.k), el("span", "mr-k", maskKindName(x.k)), shape, el("span", "mr-by" + (x.b === "model" ? " model" : ""), maskByName(x.b)));
+    if (x.n > 1) line.append(el("span", "mr-x", "×" + fmtN(x.n)));
+    vals.append(line);
+  }
+  body.append(vals);
+  // values side by side share their text: each piece of it is shown once
+  const core = (x) => x.replace(/^…|…$/g, "");
+  const all = [...new Set(Object.values(r.snips || {}))];
+  const snips = all.filter((x, i) => !all.some((y, j) => j != i && (y.length > x.length || y.length == x.length && j < i) && y.includes(core(x)))).map((x) => [, x]);
+  if (!snips.length) body.append(el("div", "mr-note", t("The text around them was kept in memory only, and magpie has restarted since")));
+  const info = new Map((r.values || []).map((x) => [x.p, x]));
+  for (const [, text] of snips) {
+    const s = el("div", "mr-snip");
+    let at = 0;
+    for (const m of text.matchAll(PLACEHOLDER)) {
+      s.append(document.createTextNode(text.slice(at, m.index)));
+      const mark = el("mark", "mr-ph", m[0]);
+      const x = info.get(m[0]);
+      const kind = x?.k || m[0].slice(2, -2).replace(/_[^_]*$/, "");
+      mark.style.setProperty("--k", maskColor(kind));
+      mark.tabIndex = 0;
+      maskTipOn(mark, { p: m[0], kind, by: x?.b || "known" });
+      s.append(mark);
+      at = m.index + m[0].length;
+    }
+    s.append(document.createTextNode(text.slice(at)));
+    body.append(s);
+  }
+  return body;
+}
+
+// maskedBadge: what masking swapped in one request (gateway's Masked), for
+// Recent calls and the Routing page; it opens that request's record
+function maskedBadge(m) {
+  const b = el("button", "mask-badge");
+  b.type = "button";
+  b.append(svg(SHIELD, 11, 1.7), el("span", "", fmtN(m.n)));
+  const kinds = Object.entries(m.kinds || {}).sort((x, y) => y[1] - x[1]).map(([k, n]) => `${maskKindName(k)} ${n}`).join(", ");
+  b.title = t(m.n === 1 ? "1 value masked before it went to the vendor: {kinds}" : "{n} values masked before it went to the vendor: {kinds}", { n: fmtN(m.n), kinds });
+  b.setAttribute("aria-label", b.title);
+  b.onclick = (e) => { e.stopPropagation(); openMaskRecord(m.key); };
+  b.onkeydown = (e) => e.stopPropagation(); // Enter on it isn't the row's
+  return b;
+}
+function openMaskRecord(key) {
+  openSettings();
+  if (mode !== "window") return;
+  setSetTab("privacy", true);
+  maskOpenRecords({}, key);
 }
 
 function renderOTel(s, keep) {

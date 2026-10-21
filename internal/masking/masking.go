@@ -7,6 +7,7 @@ package masking
 import (
 	"net/http"
 
+	"github.com/yetone/magpie/internal/gwmw"
 	"github.com/yetone/magpie/internal/pii"
 	"github.com/yetone/magpie/internal/redact"
 	"github.com/yetone/magpie/internal/settings"
@@ -50,9 +51,44 @@ func (Masker) JSON(body []byte) ([]byte, int) {
 
 func (Masker) Text(s string) (string, int) { return redact.Mask(s, options()) }
 
+// JSONHits is JSON, with what it masked (gwmw.Teller).
+func (Masker) JSONHits(body []byte) ([]byte, []gwmw.Hit) {
+	o := options()
+	if !o.Secrets && !o.Personal && len(o.Words) == 0 {
+		return body, nil
+	}
+	var hits []gwmw.Hit
+	o.Seen = told(&hits)
+	out, _ := redact.MaskJSON(body, o)
+	return out, hits
+}
+
+// TextHits is Text, with what it masked.
+func (Masker) TextHits(s string) (string, []gwmw.Hit) {
+	o := options()
+	var hits []gwmw.Hit
+	o.Seen = told(&hits)
+	out, _ := redact.Mask(s, o)
+	return out, hits
+}
+
+func (Masker) Value(p string) (string, bool) { return redact.Value(p) }
+
+// told adds each value masked to hits, with its hint: the value itself
+// stays in redact's memory.
+func told(hits *[]gwmw.Hit) func(redact.Hit) {
+	return func(h redact.Hit) {
+		v, _ := redact.Value(h.Placeholder)
+		head, n := redact.Hint(h.Kind, v)
+		*hits = append(*hits, gwmw.Hit{Kind: h.Kind, By: h.By, Placeholder: h.Placeholder, Head: head, Len: n})
+	}
+}
+
 func (Masker) Restore(s string, escaped bool) string { return redact.Restore(s, escaped) }
 
 func (Masker) Writer(w http.ResponseWriter) (http.ResponseWriter, func()) {
 	rw := redact.NewWriter(w)
 	return rw, rw.Finish
 }
+
+var _ gwmw.Teller = Masker{}

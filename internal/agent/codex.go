@@ -1118,6 +1118,12 @@ func codexIn(at place) *Agent {
 			}
 			dropList()
 			forget(at.key("codex.model"), at.key("codex.effort"), at.key("codex.provider"), at.key("codex.catalog"))
+			// its threads go on without magpie: the compactions magpie made
+			// in them written as Codex's own (a distro's Codex locks its
+			// files where this machine's locks can't reach)
+			if at.spell == nil {
+				portCodexHome(dir, codexPortUnwire)
+			}
 			return settle()
 		},
 		// signed in with ChatGPT, Codex reaches magpie by the base URL with

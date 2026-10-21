@@ -35,6 +35,7 @@ func (k *keyed) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func fresh(t *testing.T) {
 	t.Helper()
+	codexQuotaResumeMax = 0
 	home := t.TempDir() // no agent signed in
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home) // Windows finds the home there

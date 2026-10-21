@@ -285,13 +285,12 @@ func getURLFrom(ctx context.Context, url string, limit int64, mirror bool) ([]by
 	}
 	// Bun's newest release is asked of GitHub's API: with the user's
 	// GitHub token, as every request magpie makes to it is (#1942)
-	ghtoken.Authorize(req, githubAPI)
-	var res *http.Response
-	if mirror {
-		res, err = source.Do(http.DefaultClient, req)
-	} else {
-		res, err = source.DoOfficial(http.DefaultClient, req)
-	}
+	res, _, err := ghtoken.Do(req, githubAPI, func(r *http.Request) (*http.Response, error) {
+		if mirror {
+			return source.Do(http.DefaultClient, r)
+		}
+		return source.DoOfficial(http.DefaultClient, r)
+	})
 	if err != nil {
 		return nil, err
 	}

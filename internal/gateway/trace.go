@@ -89,12 +89,15 @@ type Route struct {
 	Order    []Weighed    `json:"order"`              // who was to try it, first first
 	Left     []Weighed    `json:"left,omitempty"`
 	Tries    []Try        `json:"tries"`
-	Done     bool         `json:"done"`
-	Status   int          `json:"status,omitempty"`
-	Error    string       `json:"error,omitempty"`
-	Millis   int64        `json:"ms,omitempty"`
-	Tokens   int          `json:"tokens,omitempty"`
-	Output   int          `json:"out,omitempty"` // of Tokens, the reply's
+	// Masked: what masking swapped in the request before it went, nil
+	// for nothing (noteMasked)
+	Masked *Masked `json:"masked,omitempty"`
+	Done   bool    `json:"done"`
+	Status int     `json:"status,omitempty"`
+	Error  string  `json:"error,omitempty"`
+	Millis int64   `json:"ms,omitempty"`
+	Tokens int     `json:"tokens,omitempty"`
+	Output int     `json:"out,omitempty"` // of Tokens, the reply's
 	// Reasoning: of Output, the reply's reasoning, which its speed leaves
 	// out (usage.DecodeOf)
 	Reasoning int `json:"reasoning,omitempty"`
@@ -624,6 +627,16 @@ func (t *trace) trim() {
 }
 
 // update changes a route under the lock.
+// maskedOf is r's Masked, read under the lock.
+func (t *trace) maskedOf(r *Route) *Masked {
+	if r == nil {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return r.Masked
+}
+
 func (t *trace) update(r *Route, f func(r *Route)) {
 	if r == nil {
 		return

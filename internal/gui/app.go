@@ -375,6 +375,10 @@ func Run(version string, showMain bool, link string) error {
 					log.Println("codex failover:", err)
 				}
 			}
+			// the compactions magpie made in Codex's threads written as
+			// Codex's own, for the threads no Codex has open: with magpie
+			// gone they still go on (LukeMa on X)
+			agent.PortCodexRollouts(3 * time.Second)
 			updates.install(false)
 		},
 		// Wails exits on some webview errors; say why before it does.
