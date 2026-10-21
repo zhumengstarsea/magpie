@@ -137,6 +137,41 @@ const providerUsage = `usage:
        magpie provider set my-relay id=relay   (renames it: groups and agents on my-relay/… move to relay/…)
                                    (family: a tag for which agents are shown its models, see magpie visible)`
 
+// keyColumn is what magpie providers says of p's key or account.
+func keyColumn(p provider.Provider) string {
+	switch {
+	case p.Off:
+		return faint.Render("○ switched off")
+	case p.Account != nil && signedOut(p):
+		// every account in use refused: listed to be signed in again,
+		// as the app's row says, never "signed in"
+		return amber.Render("○ "+p.Account.User+" is signed out") + muted.Render(" · sign in again")
+	case p.Account != nil:
+		return green.Render("●") + " " + muted.Render("signed in as "+p.Account.User)
+	case p.IsVertex() && !p.Ready():
+		// no project an address can be made of (providers.json edited
+		// by hand): nothing is asked, as the app's row says
+		return amber.Render("○ needs a project")
+	case p.IsVertex():
+		// no key: a token minted from the user's Google credentials,
+		// traded for a service account's when it impersonates one
+		who := "Google credentials"
+		if p.Vertex != nil && p.Vertex.Impersonate != "" {
+			who += " as " + p.Vertex.Impersonate
+		}
+		return green.Render("●") + " " + muted.Render(who)
+	case p.Key != "":
+		return green.Render("●") + " " + muted.Render(provider.Mask(p.Key))
+	case p.Ready():
+		return green.Render("●") + " " + muted.Render("no key needed")
+	default:
+		return amber.Render("○ no key")
+	}
+}
+
+// signedOut is Provider.SignedOut, for a test to stand in for.
+var signedOut = provider.Provider.SignedOut
+
 // providers: `magpie providers`
 func providers() error {
 	all := provider.All()
@@ -159,30 +194,7 @@ func providers() error {
 		if p.Preset == "" && p.Account == nil {
 			r.name += " " + faint.Render("custom")
 		}
-		switch {
-		case p.Off:
-			r.key = faint.Render("○ switched off")
-		case p.Account != nil:
-			r.key = green.Render("●") + " " + muted.Render("signed in as "+p.Account.User)
-		case p.IsVertex() && !p.Ready():
-			// no project an address can be made of (providers.json edited
-			// by hand): nothing is asked, as the app's row says
-			r.key = amber.Render("○ needs a project")
-		case p.IsVertex():
-			// no key: a token minted from the user's Google credentials,
-			// traded for a service account's when it impersonates one
-			who := "Google credentials"
-			if p.Vertex != nil && p.Vertex.Impersonate != "" {
-				who += " as " + p.Vertex.Impersonate
-			}
-			r.key = green.Render("●") + " " + muted.Render(who)
-		case p.Key != "":
-			r.key = green.Render("●") + " " + muted.Render(provider.Mask(p.Key))
-		case p.Ready():
-			r.key = green.Render("●") + " " + muted.Render("no key needed")
-		default:
-			r.key = amber.Render("○ no key")
-		}
+		r.key = keyColumn(p)
 		n := len(p.Exposed())
 		if t, ok := p.Listed(); ok {
 			r.models = fmt.Sprintf("%d of %d models", n, len(p.Available())) + muted.Render(" · fetched "+ago(t))

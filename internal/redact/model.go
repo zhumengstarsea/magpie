@@ -1,6 +1,7 @@
 package redact
 
 import (
+	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -88,18 +89,61 @@ func isSpace(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\
 // modelTakes says v is masked as the model's kind: a secret as long as the
 // rules ask of one, never an id a vendor or a tool made (req_…, toolu_…,
 // call_…), which the agent and the vendor match against another; a name
-// of two letters at least.
+// of two letters at least, and never a snake_case word. The model took
+// Codex's sequential_cutoff for a name, and a value the vendor checks
+// against its own list went as a placeholder: 400 on every request until
+// the local model was turned off (#3144). Such a word is a protocol's or a
+// program's, wherever it is: a setting, a tool's argument, code.
 func modelTakes(kind, v string) bool {
 	switch kind {
 	case "SECRET":
-		return len(v) >= 8 && !madeID(v)
+		return len(v) >= 8 && !madeID(v) && !namesThing(v)
 	case "PERSON":
-		return utf8.RuneCountInString(v) >= 2 && strings.IndexFunc(v, unicode.IsLetter) >= 0
+		return utf8.RuneCountInString(v) >= 2 && strings.IndexFunc(v, unicode.IsLetter) >= 0 && !snakeWord(v)
 	case "ACCOUNT":
 		return !madeID(v)
+	case "EMAIL":
+		// as the rule's: a file's name (icon@2x.png) or an example's is no address
+		return !strings.Contains(v, "@") || realEmail(v)
 	}
 	return true
 }
+
+// snakeWord says v is ASCII letters and digits joined by underscores
+// (sequential_cutoff, list_threads, mcp__codex_app).
+func snakeWord(v string) bool {
+	if !strings.Contains(v, "_") || strings.Trim(v, "_") == "" {
+		return false
+	}
+	for _, c := range v {
+		if !(c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// namesThing says v, which the model took for a secret, names a thing
+// rather than unlocking one: a UUID (a session's, a turn's, a request's;
+// window_id's has a :0 after it), a digest with its algorithm's name
+// (sha256 9b74…), a file's path. The model takes all three for secrets;
+// Codex's turn metadata went as {{SECRET_…}} in each id (#1977). A key or
+// a password in a field named for one is still the rules' (secretNames).
+func namesThing(v string) bool {
+	if u, n, ok := strings.Cut(v, ":"); ok && n != "" && strings.Trim(n, digits) == "" {
+		v = u
+	}
+	if uuidRe.MatchString(v) || digestRe.MatchString(v) {
+		return true
+	}
+	return !strings.ContainsAny(v, " \t\n") && (strings.HasPrefix(v, "/") || strings.HasPrefix(v, "~/") ||
+		strings.HasPrefix(v, "./") || strings.HasPrefix(v, "../") || len(v) > 3 && v[1] == ':' && v[2] == '\\')
+}
+
+var (
+	uuidRe   = regexp.MustCompile(`^(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	digestRe = regexp.MustCompile(`^(?i)(?:md5|sha-?(?:1|224|256|384|512)|blake2b?|blake3)[ :=-]+[0-9a-f]{32,128}$`)
+)
 
 // madeID says v is an id of the shape vendors and tools give theirs: a
 // short lower-case prefix, an underscore, then letters and digits

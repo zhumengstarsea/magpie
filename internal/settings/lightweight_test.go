@@ -2,16 +2,24 @@ package settings
 
 import "testing"
 
-// Lightweight mode (#580) is on for a user who never chose, and kept off
-// for one who turned it off; it is saved and read back, and is this
-// computer's own: a sync or a restored backup keeps it as it is here.
+// Lightweight mode (#580) is off for a user who never chose (the owner,
+// 10-21: too slow to have by default), on for one who turned it on, and
+// kept off for one who turned it off; it is saved and read back, and is
+// this computer's own: a sync or a restored backup keeps it as it is here.
 func TestLightweightKeptAndOwn(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	if !Load().LightweightOn() {
-		t.Fatal("off for a user who never chose")
+	if Load().LightweightOn() {
+		t.Fatal("on for a user who never chose")
 	}
 	off, on := false, true
 	s := Load()
+	s.Lightweight = &on
+	if err := Save(s); err != nil {
+		t.Fatal(err)
+	}
+	if !Load().LightweightOn() {
+		t.Fatal("turned on, but read back off")
+	}
 	s.Lightweight = &off
 	if err := Save(s); err != nil {
 		t.Fatal(err)

@@ -1542,6 +1542,10 @@ func claudeModel(model string) bool {
 	return strings.HasPrefix(m, "claude") || bedrockClaude(m)
 }
 
+// ClaudeModel is claudeModel for another package: whether model, after any
+// vendor prefix, is one of Anthropic's Claude models by its name.
+func ClaudeModel(model string) bool { return claudeModel(model) }
+
 // openAIModel is whether model is one of OpenAI's own by its name: a GPT,
 // a Codex or an o-series model, after any vendor prefix.
 func openAIModel(model string) bool {

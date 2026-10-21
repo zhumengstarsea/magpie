@@ -171,6 +171,11 @@ func readBoundedRequestBody(w http.ResponseWriter, r *http.Request, limits reque
 		}
 		return reject(http.StatusBadRequest, err)
 	}
+	// the wire length is the body's length only when it is sent as it is
+	declared := r.ContentLength
+	if enc := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Encoding"))); enc != "" && enc != "identity" {
+		declared = -1
+	}
 	original := r.Body
 	r.Body = &idleBody{original, controller, limits.readTimeout}
 	defer func() { r.Body = original }()
@@ -182,8 +187,8 @@ func readBoundedRequestBody(w http.ResponseWriter, r *http.Request, limits reque
 		return readFailure(err)
 	}
 	defer rd.Close()
-	// Limit decoded bytes as well, without allocating from Content-Length.
-	body, err := io.ReadAll(io.LimitReader(rd, limits.body+1))
+	// Limit decoded bytes as well.
+	body, err := readSized(io.LimitReader(rd, limits.body+1), declared)
 	if int64(len(body)) > limits.body {
 		return reject(http.StatusRequestEntityTooLarge, overLimit(limits.body))
 	}
@@ -191,6 +196,56 @@ func readBoundedRequestBody(w http.ResponseWriter, r *http.Request, limits reque
 		return readFailure(err)
 	}
 	return body, 0, nil
+}
+
+// sizedReadFirst is the most readSized sets aside before a byte has come:
+// a client that says more than it sends makes magpie hold no more than
+// this, or twice what it sent.
+const sizedReadFirst = 1 << 20
+
+// readSized reads r to its end into a slice the size the client declared,
+// when it declared one (declared > 0): io.ReadAll reads into chunks and
+// copies them into a slice of their sum, two copies of every body, and an
+// agent sends its whole conversation, ~1 MB, on every turn (yg6888 on X:
+// ~1 GB). Content-Length is not trusted for the allocation: room grows by
+// doubling, from sizedReadFirst, up to what was declared, so an honest body
+// of 1 MB or less is read into one slice of its own size, a larger one into
+// a final slice of its own size, and a body shorter than it said costs at
+// most about twice what it sent. A body longer than it said reads on, as
+// io.ReadAll would. The error is io.ReadAll's: nil at io.EOF.
+func readSized(r io.Reader, declared int64) ([]byte, error) {
+	if declared <= 0 {
+		return io.ReadAll(r)
+	}
+	b := make([]byte, 0, min(declared, sizedReadFirst))
+	for {
+		if len(b) == cap(b) {
+			if int64(len(b)) >= declared {
+				// all it said has come: look for its end before growing
+				var probe [512]byte
+				n, err := r.Read(probe[:])
+				if n > 0 {
+					b = append(b, probe[:n]...)
+				}
+				if err == io.EOF {
+					return b, nil
+				}
+				if err != nil {
+					return b, err
+				}
+				continue
+			}
+			b = append(make([]byte, 0, min(int64(cap(b))*2, declared)), b...)
+		}
+		n, err := r.Read(b[len(b):cap(b)])
+		b = b[:len(b)+n]
+		if err == io.EOF {
+			return b, nil
+		}
+		if err != nil {
+			return b, err
+		}
+	}
 }
 
 // overLimit says a body is over magpie's own limit, and that it is

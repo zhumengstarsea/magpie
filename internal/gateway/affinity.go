@@ -320,11 +320,8 @@ func saveSticks() {
 // turnOf counts the user's turns in a request's conversation, and says
 // whether it is the agent handing tool results back within one.
 func turnOf(from provider.Protocol, body []byte) (turn int, within bool) {
-	req, err := parse(from, body)
-	if err != nil {
-		return 0, false
-	}
-	return turnIn(req)
+	f := factsOf(from, body)
+	return f.turn, f.within
 }
 
 // turnIn is turnOf for a request already parsed. The last of the user's

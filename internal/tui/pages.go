@@ -729,6 +729,9 @@ func localAddressAsk(pr provider.PresetDef, crumbs []string, now string, then fu
 // listError is provider.Provider.ListError; tests stand in for it.
 var listError = provider.Provider.ListError
 
+// signedOut is Provider.SignedOut, for a test to stand in for.
+var signedOut = provider.Provider.SignedOut
+
 func (m model) viewProviders() string {
 	var b strings.Builder
 	b.WriteString(m.header())
@@ -750,6 +753,9 @@ func (m model) viewProviders() string {
 		switch {
 		case p.Off:
 			r.key = "○ switched off"
+		case p.Account != nil && signedOut(p):
+			// every account in use refused, as magpie providers says it
+			r.key = "○ " + p.Account.User + " is signed out"
 		case p.Account != nil:
 			r.key = "● " + p.Account.User
 		case p.IsVertex() && !p.Ready():

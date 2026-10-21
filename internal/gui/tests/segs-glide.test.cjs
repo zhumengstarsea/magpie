@@ -132,8 +132,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const errors = [];
         // WebKit's notice of a ResizeObserver loop is no error of the page's
         page.on("pageerror", (e) => { if (!/ResizeObserver loop/.test(e.message)) errors.push(e.message); });
-        // turned off by the user, so On is a glide away (it is on for one
-        // who never chose)
+        // turned off by the user, so On is a glide away
         const st = { lightweight: false }, ctl = { hold: 0, refuse: false };
         await page.route("**/*", serve(lang, st, ctl));
         // opened on another tab: General is drawn while hidden

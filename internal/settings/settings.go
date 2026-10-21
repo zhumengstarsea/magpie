@@ -371,8 +371,9 @@ type Settings struct {
 	// Lightweight lets the webview of a window closed — the tray panel or
 	// the main window — go once it has stayed closed a while, and makes it
 	// again when it is opened (#580): less memory, a moment's wait. This
-	// computer's own (KeepOwn). Nil is on: a user who never chose has it,
-	// one who turned it off keeps it off (LightweightOn).
+	// computer's own (KeepOwn). Nil is off: a window made again on each
+	// opening was too slow to have by default (the owner, 10-21: "太卡");
+	// one who turned it on keeps it on (LightweightOn).
 	Lightweight *bool `json:"lightweight,omitempty"`
 	// KeepAwake keeps this computer from going to sleep by itself while
 	// agents work through the gateway and for a while after (xiao_wang24004
@@ -968,11 +969,12 @@ func CarryPerModel(in, cur *Settings) {
 // models that can take more.
 const WorkingWindow = 272000
 
-// LightweightOn says whether lightweight mode is on: unless the user
-// turned it off. A hidden webview kept for good holds what its page drew
-// while hidden, which grew ~20 MB a minute on Windows under steady
-// requests (#2515).
-func (s Settings) LightweightOn() bool { return s.Lightweight == nil || *s.Lightweight }
+// LightweightOn says whether lightweight mode is on: only when the user
+// turned it on. It was on for a user who never chose, since a hidden
+// webview kept for good holds what its page drew while hidden (~20 MB a
+// minute on Windows under steady requests, #2515), but each opening then
+// waited for the page to load again.
+func (s Settings) LightweightOn() bool { return s.Lightweight != nil && *s.Lightweight }
 
 // Working is the context window an agent is told for a model with one of
 // n tokens (see FullContext).

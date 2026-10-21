@@ -835,6 +835,33 @@ func onlySeenMoved(was, next []savedLogin, now time.Time) bool {
 	return err1 == nil && err2 == nil && bytes.Equal(ja, jb)
 }
 
+// SignedOut says that p is a signed-in account whose every account in use
+// (on, or the one the agent is signed in to) has had its sign-in refused:
+// listed, so it can be signed in again, but not "signed in". It is what
+// the app's Providers row says as "{user} is signed out", for magpie
+// providers and the TUI to say the same (LeeHom on Discord: Claude Code
+// listed on two lapsed accounts).
+func (p Provider) SignedOut() bool {
+	if p.Account == nil {
+		return false
+	}
+	ls := Logins(p.Account.Agent)
+	if _, ok := PluginOf(p.ID); ok && p.IsPlugin() {
+		ls = Logins(p.ID)
+	}
+	n := 0
+	for _, l := range ls {
+		if !l.On && !l.Active {
+			continue
+		}
+		if l.Lapsed == "" {
+			return false
+		}
+		n++
+	}
+	return n > 0
+}
+
 // Logins lists the remembered accounts of an agent ("" for every one),
 // the active one flagged.
 func Logins(agent string) []Login {
@@ -903,7 +930,9 @@ func Logins(agent string) []Login {
 	ls := readLogins()
 	standIn := ""
 	if _, ok := active["claude"]; !ok {
-		standIn = claudeStandIn(ls)
+		// the one the provider is listed on (claudeStandInAccount), a
+		// signed-out one too, which the row then says is signed out
+		standIn = claudeListed(ls)
 	}
 	back := map[string]string{}
 	for a, user := range active {

@@ -1,11 +1,11 @@
 // Run with Node's test runner and Playwright on the module path; see README.md.
 // A provider's editor grows out of the row that was clicked and folds back
 // into it (the owner, 10-20: it came from the top right or a lower corner,
-// not from the provider, unlike iOS). A row is wider than the dialog, so a
-// scale alone left a full-size dialog sliding in from the row's middle; the
-// dialog is clipped to the row's shape too. Held at the start of the
-// opening and at the end of the closing, what shows of the dialog is a
-// strip over the row: the row's height, centred on it, inside it. At rest
+// not from the provider, unlike iOS), and as an add sheet's tile does (10-21:
+// a full-size strip widening over the row was "太生硬"). Held at the start of
+// the opening and at the end of the closing, what shows of the dialog is the
+// dialog shrunk over the row's icon and name: the row's height, from its
+// left to where its words end. At rest
 // nothing is clipped, the shadow included. Halfway back it still shows,
 // only the backdrop fading. Reduced motion only fades. Wide and narrow,
 // Chromium and WebKit; no backend, the API is faked here.
@@ -95,6 +95,19 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       near(start.top, r.y, "the strip's top on the row's");
       near(start.bottom, r.y + r.height, "the strip's bottom on the row's");
       assert(start.left >= r.x - 1 && start.right <= r.x + r.width + 1, `${engine} ${width}: the strip stays inside the row: ${JSON.stringify(start)} ${JSON.stringify(r)}`);
+      // out of the provider's icon and name, as a tile in the add sheet:
+      // the dialog shrunk to them, not a full-size strip widening (the
+      // owner, 10-21: "太生硬")
+      const words = await row.evaluate((row) => {
+        const text = document.createRange();
+        let end = 0;
+        for (const n of row.querySelectorAll(".who .name, .who .sub")) { text.selectNodeContents(n.firstChild); end = Math.max(end, text.getBoundingClientRect().right); }
+        return end;
+      });
+      near(start.left, r.x, "the start's left on the row's");
+      assert(start.right <= words + 16, `${engine} ${width}: it starts over the icon and name, not the row: ${start.right} vs ${words}`);
+      const scale = await page.evaluate(() => { const d = document.querySelector("#modal > .dialog"); return d.getBoundingClientRect().width / d.offsetWidth; });
+      assert(scale < .8, `${engine} ${width}: it starts shrunk, as a tile's: ${scale}`);
       if (process.env.MORPH_SHOT) await page.screenshot({ path: `${process.env.MORPH_SHOT}-${engine}-${width}-open0.png` });
       for (const at of [.15, .35]) {
         await shown(page, at);
@@ -124,7 +137,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       const end = await shown(page, 1);
       near(end.top, r.y, "closed: the strip's top on the row's");
       near(end.bottom, r.y + r.height, "closed: the strip's bottom on the row's");
-      assert(end.left >= r.x - 1 && end.right <= r.x + r.width + 1, `${engine} ${width}: closed inside the row: ${JSON.stringify(end)}`);
+      assert(end.left >= r.x - 1 && end.right <= words + 16, `${engine} ${width}: closed into the icon and name: ${JSON.stringify(end)}`);
       await page.evaluate(() => { window.__hold = false; for (const a of [...document.querySelector("#modal").getAnimations({ subtree: true })]) a.play(); });
       await page.locator("#modal").waitFor({ state: "hidden" });
       assert.equal(await page.locator("#modal > .dialog").evaluate((d) => d.style.clipPath), "", "no clip left behind");

@@ -304,6 +304,11 @@ func targetOf(a *agent.Agent) *Target {
 		// beside its config.json (devin mcp add --scope user)
 		t.MCP = &mcpFile{Path: filepath.Join(a.Dir, "mcp_config.json"), Format: fmtDevin}
 		t.Skills = filepath.Join(a.Dir, "skills")
+		// and its global rules from AGENTS.md there, else the singular
+		// AGENT.md it also reads, at the start of every session (Rules &
+		// AGENTS.md → Global Rules in the docs Devin CLI 3000.11.92 ships,
+		// share/devin/docs/extensibility/rules.mdx, #3151)
+		t.Instructions = firstThere(a.Dir, "AGENTS.md", "AGENT.md")
 	case "grok":
 		// Grok Build reads [mcp_servers.<name>] from its config.toml, as
 		// `grok mcp add` writes them; its user-wide instructions are

@@ -80,6 +80,8 @@ func decodeJSON(data []byte, dst any) error {
 var heldBodies struct {
 	sync.Mutex
 	list atomic.Pointer[[][]byte]
+	// facts: a held body's bodyFacts, by the body's first byte (factsOf)
+	facts map[*byte]heldFacts
 }
 
 // heldBodiesMost bounds heldBodies: a body past it is decoded with copies, as
@@ -113,7 +115,14 @@ func holdBody(ctx context.Context, body []byte) {
 	next := append(slices.Clip(cur), body)
 	heldBodies.list.Store(&next)
 	heldBodies.Unlock()
+	var unchanged func()
+	if checkHeldBody != nil {
+		unchanged = checkHeldBody(body)
+	}
 	context.AfterFunc(ctx, func() {
+		if unchanged != nil {
+			unchanged()
+		}
 		heldBodies.Lock()
 		defer heldBodies.Unlock()
 		cur := *heldBodies.list.Load()
@@ -121,10 +130,19 @@ func holdBody(ctx context.Context, body []byte) {
 		if i < 0 {
 			return
 		}
+		delete(heldBodies.facts, unsafe.SliceData(body))
 		next := slices.Delete(slices.Clone(cur), i, i+1)
 		heldBodies.list.Store(&next)
 	})
 }
+
+// checkHeldBody, set by the tests, is handed every body holdBody lists and
+// returns what checks, as it is released, that the body was not written
+// while held. A decoded value shares a held body's bytes, and what is
+// read from it is kept by it (factsOf): a body changed in place would
+// change them under their holders, or leave them saying what it no longer
+// does, so every route the tests serve checks it never is.
+var checkHeldBody func(body []byte) (released func())
 
 // inHeldBody says whether raw lies within a body holdBody holds and is
 // at least 1/heldShareMost of it. A value kept past its request — a

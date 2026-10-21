@@ -209,12 +209,24 @@ func secretValue(v string) bool {
 
 func realEmail(v string) bool {
 	host := strings.ToLower(v[strings.LastIndexByte(v, '@')+1:])
+	if fileExt[host[strings.LastIndexByte(host, '.')+1:]] {
+		return false
+	}
 	for _, fake := range []string{"example.com", "example.org", "example.net", "localhost", ".test", ".invalid", ".example"} {
 		if host == strings.TrimPrefix(fake, ".") || strings.HasSuffix(host, fake) {
 			return false
 		}
 	}
 	return !strings.HasPrefix(host, "noreply") && !strings.Contains(v, "noreply@")
+}
+
+// fileExt are file name extensions that are no top-level domain, so
+// what ends in one is a file's name and not an address: an image a Mac
+// saved at twice its size, 261020_14-16-11@2x.jpg, went to the model as
+// {{EMAIL_…}} and Pi could no longer read the file (#3029).
+var fileExt = map[string]bool{
+	"jpg": true, "jpeg": true, "png": true, "gif": true, "webp": true, "svg": true, "heic": true, "heif": true,
+	"avif": true, "bmp": true, "tif": true, "tiff": true, "ico": true, "icns": true, "pdf": true,
 }
 
 func chineseID(v string) bool {

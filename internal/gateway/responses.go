@@ -1282,6 +1282,14 @@ func buildResponses(r *Request, model, host string, rejectTemp bool) []byte {
 		if r.Parallel != nil {
 			out["parallel_tool_calls"] = *r.Parallel
 		}
+	} else if r.ToolChoice == "none" {
+		// tools turned off with none declared (Chat's "none", Anthropic's
+		// {"type":"none"}, Gemini's NONE) still says so here, as a
+		// Responses client's own request would, for a provider plugin that
+		// adds a server-side tool (Grok's x_search) to tell it from no
+		// choice (#3110). Only a plugin is sent it (the gateway leaves it
+		// out for a vendor, which has no use for it: xAI turns it away).
+		out["tool_choice"] = "none"
 	}
 	if len(include) > 0 {
 		out["include"] = include

@@ -506,7 +506,7 @@ func warmSteps() []func() {
 	return []func(){
 		func() { statsFor(0) },
 		func() { statsFor(30) },
-		func() { usage.QueryPage(usage.All, usage.Filter{}, 0, 50) },
+		func() { underTightGC(func() { usage.QueryPage(usage.All, usage.Filter{}, 0, 50) }) },
 		func() {
 			if slices.ContainsFunc(statsFor(0).Keys, func(k string) bool { return strings.HasPrefix(k, "codex:") }) {
 				warmCodexEffort()
@@ -530,6 +530,24 @@ func warmUp(steps ...func()) {
 	}
 	debug.FreeOSMemory()
 }
+
+// underTightGC runs fn letting the heap grow by a quarter of what it holds
+// before a collection, not Go's default of all of it, and then puts back
+// what was set; a GOGC the user set lower, or off, is kept. The usage
+// page's read of the whole history holds every row of it at once (~270 MB
+// live for 390k calls), and a cold start that rests at ~200 MB peaked at
+// 555–587 MB in Activity Monitor there; under it, 410–438 MB. Only that
+// read runs under it: the warm-up as a whole did too for ~11 s more CPU.
+func underTightGC(fn func()) {
+	if was := debug.SetGCPercent(tightGCPercent); was < tightGCPercent {
+		debug.SetGCPercent(was)
+	} else {
+		defer debug.SetGCPercent(was)
+	}
+	fn()
+}
+
+const tightGCPercent = 25
 
 // openTerminal runs a command in the chosen Mac terminal through a .command
 // file, as it would open from Finder: no Automation consent.

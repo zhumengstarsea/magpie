@@ -1039,20 +1039,29 @@ func prefixHash(path string, n int64) string {
 	defer f.Close()
 	h := sha256.New()
 	const window, samples = int64(4096), int64(16)
+	// io.CopyN made a 32 KB buffer each call, and each of the 16 samples
+	// of a long file: 0.8 GB of a cold start's first 2 minutes.
+	buf := hashBufs.Get().(*[window * samples]byte)
+	defer hashBufs.Put(buf)
 	if n <= window*samples {
-		if _, err = io.CopyN(h, f, n); err != nil {
+		if _, err = io.ReadFull(f, buf[:n]); err != nil {
 			return ""
 		}
+		h.Write(buf[:n])
 	} else {
 		for i := int64(0); i < samples; i++ {
 			off := (n - window) * i / (samples - 1)
-			if _, err = io.CopyN(h, io.NewSectionReader(f, off, window), window); err != nil {
+			// A full window may come back with io.EOF at the file's end.
+			if k, _ := f.ReadAt(buf[:window], off); int64(k) < window {
 				return ""
 			}
+			h.Write(buf[:window])
 		}
 	}
 	return fmt.Sprintf("sample-v1:%x", h.Sum(nil))
 }
+
+var hashBufs = sync.Pool{New: func() any { return new([64 << 10]byte) }}
 
 // CallSource identifies a raw local request log without reading its contents.
 type CallSource struct {

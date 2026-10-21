@@ -1,7 +1,7 @@
 // Run with Node's test runner and Playwright on the module path; see README.md.
 // somls on #580: GUI版可否增加轻量模式，关闭面板退出webview，减少资源占用.
-// Settings → General has a Lightweight mode row, on for a user who never
-// chose: Off and On are saved as lightweight false and true, the click
+// Settings → General has a Lightweight mode row, off for a user who never
+// chose (the owner, 10-21: "太卡" on by default): On and Off are saved as lightweight false and true, the click
 // moving nothing; the page saved again elsewhere keeps the choice, or
 // leaves it unchosen; a browser's page (web) has no window
 // to let go and shows no such row. In English and Chinese, with the API faked.
@@ -72,7 +72,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       assert.equal(await row.locator(".name").innerText(), w.name);
       assert.equal(await row.locator(".sub").innerText(), w.sub);
       const opt = (name) => row.locator("#lightweightSegs .opt", { hasText: name });
-      assert.equal(await row.locator("#lightweightSegs .opt.on").innerText(), w.on, "on for a user who never chose");
+      assert.equal(await row.locator("#lightweightSegs .opt.on").innerText(), w.off, "off for a user who never chose");
       const where = () => page.evaluate(() => [scrollX, scrollY, document.scrollingElement.scrollTop, ...[...document.querySelectorAll("*")].filter((e) => e.scrollTop).map((e) => e.scrollTop)]);
       const before = await where();
       const click = async (loc) => {
@@ -88,19 +88,19 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await click(page.locator("#dockSegs .opt").first()).catch(() => {});
       for (let i = 0; i < 20 && posted.length === n; i++) await page.waitForTimeout(50);
       if (posted.length > n) assert.equal("lightweight" in posted.at(-1), false, `another setting's save chose it: ${JSON.stringify(posted.at(-1))}`);
-      await click(opt(w.off));
-      for (let i = 0; i < 50 && posted.at(-1)?.lightweight !== false; i++) await page.waitForTimeout(50);
-      assert.equal(posted.at(-1)?.lightweight, false, `posted ${JSON.stringify(posted)}`);
-      assert.equal(st.lightweight, false);
-      assert.equal(await row.locator("#lightweightSegs .opt.on").innerText(), w.off);
-      // another setting saved keeps it off
+      await click(opt(w.on));
+      for (let i = 0; i < 50 && posted.at(-1)?.lightweight !== true; i++) await page.waitForTimeout(50);
+      assert.equal(posted.at(-1)?.lightweight, true, `posted ${JSON.stringify(posted)}`);
+      assert.equal(st.lightweight, true);
+      assert.equal(await row.locator("#lightweightSegs .opt.on").innerText(), w.on);
+      // another setting saved keeps it on
       n = posted.length;
       await click(page.locator("#dockSegs .opt").last()).catch(() => {});
       for (let i = 0; i < 20 && posted.length === n; i++) await page.waitForTimeout(50);
-      if (posted.length > n) assert.equal(posted.at(-1).lightweight, false, "another setting's save turned it on");
-      await click(opt(w.on));
-      for (let i = 0; i < 50 && posted.at(-1)?.lightweight !== true; i++) await page.waitForTimeout(50);
-      assert.equal(posted.at(-1).lightweight, true);
+      if (posted.length > n) assert.equal(posted.at(-1).lightweight, true, "another setting's save turned it off");
+      await click(opt(w.off));
+      for (let i = 0; i < 50 && posted.at(-1)?.lightweight !== false; i++) await page.waitForTimeout(50);
+      assert.equal(posted.at(-1).lightweight, false);
       assert.deepEqual(await where(), before, "the clicks moved the page");
       // the row has no coloured stripe down its left
       const left = await row.evaluate((e) => getComputedStyle(e).borderLeftWidth);
