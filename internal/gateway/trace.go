@@ -492,6 +492,10 @@ type TraceState struct {
 	Seq    int64   `json:"seq"`
 	Routes []Route `json:"routes"`
 	Totals Totals  `json:"totals"`
+	// IDs are every route the trace keeps now, changed or not: a page that
+	// stopped reading while out of sight drops a request it last heard of
+	// under way that has since ended and gone from the trace
+	IDs []int64 `json:"ids,omitempty"`
 	// By is the magpie whose routing this is, when it is another magpie's
 	// (OwnerTrace): the console names it from here, so the name follows the
 	// trace when another magpie takes the gateway over (#2606)
@@ -690,7 +694,7 @@ func (s *Server) gatewayTrace(w http.ResponseWriter, r *http.Request) {
 		wait = 25 * time.Second
 	}
 	st := s.Trace(r.Context(), after, wait)
-	writeJSON(w, 200, map[string]any{"object": "trace", "now": time.Now(), "seq": st.Seq, "routes": st.Routes, "totals": st.Totals, "pid": os.Getpid(), "serves": Serves})
+	writeJSON(w, 200, map[string]any{"object": "trace", "now": time.Now(), "seq": st.Seq, "routes": st.Routes, "totals": st.Totals, "ids": st.IDs, "pid": os.Getpid(), "serves": Serves})
 }
 
 // ownerURL is the gateway's address on loopback, where the magpie serving
@@ -754,13 +758,14 @@ func OwnerTrace(ctx context.Context, after int64, wait time.Duration) (TraceStat
 		Seq    int64   `json:"seq"`
 		Routes []Route `json:"routes"`
 		Totals Totals  `json:"totals"`
+		IDs    []int64 `json:"ids"`
 		Pid    int     `json:"pid"`
 		Serves string  `json:"serves"`
 	}
 	if decodeJSON(b, &out) != nil || out.Object != "trace" || out.Routes == nil {
 		return TraceState{}, false
 	}
-	return TraceState{Seq: out.Seq, Routes: out.Routes, Totals: out.Totals, By: &TraceBy{Pid: out.Pid, Serves: out.Serves}}, true
+	return TraceState{Seq: out.Seq, Routes: out.Routes, Totals: out.Totals, IDs: out.IDs, By: &TraceBy{Pid: out.Pid, Serves: out.Serves}}, true
 }
 
 // OwnerLanes reads the lanes of the magpie serving the gateway's address, for
@@ -805,8 +810,9 @@ func (s *Server) Trace(ctx context.Context, after int64, wait time.Duration) Tra
 		if t.seq < after {
 			after = 0 // the gateway started over since
 		}
-		st := TraceState{Seq: t.seq, Routes: []Route{}, Totals: t.totals}
+		st := TraceState{Seq: t.seq, Routes: []Route{}, Totals: t.totals, IDs: make([]int64, 0, len(t.routes))}
 		for _, r := range t.routes {
+			st.IDs = append(st.IDs, r.ID)
 			if r.Seq > after {
 				c := *r
 				c.Order = append([]Weighed{}, r.Order...) // [] for none: the GUI reads it as a list
@@ -827,6 +833,16 @@ func (s *Server) Trace(ctx context.Context, after int64, wait time.Duration) Tra
 		t.mu.Unlock()
 		select {
 		case <-wake:
+			// a request's way is told in a burst (begun, its prompt read,
+			// a try sent, answered, its usage), each change waking every
+			// page waiting: gathered a moment, a page hears of the burst
+			// once, not 4-8 times a second while agents are busy
+			gather := time.NewTimer(traceGather)
+			select {
+			case <-gather.C:
+			case <-ctx.Done():
+				gather.Stop()
+			}
 		case <-deadline.C:
 			return st
 		case <-ctx.Done():
@@ -834,6 +850,10 @@ func (s *Server) Trace(ctx context.Context, after int64, wait time.Duration) Tra
 		}
 	}
 }
+
+// traceGather is how long a waiting Trace gathers changes after the first
+// one wakes it.
+var traceGather = 250 * time.Millisecond
 
 // swapped reports whether served is another model than sent: not the same
 // name, however dated, pinned or prefixed (usage.Swapped).

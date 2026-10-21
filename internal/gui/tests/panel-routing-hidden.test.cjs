@@ -6,8 +6,10 @@
 // tab. On Windows the hidden panel grew to 265k nodes in 11 minutes and GBs
 // over a day. Hidden, the tab is drawn again only when its shape (what the
 // panel's height is fitted to) changes, no request's dot flies, and once
-// the panel shows it is drawn in full, newest request first. The page's
-// hidden state is faked here, as headless pages are never hidden.
+// the panel shows it is drawn in full, newest request first. Hidden, it
+// doesn't ask for the trace either: shown again, it asks once for all that
+// came meanwhile. The page's hidden state is faked here, as headless pages
+// are never hidden.
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -23,6 +25,9 @@ const route = (id, done) => ({
 });
 
 function serve(lang) {
+  // a request every 80 ms, under way, whether or not the panel asks
+  const t0 = Date.now();
+  const seqNow = () => 2 + Math.floor((Date.now() - t0) / 80);
   const state = { agents: [{ id: "codex", name: "Codex", path: "/test/config.toml", fields: [] }], profiles: [], settings: { lang, theme: "light" } };
   return async (r) => {
     const req = r.request(), url = new URL(req.url());
@@ -31,12 +36,15 @@ function serve(lang) {
     if (url.pathname === "/wails/runtime.js") return r.fulfill({ contentType: "text/javascript", body: "export const Window = {};" });
     if (url.pathname === "/api/state") return json(state);
     if (url.pathname === "/api/gateway/trace") {
-      // a request every 80 ms, under way: each is a tab drawn again
+      // as the gateway does: what changed since after, at once when
+      // something did, or once the next request comes. Each is a tab drawn
+      // again
       const after = Number(url.searchParams.get("after"));
-      const now = new Date().toISOString();
-      if (!after) return json({ mine: true, now, seq: 2, totals: { requests: 2 }, routes: [route(1, true), route(2, true)] });
-      await new Promise((res) => setTimeout(res, 80));
-      return json({ mine: true, now, seq: after + 1, totals: { requests: after + 1 }, routes: [route(after + 1, false)] });
+      if (!after) return json({ mine: true, now: new Date().toISOString(), seq: 2, totals: { requests: 2 }, routes: [route(1, true), route(2, true)] });
+      while (seqNow() <= after) await new Promise((res) => setTimeout(res, 20));
+      const seq = seqNow(), routes = [];
+      for (let id = Math.max(after + 1, seq - 9); id <= seq; id++) routes.push(route(id, false));
+      return json({ mine: true, now: new Date().toISOString(), seq, totals: { requests: seq }, routes });
     }
     if (url.pathname === "/api/gateway/history") return json({ cut: false, days: [], routes: [] });
     if (url.pathname === "/api/usage" && url.searchParams.get("period") === "today") return json({ calls: 2, input: 1000, output: 200, series: [] });
@@ -92,26 +100,20 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       });
       let heard = 0;
       page.on("request", (q) => { if (q.url().includes("/api/gateway/trace")) heard++; });
-      for (let i = 0; i < 40 && heard < 20; i++) await page.waitForTimeout(100);
-      assert(heard >= 20, `the trace was read ${heard} times while hidden`);
+      // 2 s hidden: 25 requests come, and the panel asks for none
+      await page.waitForTimeout(2000);
+      assert(heard <= 1, `the trace was read ${heard} times while hidden`);
       const hidden = await page.evaluate(() => ({ draws: window.__draws, dots: window.__dots, shown: Number(document.querySelector("#panelRouting .pr-req .pr-a .m").textContent.replace(/\D+/g, "")) }));
       assert.equal(hidden.draws, 0, `the hidden tab was drawn ${hidden.draws} times over ${heard} requests`);
       assert.equal(hidden.dots, 0, "no request's dot flies in a hidden panel");
       assert.equal(hidden.shown, seqAt, "what the tab shows is left as it was");
 
-      // shown again: drawn at once, the newest request first
-      const after = await page.evaluate(async () => {
-        window.__hide(false);
-        await Promise.resolve(); // the observer's records
-        return {
-          draws: window.__draws,
-          first: Number(document.querySelector("#panelRouting .pr-req .pr-a .m").textContent.replace(/\D+/g, "")),
-          rows: document.querySelectorAll("#panelRouting .pr-req").length,
-        };
-      });
-      assert.equal(after.draws, 1, "drawn once as the panel shows");
-      assert(after.first >= seqAt + 20, `the newest request is shown (${after.first}, was ${seqAt})`);
-      assert.equal(after.rows, 6);
+      // shown again: it asks once for what came meanwhile, and draws the
+      // newest request first
+      await page.evaluate(() => window.__hide(false));
+      await page.waitForFunction((at) => Number(document.querySelector("#panelRouting .pr-req .pr-a .m").textContent.replace(/\D+/g, "")) >= at + 20, seqAt);
+      assert(heard >= 1, "shown again, the trace is asked for");
+      assert.equal(await page.locator("#panelRouting .pr-req").count(), 6);
       assert.deepEqual(errors, []);
     });
   }

@@ -217,7 +217,8 @@ export const FakePlugin = async ({ client }) => ({
       }
     },
     // $FAKE_CHECKIN: the plugin presses the daily check-in itself, each
-    // press written as a line of the account's key to that file, and the
+    // press written as a line of the account's key to that file (a signed-in
+    // account's name/uid, so two of one name tell apart), and the
     // answer said by the key: ck-claim gives 50 on a 3-day streak, ck-done
     // is in already, ck-captcha is asked a captcha, ck-throw can't reach
     // the vendor, ck-odd answers no outcome magpie knows
@@ -226,7 +227,7 @@ export const FakePlugin = async ({ client }) => ({
           checkin: async (getAuth) => {
             const a = await getAuth()
             const fs = await import("node:fs")
-            fs.appendFileSync(process.env.FAKE_CHECKIN, (a.key ?? a.accountId ?? "") + "\n")
+            fs.appendFileSync(process.env.FAKE_CHECKIN, (a.key ?? (a.uid ? a.accountId + "/" + a.uid : a.accountId) ?? "") + "\n")
             switch (a.key) {
               case "ck-claim":
                 return { outcome: "claimed", credit: 50, streak: 3 }

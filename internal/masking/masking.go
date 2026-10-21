@@ -22,7 +22,7 @@ func Wanted(st settings.Settings) bool {
 }
 
 func options() redact.Options {
-	st := settings.Load()
+	st := settings.Shared()
 	o := redact.Options{Secrets: st.Redact, Personal: st.RedactPersonal, Kinds: st.RedactKinds, Words: st.RedactWords, Rules: st.RedactRules}
 	if st.RedactModel {
 		o.Model = model

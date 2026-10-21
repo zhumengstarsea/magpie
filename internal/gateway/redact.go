@@ -118,7 +118,7 @@ func restoring(w http.ResponseWriter) (http.ResponseWriter, func()) {
 // the core's own reading, so a request isn't sent unmasked when the plugin
 // isn't there to mask it.
 func redactionWanted() bool {
-	return masking.Wanted(settings.Load())
+	return masking.Wanted(settings.Shared())
 }
 
 // maskedQuery masks a web search's query, as the settings say, before it

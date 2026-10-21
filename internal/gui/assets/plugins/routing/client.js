@@ -3592,6 +3592,7 @@ function routingPage(part) {
   // Visibility events can arrive after the browser has suspended frames, so
   // finish hidden work here too. The first visible frame alone owns resume.
   function start() {
+    inSightAgain();
     if (!shown()) { pause(); return; }
     kick();
   }
@@ -3647,11 +3648,26 @@ function routingPage(part) {
     for (const d of document.querySelectorAll(".rt-livedot")) d.classList.toggle("on", on);
   }
 
+  // the trace is asked for only while the page or the tray panel's Routing
+  // tab is in sight: a hidden page held a long-poll open and was answered
+  // on every change, 4 to 8 times a second under traffic, for nothing it
+  // drew. Out of sight it asks nothing; in sight again it asks once for all
+  // that changed meanwhile, and plays only the requests still under way
+  const inSight = () => !document.hidden && (shown() || !!(pBox && pShown()));
+  let heard = false, sightWait = null, caught = false;
+  function inSightAgain() {
+    if (sightWait && inSight()) { const go = sightWait; sightWait = null; go(); }
+  }
   async function poll() {
     for (;;) {
+      if (heard && !inSight()) {
+        await new Promise((r) => { sightWait = r; });
+        caught = true;
+      }
       try {
         const res = await fetch(`/api/gateway/trace?after=${seq}${loaded ? "&wait=1" : ""}`);
         const d = await res.json();
+        heard = true;
         noteAccounts(d);
         skew = at(d.now) - Date.now();
         mine = d.mine;
@@ -3683,7 +3699,16 @@ function routingPage(part) {
           if (!routes.has(r.id) && !first) fresh.push(r.id);
           routes.set(r.id, whole(r));
         }
+        // one heard of as under way that the gateway has let go of since
+        // (finished and trimmed while the page was out of sight) is not
+        // under way forever: the gateway lists every id it still keeps
+        if (Array.isArray(d.ids)) {
+          const kept = new Set(d.ids);
+          for (const [id, r] of routes) if (!r.done && !kept.has(id)) routes.delete(id);
+        }
         for (const id of [...routes.keys()].sort((a, b) => a - b).slice(0, -60)) routes.delete(id);
+        const back = caught;
+        caught = false;
         loaded = true;
         offMsg = "";
         renderPanel(first || d.routes.some((r) => r.done));
@@ -3723,11 +3748,13 @@ function routingPage(part) {
           }
           // played only in sight: coming back into it plays those still
           // under way, not all that came meanwhile (#302)
-          const go = !pinned && !rp && !day && shown() ? fresh.filter((id) => matchesPurpose(routes.get(id))) : [];
+          const go = !back && !pinned && !rp && !day && shown() ? fresh.filter((id) => matchesPurpose(routes.get(id))) : [];
           for (const id of go) playing.set(id, gen);
           if (go.length) sync(); // the stage once for them all (#308)
           for (const id of go) play(id, true);
-          for (const id of fresh.slice(-4)) pPlay(id);
+          // back in sight, those still under way fly, not all that came
+          for (const id of (back ? fresh.filter((id) => !routes.get(id).done) : fresh).slice(-4)) pPlay(id);
+          if (back && seen && shown()) for (const u of underWay()) if (!playing.has(u.id)) play(u.id);
           wake();
           renderAll();
         }
@@ -5846,6 +5873,7 @@ function routingPage(part) {
     renderPanel();
   }
   window.panelRoutingShown = () => {
+    inSightAgain();
     if (pShown() && performance.now() - todayAt > 5e3) loadToday();
     // a group switched on the Routing page or by `magpie group pick`
     // since: the tab shows the model it goes to now

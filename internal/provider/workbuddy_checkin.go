@@ -30,8 +30,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -169,10 +172,67 @@ func wbCheckinPath() string { return filepath.Join(filepath.Dir(Path()), "workbu
 // wbCheckinKey is an account's entry in the file: its site and id.
 func wbCheckinKey(a wbAccount) string { return a.site.id + "|" + a.creds.UID }
 
-func readCheckins(path string) map[string]WorkBuddyCheckin {
+// readCheckins is what a check-in file at path keeps, by entry. A file not
+// there is empty. One there that can't be read or doesn't parse into
+// entries (cut short, zeroed, `[]`) is unknown, never empty: the error
+// says so, and what is given is what last read from it in this process,
+// so a card still shows it. A check-in neither asks nor writes on an
+// error, or it would check an account in twice in a day and write over
+// the entries it couldn't read.
+func readCheckins(path string) (map[string]WorkBuddyCheckin, error) {
 	st := map[string]WorkBuddyCheckin{}
-	if b, err := os.ReadFile(path); err == nil {
-		json.Unmarshal(b, &st)
+	b, err := os.ReadFile(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		err = nil
+	case err == nil:
+		if err = json.Unmarshal(b, &st); err != nil || st == nil {
+			if err == nil {
+				err = errors.New("it holds null")
+			}
+			err = fmt.Errorf("%s doesn't parse (%v): magpie leaves it as it is and checks in no account of it until it does", path, err)
+		}
+	default:
+		err = fmt.Errorf("%s can't be read (%v): magpie leaves it as it is and checks in no account of it until it can", path, err)
+	}
+	checkinsReadMu.Lock()
+	defer checkinsReadMu.Unlock()
+	if err != nil {
+		// logged once while it stays the same, not on every card read
+		if checkinsBad[path] != err.Error() {
+			checkinsBad[path] = err.Error()
+			log.Printf("check-in: %v", err)
+		}
+		return maps.Clone(checkinsRead[path]), err
+	}
+	delete(checkinsBad, path)
+	checkinsRead[path] = maps.Clone(st)
+	return st, nil
+}
+
+// checkinsRead is each check-in file's entries as last read, for
+// readCheckins to give when the file can't be read now, and checkinsBad
+// the error last logged for one that can't.
+var (
+	checkinsReadMu sync.Mutex
+	checkinsRead   = map[string]map[string]WorkBuddyCheckin{}
+	checkinsBad    = map[string]string{}
+)
+
+// wroteCheckins notes st as written to path: what last read from it.
+func wroteCheckins(path string, st map[string]WorkBuddyCheckin) {
+	checkinsReadMu.Lock()
+	defer checkinsReadMu.Unlock()
+	delete(checkinsBad, path)
+	checkinsRead[path] = maps.Clone(st)
+}
+
+// shownCheckins is readCheckins for a reader that only shows the entries:
+// on an error, what last read (logged by readCheckins).
+func shownCheckins(path string) map[string]WorkBuddyCheckin {
+	st, _ := readCheckins(path)
+	if st == nil {
+		st = map[string]WorkBuddyCheckin{}
 	}
 	return st
 }
@@ -312,7 +372,7 @@ func CheckInWorkBuddy(ctx context.Context) []WorkBuddyCheckin {
 // WorkBuddyCheckins is each WorkBuddy (China) account's last check-in, as
 // kept, by its name now; asks nothing.
 func WorkBuddyCheckins() []WorkBuddyCheckin {
-	st := readCheckins(wbCheckinPath())
+	st := shownCheckins(wbCheckinPath())
 	var out []WorkBuddyCheckin
 	listed := map[string]bool{}
 	for _, a := range wbCheckinAccounts() {
@@ -334,10 +394,10 @@ func WorkBuddyCheckins() []WorkBuddyCheckin {
 // those in through the plugin's fetch. qs, which may be the usage cache,
 // is left as it is; nothing is asked.
 func WithCheckins(qs []SubscriptionQuota) []SubscriptionQuota {
-	qs = withCheckins(qs, wbCheckinAccounts(), readCheckins(wbCheckinPath()))
-	qs = markCheckins(qs, traeCards(traeCheckinAccounts()), readCheckins(traeCheckinPath()), "trae")
-	qs = markCheckins(qs, miniMaxCards(miniMaxCheckinAccounts()), readCheckins(miniMaxCheckinPath()), "minimax")
-	qs = markCheckins(qs, qoderCards(qoderCheckinAccounts()), readCheckins(qoderCheckinPath()), "qoder")
+	qs = withCheckins(qs, wbCheckinAccounts(), shownCheckins(wbCheckinPath()))
+	qs = markCheckins(qs, traeCards(traeCheckinAccounts()), shownCheckins(traeCheckinPath()), "trae")
+	qs = markCheckins(qs, miniMaxCards(miniMaxCheckinAccounts()), shownCheckins(miniMaxCheckinPath()), "minimax")
+	qs = markCheckins(qs, qoderCards(qoderCheckinAccounts()), shownCheckins(qoderCheckinPath()), "qoder")
 	return pluginCheckinMarks(qs)
 }
 

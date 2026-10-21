@@ -6,8 +6,11 @@
 // hidden window no frame is drawn, so the entrance and live animations on
 // the nodes it replaced stayed on the document's timeline and held each one:
 // WebView2 grew to GBs over a day. Out of sight the page is left as it was,
-// and back in sight it is drawn at once with the newest request. The
-// window's hidden state is faked, as headless pages are never hidden.
+// and back in sight it is drawn at once with the newest request. Out of
+// sight it doesn't ask for the trace either: a long-poll held open there was
+// answered on every change, 4 to 8 times a second under traffic, for
+// nothing it drew. The window's hidden state is faked, as headless pages
+// are never hidden.
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -26,6 +29,10 @@ const route = (id, done) => ({
 });
 
 function serve(lang) {
+  // a request every 80 ms, and the one before it done, whether or not the
+  // page asks: the gateway's trace goes on without it
+  const t0 = Date.now();
+  const seqNow = () => 2 + Math.floor((Date.now() - t0) / 80);
   const state = {
     agents: [{ id: "codex", name: "Codex", path: "/test/config.toml", fields: [] }, { id: "claude", name: "Claude Code", path: "/test/settings.json", fields: [] }],
     profiles: [], settings: { lang, theme: "light" },
@@ -37,12 +44,16 @@ function serve(lang) {
     if (url.pathname === "/wails/runtime.js") return r.fulfill({ contentType: "text/javascript", body: "export const Window = {};" });
     if (url.pathname === "/api/state") return json(state);
     if (url.pathname === "/api/gateway/trace") {
-      // a request every 80 ms, and the one before it done
+      // as the gateway does: what changed since after, at once when
+      // something did, or once the next request comes
       const after = Number(url.searchParams.get("after"));
-      const now = new Date().toISOString();
-      if (!after) return json({ mine: true, now, seq: 2, totals: { requests: 2 }, routes: [route(1, true), route(2, true)] });
-      await new Promise((res) => setTimeout(res, 80));
-      return json({ mine: true, now, seq: after + 1, totals: { requests: after + 1 }, routes: [route(after, true), route(after + 1, false)] });
+      if (after) while (seqNow() <= after) await new Promise((res) => setTimeout(res, 20));
+      const seq = seqNow(), now = new Date().toISOString();
+      const routes = [];
+      for (let id = Math.max(1, after, seq - 4); id <= seq; id++) routes.push(route(id, id < seq));
+      const ids = [];
+      for (let id = Math.max(1, seq - 59); id <= seq; id++) ids.push(id);
+      return json({ mine: true, now, seq, totals: { requests: seq }, routes, ids });
     }
     if (url.pathname === "/api/gateway/history") return json({ cut: false, days: [], routes: [] });
     if (url.pathname === "/api/usage" && url.searchParams.get("period") === "today") return json({ calls: 2, input: 1000, output: 200, series: [] });
@@ -110,11 +121,12 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         });
         let heard = 0;
         page.on("request", (q) => { if (q.url().includes("/api/gateway/trace")) heard++; });
-        for (let i = 0; i < 50 && heard < 20; i++) await page.waitForTimeout(100);
-        assert(heard >= 20, `the trace was read ${heard} times out of sight`);
+        // 2 s out of sight: 25 requests come, and the page asks for none
+        await page.waitForTimeout(2000);
+        assert(heard <= 1, `the trace was read ${heard} times out of sight`);
         // a stage's node, a row, a wire, a list's request: none of them put up
         const added = await page.evaluate(() => window.__added);
-        assert.deepEqual(added, {}, `out of sight over ${heard} requests, the page added ${JSON.stringify(added)}`);
+        assert.deepEqual(added, {}, `out of sight, the page added ${JSON.stringify(added)}`);
 
         // back in sight: drawn at once, with the newest request
         await how.show(page);
