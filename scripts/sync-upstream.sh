@@ -8,6 +8,14 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 say() { echo "$*"; echo "$*" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"; }
 die() { echo "::error::$*"; exit 1; }
 output() { if [ -n "${GITHUB_OUTPUT:-}" ]; then printf '%s=%s\n' "$1" "$2" >> "$GITHUB_OUTPUT"; fi; }
+# These files belong to this fork's release and synchronization pipeline.
+# Upstream removes or rewrites them, so restore the fork copies after merging.
+fork_owned=(
+  .github/workflows
+  Casks
+  Formula
+  scripts
+)
 
 gh api repos/yetone/magpie-releases/releases/latest > "$RUNNER_TEMP/upstream-release.json"
 tag=$(jq -er '.tag_name' "$RUNNER_TEMP/upstream-release.json")
@@ -65,10 +73,13 @@ if [ -n "$remote_tag" ]; then
 else
   if ! git merge-base --is-ancestor "$upstream_commit" HEAD; then
     bash "$script_dir/configure-release-gpg.sh"
-    if ! git merge --no-ff --no-commit "$upstream_commit"; then
+    if ! git merge --no-ff --no-commit -X ours "$upstream_commit"; then
       git merge --abort
       die "Merge conflict with $tag; $TARGET_BRANCH was not pushed"
     fi
+    # Keep the fork's automation and release metadata while allowing all
+    # non-conflicting upstream source changes into the synchronized commit.
+    git restore --source="refs/remotes/origin/$TARGET_BRANCH" -- "${fork_owned[@]}"
     git commit -S -m "同步上游 $version 版本"
     git verify-commit HEAD
     # A concurrent push fails normally; never force-update the user's branch.
