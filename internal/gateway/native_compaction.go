@@ -5,7 +5,9 @@ package gateway
 // as Codex sent it, and the compaction item it writes back goes to Codex
 // as it came, sealed (encrypted_content), not as magpie's "magpie1:"
 // summary. Official Codex accounts may read a checkpoint across their account
-// pool (verified against the ChatGPT backend on 2026-10-17). Other providers
+// pool (verified against the ChatGPT backend on 2026-10-17). Selected Responses
+// relays may also receive an official checkpoint intact; their backend decides
+// whether it can read it. Other providers' own checkpoints
 // remain bound to the key or account that wrote it. Writer provenance is
 // retained in compactions.json; no native checkpoint is dropped or replaced
 // by a summary when an upstream refuses it.
@@ -125,7 +127,7 @@ func (s *Server) keepsCompaction(from provider.Protocol, p provider.Provider, mo
 		return true
 	}
 	cp, ok := checkpointOf(body)
-	return ok && cp.Provider == p.ID
+	return ok && (cp.Provider == p.ID || codexPoolCheckpoint(cp))
 }
 
 // checkpointWriter is who sealed a compaction: the key or account
@@ -281,13 +283,13 @@ func codexPoolCheckpoint(cp checkpointWriter) bool {
 	return cp.Provider == "codex" && strings.HasPrefix(cp.Who, "codex@")
 }
 
-// checkpointReaders keeps eligible official Codex accounts in the caller's
-// existing routing plan. Account/model permissions, caps and strict affinity
+// checkpointReaders keeps Responses-capable candidates in the caller's
+// existing routing plan for an official Codex checkpoint. Account/model permissions, caps and strict affinity
 // still apply; a checkpoint does not grant access to another account.
 func (s *Server) checkpointReaders(cands []candidate, pl planned, cp checkpointWriter) ([]candidate, planned, bool) {
 	if codexPoolCheckpoint(cp) {
 		kept, pool, left := keepCandidates(cands, pl, func(c candidate) bool {
-			return c.p.ID == "codex" && c.p.Account != nil && c.p.Account.Agent == "codex" && !c.p.IsPlugin() && s.carriesCompaction(c.p, c.model)
+			return s.carriesCompaction(c.p, c.model)
 		})
 		if left {
 			return kept, pool, true
@@ -395,7 +397,7 @@ func compactionWho(cp *checkpointWriter) string {
 // account that was on, and "switch it on again" changed nothing).
 func checkpointError(model string, cp checkpointWriter) string {
 	if codexPoolCheckpoint(cp) {
-		return fmt.Sprintf("This conversation contains an official Codex native checkpoint, but no eligible Codex account can serve %s under the current model, account and gateway-key settings. Enable an allowed Codex account that serves this model. The checkpoint was preserved; it was not sent to another provider or replaced with a summary.", model)
+		return fmt.Sprintf("This conversation contains an official Codex native checkpoint, but no allowed Responses endpoint can serve %s under the current model, account and gateway-key settings. Select an allowed Responses provider or Codex account for this model. The checkpoint was preserved and was not replaced with a summary.", model)
 	}
 	what := "account"
 	if strings.Contains(cp.Who, "#") {

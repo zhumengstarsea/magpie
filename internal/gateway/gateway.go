@@ -2036,7 +2036,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	if sealedTask {
 		cands, pl = s.sealedReaders(cands, pl, sealers)
 	}
-	// Official Codex checkpoints stay within eligible Codex accounts;
+	// Official Codex checkpoints follow eligible Responses candidates;
 	// other providers' checkpoints stay with their writer. Neither is
 	// dropped or summarised. Triggers go only to a compatible wire.
 	var checkpoint *checkpointWriter

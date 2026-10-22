@@ -73,7 +73,7 @@ func TestCodexNativeCompactionPoolFailover(t *testing.T) {
 	}
 }
 
-func TestCodexNativeCompactionPoolRejectsOtherProviders(t *testing.T) {
+func TestCodexNativeCompactionPoolRejectsChatOnlyProviders(t *testing.T) {
 	codexSignedIn(t, "spare@example.com")
 	var mu sync.Mutex
 	calls := 0
@@ -81,16 +81,16 @@ func TestCodexNativeCompactionPoolRejectsOtherProviders(t *testing.T) {
 		mu.Lock()
 		calls++
 		mu.Unlock()
-		t.Error("an unrelated provider received a Codex checkpoint")
+		t.Error("a Chat-only provider received a Codex checkpoint")
 		w.WriteHeader(400)
 	}))
 	t.Cleanup(up.Close)
-	if err := provider.Save(provider.Provider{ID: "relay", Name: "Relay", Key: "sk-relay", Responses: up.URL + "/v1", Models: []string{"m1"}}); err != nil {
+	if err := provider.Save(provider.Provider{ID: "relay", Name: "Relay", Key: "sk-relay", Chat: up.URL + "/v1", Models: []string{"m1"}}); err != nil {
 		t.Fatal(err)
 	}
 	wroteCheckpoint("checkpoint-codex", candidate{p: provider.Provider{ID: "codex", Account: &provider.Account{User: "me@example.com"}}})
 	code, body := codexPost(t, `{"model":"relay/m1","stream":true,"input":[{"type":"compaction","encrypted_content":"checkpoint-codex"}]}`)
-	if code != 400 || !strings.Contains(body, "no eligible Codex account") {
+	if code != 400 || !strings.Contains(body, "no allowed Responses endpoint") {
 		t.Fatalf("%d %s", code, body)
 	}
 	mu.Lock()
