@@ -1,12 +1,19 @@
 package gui
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/yetone/magpie/internal/gwmw"
+	"github.com/yetone/magpie/internal/masking"
 	"github.com/yetone/magpie/internal/maskrec"
 )
+
+// previewMax is how much text the preview masks.
+const previewMax = 64 << 10
 
 // maskedRecord is a record as the page shows it: each value says whether
 // the masker still knows what it stood for, so the page offers to show it
@@ -51,8 +58,37 @@ func shownRecord(r maskrec.Record, t gwmw.Teller) maskedRecord {
 //   - GET /api/masking/record?key= one record;
 //   - GET /api/masking/value?p= what a placeholder stood for, while this
 //     magpie's masker remembers it (404 after a restart: it is never on
-//     disk).
+//     disk);
+//   - POST /api/masking/preview {text} the text as a vendor would get it
+//     under the settings now, and what was found, each told by its kind
+//     and hint, never its value; nothing of it is remembered (#1977).
 func maskingRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/masking/preview", func(rw http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Text string `json:"text"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4*previewMax)).Decode(&in); err != nil {
+			fail(rw, err)
+			return
+		}
+		if len(in.Text) > previewMax {
+			in.Text = strings.ToValidUTF8(in.Text[:previewMax], "")
+		}
+		text, hits, off := masking.Preview(in.Text)
+		type hit struct {
+			Kind        string `json:"kind"`
+			By          string `json:"by"`
+			Action      string `json:"action,omitempty"`
+			Placeholder string `json:"placeholder"`
+			Head        string `json:"head,omitempty"`
+			Len         int    `json:"len"`
+		}
+		out := []hit{}
+		for _, h := range hits {
+			out = append(out, hit{h.Kind, h.By, h.Action, h.Placeholder, h.Head, h.Len})
+		}
+		writeJSON(rw, map[string]any{"text": text, "hits": out, "off": off})
+	})
 	mux.HandleFunc("GET /api/masking/summary", func(rw http.ResponseWriter, r *http.Request) {
 		days, _ := strconv.Atoi(r.URL.Query().Get("days"))
 		writeJSON(rw, maskrec.Sum(min(max(days, 1), 30)))

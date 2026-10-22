@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -57,9 +58,14 @@ import (
 // files (zcodeFormat), and only a provider magpie adds new starts on
 // Anthropic Messages.
 
+// zcodeOS is the OS ZCode's home is found for, so a test can ask for
+// Windows' (appdir.ZCodeHomeOn).
+var zcodeOS = runtime.GOOS
+
 func zcode(home string) *Agent {
-	// where ZCode keeps its data, moved there in its settings or not
-	dir := filepath.Join(appdir.ZCodeDataIn(home), ".zcode")
+	// where ZCode keeps its data, moved there in its settings or not, under
+	// the home ZCode reads (HOME first, on Windows too)
+	dir := filepath.Join(appdir.ZCodeDataIn(appdir.ZCodeHomeOn(zcodeOS, home)), ".zcode")
 	path := filepath.Join(dir, "v2", "config.json")
 	rules := filepath.Join(dir, "v2", "provider_config.json")
 	key := "provider." + magpieID

@@ -62,7 +62,8 @@ function serve(lang, sum, asked) {
     if (url.pathname === "/api/settings") return json(settings);
     if (url.pathname === "/api/providers") return json({ providers: [{ id: "anthropic", name: "Anthropic", icon: "anthropic", agents: [], models: [] }, { id: "openai", name: "OpenAI", icon: "openai", agents: [], models: [] }], presets: [], excluded: [],
       gateway: { running: true, window: true, mine: true, url: "http://127.0.0.1:3999", models: 0, groups: [],
-        calls: [{ id: 7, time: ago(120e3), agent: "claude", model: "claude-opus-4-1", from: "anthropic", to: "anthropic", status: 200, ms: 900, masked: { n: 3, distinct: 2, kinds: { API_KEY: 2, EMAIL: 1 }, by: { rule: 2 }, key: 1002 } }] } });
+        calls: [{ id: 7, time: ago(120e3), agent: "claude", model: "claude-opus-4-1", from: "anthropic", to: "anthropic", status: 200, ms: 900, masked: { n: 3, distinct: 2, kinds: { API_KEY: 2, EMAIL: 1 }, by: { rule: 2 }, key: 1002 } },
+          { id: 8, time: ago(60e3), agent: "claude", model: "claude-opus-4-1", from: "anthropic", to: "anthropic", status: 200, ms: 700, masked: { n: 0, distinct: 0, warned: 2, key: 1003 } }] } });
     if (url.pathname === "/api/groups") return json({ groups: [], models: [] });
     if (url.pathname === "/api/plugins") return json({ plugins: [] });
     if (url.pathname === "/api/privacy-model") return json({ supported: true, installed: false, size: 1.6e9 });
@@ -206,8 +207,12 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
   test(`${engine}: a masked call on the Gateway page opens its record`, async (t) => {
     const { browser, page, errors } = await open(engine, "en", 1100, summary, "?view=gateway");
     t.after(() => browser.close());
-    const badge = page.locator("#activity .call .mask-badge");
+    const badge = page.locator("#activity .call .mask-badge:not(.warn)");
     await badge.waitFor();
+    // a call whose values only went as written, as the user set (#1977)
+    const warned = page.locator("#activity .call .mask-badge.warn");
+    assert.equal(await warned.textContent(), "2");
+    assert.equal(await warned.getAttribute("title"), "2 values went to the vendor as written, as you set");
     assert.equal(await badge.textContent(), "3");
     assert.match(await badge.getAttribute("title"), /^3 values masked before it went to the vendor: API keys 2, Emails 1$/);
     await badge.click();

@@ -183,8 +183,8 @@ func (s *Server) serveRetrieval(w http.ResponseWriter, r *http.Request, path, op
 		w, done, hits, sent, err = req.mask(w)
 		defer done()
 		if err != nil { // fails closed
-			call.Status, call.Error = http.StatusServiceUnavailable, err.Error()
-			writeError(w, provider.Chat, http.StatusServiceUnavailable, err.Error())
+			call.Status, call.Error = maskStatus(err), err.Error()
+			writeError(w, provider.Chat, call.Status, err.Error())
 			s.record(call)
 			return
 		}

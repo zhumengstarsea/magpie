@@ -44,6 +44,9 @@ type Value struct {
 	Head        string `json:"h,omitempty"` // its first character, or a key's prefix
 	Len         int    `json:"l"`           // its length in characters
 	N           int    `json:"n"`           // the places the request had it
+	// Action: "" masked, "warn" sent as written (the user asked to be
+	// told only), "block" masked and the request held back
+	Action string `json:"a,omitempty"`
 }
 
 // Record is one request's masking.
@@ -58,6 +61,9 @@ type Record struct {
 	Model    string    `json:"model,omitempty"`
 	N        int       `json:"n"` // values swapped, each place counted
 	Values   []Value   `json:"values,omitempty"`
+	// Blocked: the request was held back, sent to no one, for a value
+	// of a kind the user set to block
+	Blocked bool `json:"blocked,omitempty"`
 	// Snips: by placeholder, the text around its first place as the
 	// vendor saw it; in memory only
 	Snips map[string]string `json:"snips,omitempty"`
@@ -155,6 +161,9 @@ func merged(vs []Value) []Value {
 			out[i].N += v.N
 			if out[i].By == "known" && v.By != "known" {
 				out[i].By = v.By
+			}
+			if v.Action == "block" {
+				out[i].Action = v.Action
 			}
 			continue
 		}

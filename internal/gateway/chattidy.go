@@ -47,10 +47,16 @@ import (
 // which a strict upstream it is sent to later turns away (#2611): such a
 // fragment is given an id, and a later fragment's empty one is left out.
 //
+// And a choice that made calls and ended "stop" ends "tool_calls": told
+// it stopped, a client that reads finish_reason ends its turn there with
+// the calls not run (喜欢一个人 on Discord, a relay in front of
+// deepseek-v4.1-flash), as the translations' collector already has it.
+//
 // Lines pass whole, as they came, unless one has any of them.
 type chatTidy struct {
-	buf []byte
-	ids streamCallIDs
+	buf    []byte
+	ids    streamCallIDs
+	called map[int]bool // the choices that made a call
 }
 
 var (
@@ -84,7 +90,7 @@ func (t *chatTidy) flush() []byte {
 }
 
 func (t *chatTidy) lines(b []byte) []byte {
-	if !needsTidy(b) {
+	if !t.needs(b) {
 		return append([]byte(nil), b...)
 	}
 	var out []byte
@@ -112,11 +118,18 @@ func needsTidy(line []byte) bool {
 		bytes.Contains(line, toolCallsField)
 }
 
+// needs is needsTidy, and a finish_reason once a choice made a call.
+func (t *chatTidy) needs(b []byte) bool {
+	return needsTidy(b) || len(t.called) > 0 && bytes.Contains(b, finishReasonField)
+}
+
+var finishReasonField = []byte(`"finish_reason"`)
+
 // tidyLine mends one line as the first of a stream.
 func tidyLine(line []byte) []byte { return (&chatTidy{}).line(line) }
 
 func (t *chatTidy) line(line []byte) []byte {
-	if !needsTidy(line) {
+	if !t.needs(line) {
 		return line
 	}
 	body := bytes.TrimRight(line, "\r\n")
@@ -139,6 +152,8 @@ func (t *chatTidy) line(line []byte) []byte {
 			c["finish_reason"] = json.RawMessage("null")
 			changed = true
 		}
+		choice := k
+		decodeJSON(c["index"], &choice)
 		var delta map[string]json.RawMessage
 		if decodeJSON(c["delta"], &delta) != nil {
 			continue
@@ -155,8 +170,10 @@ func (t *chatTidy) line(line []byte) []byte {
 			if t.ids == nil {
 				t.ids = streamCallIDs{}
 			}
-			choice := k
-			decodeJSON(c["index"], &choice)
+			if t.called == nil {
+				t.called = map[int]bool{}
+			}
+			t.called[choice] = true
 			if mended, chg := t.ids.mend(choice, calls); chg {
 				calls, delta["tool_calls"] = mended, mended
 				inDelta = true
@@ -168,6 +185,10 @@ func (t *chatTidy) line(line []byte) []byte {
 		}
 		if inDelta {
 			c["delta"], _ = json.Marshal(delta)
+			changed = true
+		}
+		if t.called[choice] && string(bytes.TrimSpace(c["finish_reason"])) == `"stop"` {
+			c["finish_reason"] = json.RawMessage(`"tool_calls"`)
 			changed = true
 		}
 	}
@@ -323,6 +344,12 @@ func (t *chatWhole) flush() []byte {
 				c["finish_reason"] = json.RawMessage(`"tool_calls"`)
 			}
 			mended = true
+		}
+		// calls the upstream made, ended "stop" (chatTidy)
+		var native []json.RawMessage
+		if string(bytes.TrimSpace(c["finish_reason"])) == `"stop"` && decodeJSON(msg["tool_calls"], &native) == nil && len(native) > 0 {
+			c["finish_reason"] = json.RawMessage(`"tool_calls"`)
+			changed = true
 		}
 		if !mended {
 			continue

@@ -275,6 +275,10 @@ export const FakePlugin = async ({ client }) => ({
         p.models["mimo-v2.6-flash-free"] = { ...p.models["fake-1"], id: "mimo-v2.6-flash-free", name: "MiMo V2.6 Flash Free", api: { ...p.models["fake-1"].api, id: "mimo-v2.6-flash-free" }, free: true, variants: {},
           capabilities: {"temperature":true,"reasoning":true,"attachment":true,"toolcall":true,"input":{"text":true,"image":true,"audio":true,"video":true,"pdf":false},"output":{"text":true,"image":false,"audio":false,"video":false,"pdf":false},"interleaved":{"field":"reasoning_content"}} }
       }
+      // $FAKE_SEARCHER: one more model, that searches the web by itself
+      // when asked in plain words, marked on the list the hook gives, as
+      // Trae CN's search_agent ("Search") is listed beside its chat models
+      if (process.env.FAKE_SEARCHER) p.models["fake-search"] = { ...p.models["fake-1"], id: "fake-search", name: "Fake Search", api: { ...p.models["fake-1"].api, id: "fake-search" }, free: false, searches: true }
       // $FAKE_DECIDE: one more decision model, marked on the list the hook
       // gives, as a plugin that reads its vendor's list marks one
       if (process.env.FAKE_DECIDE) p.models["fake-judge"] = { ...p.models["fake-1"], id: "fake-judge", name: "Fake Judge", api: { ...p.models["fake-1"].api, id: "fake-judge" }, free: false, decides: true }

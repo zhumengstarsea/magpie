@@ -741,7 +741,7 @@ func (s *Server) videosCreate(w http.ResponseWriter, r *http.Request) {
 		err = maskStrings(f.Extra, &extra)
 	}
 	if err != nil { // fails closed
-		fail(http.StatusServiceUnavailable, err.Error())
+		fail(maskStatus(err), err.Error())
 		return
 	}
 	n := extra.n

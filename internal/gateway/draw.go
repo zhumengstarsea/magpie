@@ -472,7 +472,7 @@ func (s *Server) images(edit bool) http.HandlerFunc {
 		w, d.Prompt, unmask, hits, err = redactedPromptHits(w, d.Prompt)
 		defer unmask()
 		if err != nil {
-			fail(http.StatusServiceUnavailable, err.Error())
+			fail(maskStatus(err), err.Error())
 			return
 		}
 		noteMasked(r, "image", hits, d.Prompt, 0, p.ID, call.Model)

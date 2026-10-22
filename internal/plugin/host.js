@@ -1715,6 +1715,8 @@ async function info(id, key, strict) {
       variants: m.variants ?? was?.variants ?? {},
       // magpie's own mark: a decision model, answering System One
       ...(typeof m.decides === "boolean" ? { decides: m.decides } : was?.decides !== undefined ? { decides: was.decides } : {}),
+      // and one that searches the web by itself, asked in plain words
+      ...(typeof m.searches === "boolean" ? { searches: m.searches } : was?.searches !== undefined ? { searches: was.searches } : {}),
     }
   }
   const server = auths().get(id)?.spec
@@ -1974,6 +1976,9 @@ async function providers({ proxies } = {}) {
           // a decision model (System One's), hidden from agents and
           // offered as a routing group's classifier
           decides: m.decides === true,
+          // a model that searches the web by itself, asked in plain
+          // words, which magpie may search with for other models
+          searches: m.searches === true,
         })),
     })
   }

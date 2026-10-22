@@ -115,11 +115,14 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           const row = box.locator(".row");
           // scrolled to with the wheel, as a reader does: Playwright's own
           // scroll into view is code, which the click guard puts back
-          await page.mouse.move(width / 2, 300);
-          for (let i = 0; i < 20 && await row.evaluate((r) => r.getBoundingClientRect().bottom > (document.querySelector("footer.foot")?.getBoundingClientRect().top ?? innerHeight) - 4); i++) {
-            await page.mouse.wheel(0, 200);
-            await page.waitForTimeout(80);
-          }
+          const toRow = async () => {
+            await page.mouse.move(width / 2, 300);
+            for (let i = 0; i < 60 && await row.evaluate((r) => r.getBoundingClientRect().bottom > (document.querySelector("footer.foot")?.getBoundingClientRect().top ?? innerHeight) - 4); i++) {
+              await page.mouse.wheel(0, 200);
+              await page.waitForTimeout(80);
+            }
+          };
+          await toRow();
           await page.waitForTimeout(300);
           const fit = await row.evaluate((r) => {
             const b = r.getBoundingClientRect(), segs = r.querySelector(".val").getBoundingClientRect();
@@ -163,6 +166,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           assert.equal(await page.locator("#discoveryList .opt").nth(0).evaluate((b) => b.classList.contains("on")), true,
             "a save of another setting turned discovery back on");
 
+          // Mask secrets on draws what is done with each kind above it
+          await toRow();
           await page.locator("#discoveryList .opt").nth(1).click();
           for (let i = 0; i < 50 && posts.length < 2; i++) await page.waitForTimeout(50);
           assert.deepEqual(posts.at(-1), { off: false });

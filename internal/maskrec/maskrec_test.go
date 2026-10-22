@@ -119,3 +119,28 @@ func TestPrune(t *testing.T) {
 		t.Fatalf("old day kept: %v", err)
 	}
 }
+
+// A value sent as written is counted as warned, not as one masked, and a
+// request held back is counted, read from disk and kept up alike (#1977).
+func TestSumWarnedAndBlocked(t *testing.T) {
+	now := time.Date(2026, 10, 20, 15, 0, 0, 0, time.Local)
+	sandbox(t, now)
+	e, k := "{{EMAIL_aaaabbbb}}", "{{API_KEY_ccccdddd}}"
+	Add(Record{Time: now.Add(-time.Hour), N: 1, Values: []Value{{Placeholder: e, Kind: "EMAIL", By: "rule", Len: 9, N: 2, Action: "warn"}, {Placeholder: k, Kind: "API_KEY", By: "rule", Len: 40}}})
+	for _, fresh := range []bool{true, false} {
+		if fresh {
+			store.mu.Lock()
+			store.days = nil
+			store.mu.Unlock()
+		}
+		_ = Sum(7)
+		Add(Record{Time: now, What: "blocked", Blocked: true, N: 1, Values: []Value{{Placeholder: k, Kind: "API_KEY", By: "rule", Len: 40, Action: "block"}}})
+	}
+	s := Sum(7)
+	if s.Warned != 2 || s.Blocked != 2 || s.Distinct != 1 || s.N != 3 || len(s.Kinds) != 1 || s.Kinds[0].Name != "API_KEY" {
+		t.Fatalf("summary: %+v", s)
+	}
+	if got, _ := List(0, 1, Filter{}); len(got) != 1 || !got[0].Blocked || got[0].Values[0].Action != "block" {
+		t.Fatalf("record: %+v", got)
+	}
+}

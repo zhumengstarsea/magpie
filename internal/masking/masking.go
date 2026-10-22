@@ -23,7 +23,8 @@ func Wanted(st settings.Settings) bool {
 
 func options() redact.Options {
 	st := settings.Shared()
-	o := redact.Options{Secrets: st.Redact, Personal: st.RedactPersonal, Kinds: st.RedactKinds, Words: st.RedactWords, Rules: st.RedactRules}
+	o := redact.Options{Secrets: st.Redact, Personal: st.RedactPersonal, Kinds: st.RedactKinds, Words: st.RedactWords, Rules: st.RedactRules,
+		Actions: st.RedactActions, Allow: st.RedactAllow}
 	if st.RedactModel {
 		o.Model = model
 	}
@@ -74,14 +75,27 @@ func (Masker) TextHits(s string) (string, []gwmw.Hit) {
 
 func (Masker) Value(p string) (string, bool) { return redact.Value(p) }
 
-// told adds each value masked to hits, with its hint: the value itself
-// stays in redact's memory.
+// told adds each value found to hits, with its hint: the value itself
+// stays in redact's memory, or, sent as written, nowhere.
 func told(hits *[]gwmw.Hit) func(redact.Hit) {
 	return func(h redact.Hit) {
-		v, _ := redact.Value(h.Placeholder)
-		head, n := redact.Hint(h.Kind, v)
-		*hits = append(*hits, gwmw.Hit{Kind: h.Kind, By: h.By, Placeholder: h.Placeholder, Head: head, Len: n})
+		*hits = append(*hits, gwmw.Hit{Kind: h.Kind, By: h.By, Placeholder: h.Placeholder, Action: h.Action, Head: h.Head, Len: h.Len})
 	}
+}
+
+// Preview is s as the settings would send it, and what was found in it,
+// with nothing remembered: no placeholder is kept for the replies, and
+// none of its values is masked again later as one seen before. With
+// masking off it is as masking would be turned on (Off says so), so the
+// user can try it first.
+func Preview(s string) (out string, hits []gwmw.Hit, off bool) {
+	o := options()
+	if !o.Secrets && !o.Personal && len(o.Words) == 0 {
+		o.Secrets, o.Personal, off = true, true, true
+	}
+	o.Seen = told(&hits)
+	out = redact.Preview(s, o)
+	return out, hits, off
 }
 
 func (Masker) Restore(s string, escaped bool) string { return redact.Restore(s, escaped) }

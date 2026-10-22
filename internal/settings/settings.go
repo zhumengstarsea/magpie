@@ -97,6 +97,13 @@ type Settings struct {
 	RedactKinds    map[string]bool `json:"redactKinds,omitempty"`
 	RedactWords    []string        `json:"redactWords,omitempty"`
 	RedactRules    []redact.Rule   `json:"redactRules,omitempty"`
+	// RedactActions is what is done with a value of a kind (redact.Hit's
+	// Kind: API_KEY, EMAIL, a rule's own…) other than masking it, where
+	// the user chose: redact.Warn sends it as written and records it,
+	// redact.Block holds the request back. RedactAllow are values sent
+	// as written whatever finds them, each whole, in any case (#1977).
+	RedactActions map[string]string `json:"redactActions,omitempty"`
+	RedactAllow   []string          `json:"redactAllow,omitempty"`
 	// LAN shares the gateway on the local network; remote callers must use
 	// named caller keys. LANKey is retained for older Magpie versions.
 	// LAN is this computer's own (KeepOwn; Lullaby on Discord: sharing
@@ -1457,6 +1464,12 @@ func save(s Settings, recording bool) error {
 		return err
 	}
 	s.RedactRules = rules
+	if s.RedactActions, err = redactActions(s.RedactActions); err != nil {
+		return err
+	}
+	if s.RedactAllow, err = redactAllow(s.RedactAllow); err != nil {
+		return err
+	}
 	s.AgentOrder, s.AgentsHidden, s.AgentsShown = ids(s.AgentOrder), ids(s.AgentsHidden), ids(s.AgentsShown)
 	s.UsageOrder = ids(s.UsageOrder)
 	s.PanelUsageHidden = ids(s.PanelUsageHidden)

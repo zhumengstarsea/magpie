@@ -234,6 +234,10 @@ func pluginCatalog(pp plugin.Provider) []catalog.Model {
 		if c.Name == "" {
 			c.Name = m.ID
 		}
+		// a model that searches the web by itself, asked in plain words
+		if m.Searches {
+			c.WebSearch = "native"
+		}
 		if m.Reasoning {
 			c.Efforts, c.Reasoning = m.Variants, true
 		}

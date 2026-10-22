@@ -240,7 +240,8 @@ func targetOf(a *agent.Agent) *Target {
 	case "zcode":
 		// ZCode's own servers are its cli/config.json's mcp.servers (the
 		// app's MCP settings write there); AGENTS.md and skills beside it
-		d := filepath.Join(h, ".zcode")
+		// under the home ZCode reads, HOME first on Windows too
+		d := filepath.Join(appdir.ZCodeHome(h), ".zcode")
 		t.Instructions = filepath.Join(d, "AGENTS.md")
 		t.MCP = &mcpFile{Path: filepath.Join(d, "cli", "config.json"), Format: fmtZCode}
 		t.Skills = filepath.Join(d, "skills")

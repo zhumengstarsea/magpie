@@ -103,6 +103,10 @@ type Model struct {
 	// not named jev-…, Clef or a vendor's own). It counts only where the
 	// provider says it serves a decision API (Provider.Decide).
 	Decides bool `json:"decides,omitempty"`
+	// Searches is set by the plugin on a model that searches the web by
+	// itself when asked in plain words (m.searches: Trae's search model),
+	// which magpie may then search with for other models.
+	Searches bool `json:"searches,omitempty"`
 }
 
 // Provider is a provider a plugin signs in to.

@@ -135,6 +135,8 @@ func TestSettingsSaveKeepsWhatItDoesNotSend(t *testing.T) {
 		ModelSameAs:          map[string]string{"p/m": "deepseek-v4.1-flash"},
 		ModelKinds:           map[string]string{"p/m": "video"},
 		RedactRules:          []redact.Rule{{Kind: "prefix", Prefix: "oc_sk_"}},
+		RedactActions:        map[string]string{"API_KEY": "block", "EMAIL": "warn"},
+		RedactAllow:          []string{"team@kelvarn.io"},
 		LAN:                  true,
 		LANKey:               "sk-lan",
 		LANKeyID:             "lan-key-id",

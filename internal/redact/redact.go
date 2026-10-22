@@ -44,7 +44,16 @@ type Options struct {
 	// Model, where set, finds more in the texts to mask (model.go)
 	Model Model
 
-	// Seen, where set, is told of each value masked
+	// Actions is what is done with a value of a kind (a Hit's Kind) other
+	// than masking it, where the user chose: Warn sends it as written,
+	// Block masks it and the request is held back (the gateway's). A kind
+	// not in it is masked.
+	Actions map[string]string
+	// Allow are values the user lets go as written, whichever finder finds
+	// them: each a whole value, in any case.
+	Allow []string
+
+	// Seen, where set, is told of each value masked, warned of or blocked
 	Seen func(Hit)
 
 	// found are the spans Model found, by text, for one request's texts
@@ -346,10 +355,17 @@ func loadKey() []byte {
 
 var b32 = base32.StdEncoding.WithPadding(base32.NoPadding)
 
-func placeholder(kind, v string) string {
+// tag is the placeholder v of kind goes as, made and not remembered: a
+// value sent as written (Warn) is named by it in the record of what was
+// found, and a preview names each value by it.
+func tag(kind, v string) string {
 	h := hmac.New(sha256.New, key())
 	h.Write([]byte(kind + "\x00" + v))
-	p := "{{" + kind + "_" + strings.ToLower(b32.EncodeToString(h.Sum(nil))[:8]) + "}}"
+	return "{{" + kind + "_" + strings.ToLower(b32.EncodeToString(h.Sum(nil))[:8]) + "}}"
+}
+
+func placeholder(kind, v string) string {
+	p := tag(kind, v)
 	mu.Lock()
 	if _, ok := values[p]; !ok {
 		if len(values) >= maxValues {
@@ -389,10 +405,21 @@ const (
 	ByKnown = "known"
 )
 
-// Hit is one value masked: its kind, the finder that found it, and the
-// placeholder it went as. It never holds the value itself.
+// What is done with a value of a kind (Options.Actions) other than
+// masking it.
+const (
+	Warn  = "warn"  // sent as written, and recorded
+	Block = "block" // masked, and the request held back
+)
+
+// Hit is one value found: its kind, the finder that found it, the
+// placeholder it went as (or would have, for one sent as written), what
+// was done with it ("" masked, Warn, Block) and its Hint. It never holds
+// the value itself.
 type Hit struct {
-	Kind, By, Placeholder string
+	Kind, By, Placeholder, Action string
+	Head                          string
+	Len                           int
 }
 
 // Value is the value behind placeholder p, while this run of magpie
@@ -434,6 +461,14 @@ func Hint(kind, v string) (head string, n int) {
 // Mask swaps what o covers in s for placeholders, and says how many.
 func Mask(s string, o Options) (string, int) {
 	return mask(s, withModel(o, []string{s}), placeholder)
+}
+
+// Preview is Mask with nothing remembered: each value goes as the
+// placeholder it would have, which isn't kept for Restore or as a value
+// seen before (known.go).
+func Preview(s string, o Options) string {
+	out, _ := mask(s, withModel(o, []string{s}), tag)
+	return out
 }
 
 // mask swaps what o covers in s for what put makes of each value.
@@ -527,7 +562,7 @@ func mask(s string, o Options, put func(kind, v string) string) (string, int) {
 	// kind it has always had
 	found = append(found, modelSpans(s, o)...)
 	found = append(found, knownSpans(s, o)...)
-	return apply(s, found, put, o.Seen)
+	return apply(s, found, put, o)
 }
 
 // by is the finder r is, for Hit.By.
@@ -618,9 +653,10 @@ func (r rule) takes(s string, a, b int, ok func(string) bool) bool {
 }
 
 // apply swaps each of found in s for what put makes of its value, the
-// first and longest where they overlap, nothing inside a placeholder.
-// seen, where set, is told of each.
-func apply(s string, found []span, put func(kind, v string) string, seen func(Hit)) (string, int) {
+// first and longest where they overlap, nothing inside a placeholder. A
+// value o allows is left as it is, and one of a kind o warns of is left
+// and told. o.Seen, where set, is told of each.
+func apply(s string, found []span, put func(kind, v string) string, o Options) (string, int) {
 	if len(found) == 0 {
 		return s, 0
 	}
@@ -643,21 +679,49 @@ func apply(s string, found []span, put func(kind, v string) string, seen func(Hi
 		return found[i].end > found[j].end
 	})
 	var b strings.Builder
-	last, n := 0, 0
+	last, next, n := 0, 0, 0 // next: where the next value may start
 	for _, f := range found {
-		if f.start < last {
+		if f.start < next {
+			continue
+		}
+		next = f.end
+		v := s[f.start:f.end]
+		if o.allows(v) {
+			continue
+		}
+		act := o.Actions[f.kind]
+		if act != Warn && act != Block {
+			act = ""
+		}
+		h := Hit{Kind: f.kind, By: f.by, Action: act}
+		h.Head, h.Len = Hint(f.kind, v)
+		if act == Warn {
+			if o.Seen != nil {
+				h.Placeholder = tag(f.kind, v)
+				o.Seen(h)
+			}
 			continue
 		}
 		b.WriteString(s[last:f.start])
-		p := put(f.kind, s[f.start:f.end])
-		b.WriteString(p)
-		if seen != nil {
-			seen(Hit{f.kind, f.by, p})
+		h.Placeholder = put(f.kind, v)
+		b.WriteString(h.Placeholder)
+		if o.Seen != nil {
+			o.Seen(h)
 		}
 		last, n = f.end, n+1
 	}
 	b.WriteString(s[last:])
 	return b.String(), n
+}
+
+// allows says the user lets v go as written (Options.Allow).
+func (o Options) allows(v string) bool {
+	for _, a := range o.Allow {
+		if strings.EqualFold(strings.TrimSpace(a), v) {
+			return true
+		}
+	}
+	return false
 }
 
 func containsAny(s string, subs []string) bool {

@@ -1218,6 +1218,8 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		in.GatewayConversations = cur.GatewayConversations // Sessions' explicit recording consent
 		in.RedactRules = cur.RedactRules                   // the masking rules, set on their own
 		in.RedactModel = cur.RedactModel                   // set on its own (privacy-model)
+		in.RedactActions = cur.RedactActions               // set on their own (redact-actions below)
+		in.RedactAllow = cur.RedactAllow                   // set on its own (redact-allow below)
 		in.DisabledModels = cur.DisabledModels             // set on their own (disabled-models below, #1867)
 		// used or left is the Usage page's toggle as much as Settings', set on its own
 		in.QuotaLeft = cur.QuotaLeft
@@ -2087,6 +2089,41 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 			return
 		}
 		s.RedactRules = next
+		if err := settings.Save(s); err != nil {
+			fail(rw, err)
+			return
+		}
+		writeJSON(rw, settingsState())
+	})
+	// what is done with a value of a kind found, other than masking it
+	// (warn, block), all of them each time (#1977)
+	mux.HandleFunc("POST /api/settings/redact-actions", func(rw http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Actions map[string]string `json:"actions"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			fail(rw, err)
+			return
+		}
+		s := settings.Load()
+		s.RedactActions = in.Actions
+		if err := settings.Save(s); err != nil {
+			fail(rw, err)
+			return
+		}
+		writeJSON(rw, settingsState())
+	})
+	// the values masking lets go as written, all of them each time (#1977)
+	mux.HandleFunc("POST /api/settings/redact-allow", func(rw http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Allow []string `json:"allow"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			fail(rw, err)
+			return
+		}
+		s := settings.Load()
+		s.RedactAllow = in.Allow
 		if err := settings.Save(s); err != nil {
 			fail(rw, err)
 			return

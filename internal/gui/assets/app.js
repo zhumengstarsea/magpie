@@ -3996,7 +3996,7 @@ async function load(again) {
     if (mode !== "panel" && !(view === "providers" || providersPage(view))) prefetchProviders();
     // the panel brought up on its Allowances tab is the reader opening
     // them (#1588); the page loaded while the panel is still put away is not
-    if (mode === "panel") { renderPanelQuota(); panelTab === "usage" && !document.hidden && (again || document.hasFocus()) ? quotasOpened() : loadQuotas(); }
+    if (mode === "panel") { renderPanelQuota(true); panelTab === "usage" && !document.hidden && (again || document.hasFocus()) ? quotasOpened() : loadQuotas(); }
     // an open provider editor is someone typing: coming back to the window
     // must not rebuild it under them
     if ((view === "providers" || providersPage(view)) && !(editing || adding)) await loadProviders();
@@ -15282,9 +15282,12 @@ function loadQuotas(asked, again) {
   const p = Promise.resolve(quotasLoading).catch(() => {})
     .then(() => {
       began = quotaRefreshVersion;
-      return Promise.all([api("usage/quotas" + (asked ? "?asked=1" : ""), undefined, (h) => { reading = h.get("X-Magpie-Reading") === "1"; }), api("usage/quotas/history?days=45").catch(() => null)]);
+      // the curves come on their own: the allowances now never wait for
+      // them (a remote magpie's history can take seconds; #3192)
+      loadQuotaHist();
+      return api("usage/quotas" + (asked ? "?asked=1" : ""), undefined, (h) => { reading = h.get("X-Magpie-Reading") === "1"; });
     })
-    .then(([q, h]) => {
+    .then((q) => {
       // an answer that isn't a list of cards is a read that failed: what
       // was read before stays, as it does when the read is refused
       if (q != null && !Array.isArray(q)) { quotas = quotas || []; reading = false; return; }
@@ -15292,18 +15295,31 @@ function loadQuotas(asked, again) {
       // Whole-page reads are serialized; no older one still needs these
       // markers. A card reply must not retire them while a GET is pending.
       for (const [key, version] of quotaRefreshVersions) if (version <= began) quotaRefreshVersions.delete(key);
-      same =!!again && !!quotas && JSON.stringify(q || []) === JSON.stringify(quotas) && (!h || JSON.stringify(h) === JSON.stringify(quotaHist));
-      quotas = q || []; quotasAt = Date.now(); if (h) quotaHist = h;
+      same = !!again && !!quotas && JSON.stringify(q || []) === JSON.stringify(quotas);
+      quotas = q || []; quotasAt = Date.now();
     }, () => { quotas = quotas || []; reading = false; })
     .finally(() => {
       if (quotasLoading === p) quotasLoading = null;
-      if (!same) renderQuotas();
+      if (!same) renderQuotas(true);
       if (view === "usage") loadUpstream();
       if (reading && !quotasLater && ++quotasTries <= 20) quotasLater = setTimeout(() => { quotasLater = 0; loadQuotas(false, true); }, 1500);
     });
   p.asked = !!asked;
   quotasLoading = p;
   return p;
+}
+
+// loadQuotaHist reads the allowances' history for the curves, and draws
+// them again only when it differs from what is drawn. Of two reads on
+// their way, the later asked is the one that stands.
+let quotaHistSeq = 0, quotaHistV = 0;
+function loadQuotaHist() {
+  const seq = ++quotaHistSeq;
+  return api("usage/quotas/history?days=45").then((h) => {
+    if (seq !== quotaHistSeq || !h || JSON.stringify(h) === JSON.stringify(quotaHist)) return;
+    quotaHist = h; quotaHistV++;
+    if (quotas) renderQuotas(true);
+  }, () => {});
 }
 
 // A whole-page reply can have left the backend before a card's refresh
@@ -15392,8 +15408,13 @@ function ownLine(sub) {
   return line;
 }
 
-function renderQuotas() {
-  renderPanelQuota();
+// lazy: drawn only if something the panel shows changed (a load's answer,
+// the window coming back), not each time it is asked (#3192)
+function renderQuotas(lazy) {
+  renderPanelQuota(lazy);
+  // the tray panel never shows the Usage page: its cards and curves are
+  // not drawn there unseen (#3192)
+  if (mode === "panel") return;
   const subscriptions = $("#subscriptionUsage");
   const restoreFlash = keepQuotaFlash(subscriptions);
   const restoreRefresh = keepQuotaRefresh(subscriptions);
@@ -15402,17 +15423,17 @@ function renderQuotas() {
   // left turns their meters, and is only there when some card has one (a
   // balance is only ever what is left)
   $("#quotaHead").hidden = !!quotas && !quotas.length;
-  const mode = $("#quotaMode");
-  mode.hidden = !quotas?.some((q) => !q.error && q.windows?.length);
-  if (!mode.hidden) {
-    mode.replaceChildren();
+  const pick = $("#quotaMode");
+  pick.hidden = !quotas?.some((q) => !q.error && q.windows?.length);
+  if (!pick.hidden) {
+    pick.replaceChildren();
     for (const [left, name] of [[false, "Used"], [true, "Left"]]) {
       const b = el("button", "opt" + (left === quotaLeft ? " on" : ""), t(name));
       b.title = t(left ? "Show how much of each window is left" : "Show how much of each window is used");
       b.onclick = () => { if (left !== quotaLeft) setQuotaLeft(left); };
-      mode.append(b);
+      pick.append(b);
     }
-    slide(mode, "quotaMode");
+    slide(pick, "quotaMode");
   }
   renderQuotaTrend();
   if (!quotas) {
@@ -15463,7 +15484,7 @@ function renderQuotas() {
     }
     // many accounts (Linx on X: twenty-odd on one plugin, 顶成擎天柱):
     // the same, each still a row of its own
-    const accts = !keys && several && mode !== "panel" && subs.length > ACCTS_FOLD;
+    const accts = !keys && several && subs.length > ACCTS_FOLD;
     const folded = keys ? keysFolded(subs) : accts ? acctsFolded(subs) : new Set();
     for (const sub of subs) {
       if (folded.has(sub)) continue;
@@ -16860,9 +16881,17 @@ function renderPanelUse() {
 // account; balances as figures. All in the Usage page's order, a balance
 // where it was put there, not after the plans (#1510, JokerQyou); balances
 // side by side share one grid.
-function renderPanelQuota() {
+//
+// lazy: kept as it is when nothing it draws from has changed, so the
+// window's focus and visibility coming back neither rebuild the cards nor
+// start the skeleton's shimmer again (#3192). The minute is in it, for
+// the deadlines it words by the clock.
+function renderPanelQuota(lazy) {
   const box = $("#panelQuota");
   if (mode !== "panel" || !box) return;
+  const drawn = JSON.stringify([quotas, quotaHistV, quotaLeft, quotaRange, [...panelOptsFolded], state?.settings, locale, panelTab, panelPeek, panelArranging, usageArranging, Math.floor(Date.now() / 60e3)]);
+  if (lazy && renderPanelQuota.drawn === drawn) return;
+  renderPanelQuota.drawn = drawn;
   const subs = byUsageOrder(keyCards(quotas || []).filter((q) => q.balance || q.error || q.windows?.length));
   const none = !!quotas && !subs.length;
   const usageTab = $('#ptabs [data-ptab="usage"]');
@@ -21779,6 +21808,8 @@ function renderRedact(s, keep) {
   i.onblur = save;
   row(t("Masked words"), t("Your own words to keep from vendors, separated by commas"), i);
   renderRedactRules(s, row);
+  renderMaskActions(s);
+  renderMaskTry(s);
   // how it is found: the rules on every request that masks anything, and
   // the local model on top of them, for what no pattern can tell
   const masking = s.redact || s.redactPersonal;
@@ -22060,7 +22091,9 @@ function drawMaskObs() {
   const num = el("span", "mo-num", fmtN(sum.n));
   big.append(num, el("span", "mo-unit", t(sum.n === 1 ? "value masked" : "values masked")));
   count.append(big, el("div", "mo-meta", sum.requests
-    ? t(sum.distinct === 1 ? "1 different value" : "{n} different values", { n: fmtN(sum.distinct) }) + " · " + t(sum.requests === 1 ? "1 request" : "{n} requests", { n: fmtN(sum.requests) })
+    ? [t(sum.distinct === 1 ? "1 different value" : "{n} different values", { n: fmtN(sum.distinct) }), t(sum.requests === 1 ? "1 request" : "{n} requests", { n: fmtN(sum.requests) }),
+      sum.blocked ? t(sum.blocked === 1 ? "1 request held back" : "{n} requests held back", { n: fmtN(sum.blocked) }) : "",
+      sum.warned ? t(sum.warned === 1 ? "1 value sent as written" : "{n} values sent as written", { n: fmtN(sum.warned) }) : ""].filter(Boolean).join(" · ")
     : t("Nothing yet in these days")));
   const chart = el("div", "mo-days");
   hero.append(count, chart);
@@ -22490,7 +22523,8 @@ function maskRecordRow(r, v) {
   if (p.icon && r.provider) route.append(icon(p.icon));
   route.append(el("span", "who", r.provider ? p.name : t("A vendor")));
   if (r.model) route.append(el("span", "model", "· " + r.model));
-  if (r.what && r.what !== "chat") route.append(el("span", "what", MASK_WHAT[r.what] ? t(MASK_WHAT[r.what]) : r.what));
+  if (r.blocked) route.append(el("span", "what held", t("Held back")));
+  else if (r.what && r.what !== "chat") route.append(el("span", "what", MASK_WHAT[r.what] ? t(MASK_WHAT[r.what]) : r.what));
   const kinds = el("span", "mr-kinds");
   const by = {};
   for (const x of r.values || []) by[x.k] = (by[x.k] || 0) + (x.n || 1);
@@ -22541,6 +22575,8 @@ function maskRecordBody(r) {
     }
     line.append(maskDot(x.k), el("span", "mr-k", maskKindName(x.k)), shape, el("span", "mr-by" + (x.b === "model" ? " model" : ""), maskByName(x.b)));
     if (x.n > 1) line.append(el("span", "mr-x", "×" + fmtN(x.n)));
+    if (x.a === "warn") line.append(el("span", "mr-act warn", t("Sent as written")));
+    else if (x.a === "block") line.append(el("span", "mr-act block", t("Held back")));
     vals.append(line);
   }
   body.append(vals);
@@ -22564,11 +22600,15 @@ function maskRecordBody(r) {
 // maskedBadge: what masking swapped in one request (gateway's Masked), for
 // Recent calls and the Routing page; it opens that request's record
 function maskedBadge(m) {
-  const b = el("button", "mask-badge");
+  // a request whose values only went as written, which the user set a kind
+  // to do, is told in amber with how many
+  const warned = !m.n && m.warned > 0;
+  const b = el("button", "mask-badge" + (warned ? " warn" : ""));
   b.type = "button";
-  b.append(svg(SHIELD, 11, 1.7), el("span", "", fmtN(m.n)));
+  b.append(svg(SHIELD, 11, 1.7), el("span", "", fmtN(warned ? m.warned : m.n)));
   const kinds = Object.entries(m.kinds || {}).sort((x, y) => y[1] - x[1]).map(([k, n]) => `${maskKindName(k)} ${n}`).join(", ");
-  b.title = t(m.n === 1 ? "1 value masked before it went to the vendor: {kinds}" : "{n} values masked before it went to the vendor: {kinds}", { n: fmtN(m.n), kinds });
+  b.title = warned ? t(m.warned === 1 ? "1 value went to the vendor as written, as you set" : "{n} values went to the vendor as written, as you set", { n: fmtN(m.warned) })
+    : t(m.n === 1 ? "1 value masked before it went to the vendor: {kinds}" : "{n} values masked before it went to the vendor: {kinds}", { n: fmtN(m.n), kinds });
   b.setAttribute("aria-label", b.title);
   b.onclick = (e) => { e.stopPropagation(); openMaskRecord(m.key); };
   b.onkeydown = (e) => e.stopPropagation(); // Enter on it isn't the row's
@@ -22712,6 +22752,179 @@ function renderRedactRules(s, row) {
     x.onclick = () => set(rules.filter((_, i) => i !== n));
     row(r.kind, r.prefix ? t("Starts with {p}", { p: r.prefix }) : t("Matches {re}", { re: r.regex }), ed, x);
   });
+}
+
+// ---------- what is done with a value found, and trying it (#1977) ----------
+// Each kind masking finds is masked unless the user chose otherwise: Warn
+// sends it as written and records it, Block holds the whole request back.
+// The secrets, the user's own rules' kinds and any kind already set are
+// shown; the rest wait behind "Show all kinds".
+const MASK_SECRET_KINDS = ["API_KEY", "PRIVATE_KEY", "TOKEN", "PASSWORD", "SECRET"];
+const MASK_PERSONAL_KINDS = ["EMAIL", "PHONE", "ID_CARD", "BANK_CARD", "PERSON", "ADDRESS", "ACCOUNT", "SSN", "PASSPORT", "IBAN", "BIRTHDAY", "MAC", "SERIAL", "USERNAME", "HOSTNAME", "IP", "BUCKET"];
+const MASK_ACT_SUB = {
+  mask: "Goes to the vendor as a placeholder, and comes back as it was",
+  warn: "Goes to the vendor as written, and is recorded below",
+  block: "The request is held back: nothing is sent, and the agent is told why",
+};
+let maskActAll = false;
+// a rule's kind as its placeholders have it (redact.RuleKind)
+function maskRuleKind(k) {
+  const x = String(k || "").trim().toUpperCase().replace(/[ .-]/g, "_").replace(/[^A-Z0-9_]/g, "").replace(/^_+|_+$/g, "");
+  return x || "CUSTOM";
+}
+function maskActKinds(s) {
+  const acts = s.redactActions || {}, first = [], rest = [];
+  const add = (k, front) => {
+    if (first.includes(k) || rest.includes(k)) return;
+    (front || acts[k] ? first : rest).push(k);
+  };
+  if (s.redact) {
+    for (const k of MASK_SECRET_KINDS) add(k, true);
+    for (const r of s.redactRules || []) add(maskRuleKind(r.kind), true);
+  }
+  if (s.redactWords?.length) add("TERM", true);
+  if (s.redactPersonal) for (const k of MASK_PERSONAL_KINDS) add(k, false);
+  // a choice kept for a kind not masked now stays in view, to be undone
+  for (const k of Object.keys(acts)) add(k, true);
+  return { first, rest };
+}
+function renderMaskActions(s) {
+  const box = $("#maskActList");
+  if (!box) return;
+  box.replaceChildren();
+  const acts = s.redactActions || {};
+  const set = (next) => writingPrefs(api("settings/redact-actions", { actions: next }))
+    .then((ns) => { prefs = ns; renderSettings(); status(t("Saved"), "ok", 1500); })
+    .catch((e) => { status(t(e.message), "err"); renderSettings(); });
+  const row = (name, sub, ...tools) => {
+    const r = el("div", "row pref");
+    const who = el("div", "who"), val = el("div", "val");
+    who.append(el("div", "name", name), el("div", "sub", sub));
+    val.append(...tools);
+    r.append(who, val);
+    box.append(r);
+    return r;
+  };
+  const { first, rest } = maskActKinds(s);
+  if (!first.length && !rest.length) {
+    row(t("Mask everything found"), t("Turn on Mask secrets or Mask personal data first"));
+  }
+  for (const k of maskActAll ? [...first, ...rest] : first) {
+    const now = acts[k] || "mask";
+    const r = row(maskKindName(k), t(MASK_ACT_SUB[now]),
+      segs([["mask", t("Mask")], ["warn", t("Warn")], ["block", t("Block")]], now, (v) => {
+        const next = { ...acts };
+        if (v === "mask") delete next[k]; else next[k] = v;
+        set(next);
+      }));
+    r.classList.add("mask-act");
+    r.dataset.kind = k;
+    r.querySelector(".name").prepend(maskDot(k));
+    if (now !== "mask") r.querySelector(".sub").classList.add(now === "block" ? "act-block" : "act-warn");
+  }
+  if (rest.length) {
+    const more = el("button", "text", maskActAll ? t("Show fewer") : t("Show all kinds ({n} more)", { n: rest.length }));
+    more.onclick = () => { maskActAll = !maskActAll; renderSettings(); };
+    row(t("Personal data"), t("Emails, phone numbers, names and the rest, masked unless set here"), more).classList.add("mask-act-more");
+  }
+  // the allow list: values sent as written whichever finder finds them
+  const allow = (s.redactAllow || []).join(", ");
+  const i = input(allow, t("ops@company.com, build-01"));
+  i.className = "words mask-allow";
+  i.setAttribute("aria-label", t("Never mask"));
+  const save = () => {
+    const v = i.value.split(/[,，\n]/).map((w) => w.trim()).filter(Boolean);
+    if (v.join(", ") === allow) return;
+    writingPrefs(api("settings/redact-allow", { allow: v }))
+      .then((ns) => { prefs = ns; renderSettings(); status(t("Saved"), "ok", 1500); })
+      .catch((e) => { status(t(e.message), "err"); renderSettings(); });
+  };
+  i.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") save(); else if (e.key === "Escape") { i.value = allow; i.blur(); } };
+  i.onblur = save;
+  row(t("Never mask"), t("Values that always go as written, each whole and in any case, separated by commas: a team address, a test key"), i);
+}
+
+// renderMaskTry: text typed here is masked as a request would be now, and
+// shown as the vendor would get it, with what was found and what would be
+// done. It is sent to this magpie only, kept nowhere, and nothing of it
+// is remembered (/api/masking/preview).
+let maskTry = { text: "", res: null, seq: 0, timer: 0 };
+function renderMaskTry(s) {
+  const box = $("#maskTryList");
+  if (!box) return;
+  box.replaceChildren();
+  const r = el("div", "row pref mask-try");
+  const who = el("div", "who");
+  // the section head names it; the row says only what it does
+  who.append(el("div", "sub", t("Paste text an agent might send: it is masked here as a request would be, and kept nowhere")));
+  const area = el("textarea", "mask-try-in");
+  area.value = maskTry.text;
+  area.rows = 3;
+  area.spellcheck = false;
+  area.placeholder = t("Deploy with key sk-proj-… and mail ops@company.com");
+  area.setAttribute("aria-label", t("Try it"));
+  const out = el("div", "mask-try-out");
+  out.setAttribute("aria-live", "polite");
+  area.onkeydown = (e) => e.stopPropagation();
+  area.oninput = () => {
+    maskTry.text = area.value;
+    clearTimeout(maskTry.timer);
+    maskTry.timer = setTimeout(() => maskTryRun(out), 250);
+  };
+  r.append(who, area, out);
+  box.append(r);
+  maskTryDraw(out);
+}
+function maskTryRun(out) {
+  const seq = ++maskTry.seq, text = maskTry.text;
+  if (!text.trim()) { maskTry.res = null; maskTryDraw(out); return; }
+  api("masking/preview", { text }).then((res) => {
+    if (seq !== maskTry.seq) return;
+    maskTry.res = res;
+    maskTryDraw(out);
+  }).catch((e) => { if (seq === maskTry.seq) status(t(e.message), "err"); });
+}
+function maskTryDraw(out) {
+  out.replaceChildren();
+  const res = maskTry.res;
+  if (!res || !maskTry.text.trim()) { out.hidden = true; return; }
+  out.hidden = false;
+  const hits = res.hits || [];
+  const info = new Map(hits.map((h) => [h.placeholder, h]));
+  const head = el("div", "mo-lh");
+  head.append(el("span", "label", t("What the vendor would get")));
+  out.append(head);
+  if (hits.some((h) => h.action === "block")) {
+    out.append(el("div", "mask-try-note block", t("This request would be held back: nothing is sent")));
+  }
+  const text = el("div", "mask-try-text");
+  let at = 0;
+  for (const m of res.text.matchAll(PLACEHOLDER)) {
+    text.append(document.createTextNode(res.text.slice(at, m.index)));
+    const h = info.get(m[0]);
+    const kind = h?.kind || m[0].slice(2, -2).replace(/_[^_]*$/, "");
+    const mark = el("mark", "mo-ph", m[0]);
+    mark.style.setProperty("--k", maskColor(kind));
+    mark.title = maskKindName(kind);
+    text.append(mark);
+    at = m.index + m[0].length;
+  }
+  text.append(document.createTextNode(res.text.slice(at)));
+  out.append(text);
+  if (!hits.length) out.append(el("div", "mask-try-note", t("Nothing here would be masked")));
+  // each value once, by its placeholder, with what is done with it
+  const seen = new Set(), list = el("div", "mask-try-hits");
+  for (const h of hits) {
+    if (seen.has(h.placeholder)) continue;
+    seen.add(h.placeholder);
+    const line = el("div", "mr-val");
+    const act = h.action === "block" ? t("Held back") : h.action === "warn" ? t("Sent as written") : t("Masked");
+    line.append(maskDot(h.kind), el("span", "mr-k", maskKindName(h.kind)), el("span", "mr-shape", maskShape(h.head, h.len)),
+      el("span", "mr-by" + (h.by === "model" ? " model" : ""), maskByName(h.by)), el("span", "mr-act " + (h.action || "mask"), act));
+    list.append(line);
+  }
+  if (seen.size) out.append(list);
+  if (res.off) out.append(el("div", "mask-try-note", t("Masking is off: this is what Mask secrets and Mask personal data would do")));
 }
 
 // editRedactRule: the rule at n, open to change in its place (nf1qaz2w on

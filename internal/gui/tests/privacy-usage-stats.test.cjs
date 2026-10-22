@@ -67,8 +67,11 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       // below the card, scrolled to with the wheel as a reader does
       const reveal = async (name) => {
         await page.mouse.move(450, 300);
-        for (let i = 0; i < 20 && (await row(name).boundingBox()).y > 600; i++) {
-          await page.mouse.wheel(0, 200);
+        await row(name).waitFor(); // a save draws the rows again
+        for (let i = 0; i < 40; i++) {
+          const y = (await row(name).boundingBox())?.y ?? 9999;
+          if (y > 60 && y < 600) break;
+          await page.mouse.wheel(0, y > 600 ? 200 : -200);
           await page.waitForTimeout(80);
         }
       };
@@ -79,6 +82,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       assert.ok(!saved.at(-1).noStats);
 
       // another setting saved keeps it off
+      await reveal(w.personal);
       await row(w.personal).getByRole("button", { name: w.on, exact: true }).click();
       await isOn(w.personal);
       assert.equal(saved.at(-1).noUsageStats, true, JSON.stringify(saved.at(-1)));

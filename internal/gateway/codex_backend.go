@@ -893,7 +893,7 @@ func (s *Server) codexUpstreamOn(w http.ResponseWriter, r *http.Request, rest st
 		w, body, unmask, maskedHits, err = redactedHits(w, body)
 		defer unmask()
 		if err != nil {
-			writeError(w, provider.Responses, http.StatusServiceUnavailable, err.Error())
+			writeError(w, provider.Responses, maskStatus(err), err.Error())
 			return
 		}
 	}

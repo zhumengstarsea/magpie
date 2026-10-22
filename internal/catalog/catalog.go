@@ -121,7 +121,8 @@ type Model struct {
 	// WebSearch is how another magpie (a Remote magpie) searches the web
 	// for the model when a web search tool is offered: "native", its own
 	// provider by itself, or "magpie", with that magpie's searcher; "" it
-	// doesn't, or didn't say.
+	// doesn't, or didn't say. A plugin's model it says searches by itself
+	// (m.searches) is "native" too.
 	WebSearch string `json:",omitempty"`
 }
 

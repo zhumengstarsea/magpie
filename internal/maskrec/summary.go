@@ -13,6 +13,8 @@ type dayAgg struct {
 	size      int64
 	requests  int
 	n         int
+	warned    int // places a value went as written, the user told
+	blocked   int // requests held back
 	hours     [24]int
 	kinds     map[string]int // each place counted
 	vals      map[string]*valAgg
@@ -35,7 +37,14 @@ func (a *dayAgg) add(r Record) {
 	a.requests++
 	a.n += r.N
 	a.hours[r.Time.Local().Hour()] += r.N
+	if r.Blocked {
+		a.blocked++
+	}
 	for _, v := range r.Values {
+		if v.Action == "warn" { // not masked: told, not kept as one
+			a.warned += v.N
+			continue
+		}
 		a.kinds[v.Kind] += v.N
 		x := a.vals[v.Placeholder]
 		if x == nil {
@@ -115,7 +124,9 @@ type Summary struct {
 	Requests  int            `json:"requests"`
 	N         int            `json:"n"`
 	Distinct  int            `json:"distinct"`
-	Hours     [24]int        `json:"hours"` // places, by the hour of the day
+	Warned    int            `json:"warned,omitempty"`  // places a value went as written, the user told
+	Blocked   int            `json:"blocked,omitempty"` // requests held back
+	Hours     [24]int        `json:"hours"`             // places, by the hour of the day
 	Kinds     []Count        `json:"kinds"`
 	By        map[string]int `json:"by"` // different values by the finder that found each
 	Agents    []Count        `json:"agents"`
@@ -155,6 +166,8 @@ func Sum(days int) Summary {
 		out.Days = append(out.Days, Day{Day: d, Requests: a.requests, N: a.n, Distinct: len(a.vals)})
 		out.Requests += a.requests
 		out.N += a.n
+		out.Warned += a.warned
+		out.Blocked += a.blocked
 		for h, n := range a.hours {
 			out.Hours[h] += n
 		}
