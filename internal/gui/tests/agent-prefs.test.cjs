@@ -6,7 +6,10 @@
 // search still finds them, as a row saying where they are whose Open shows
 // the agent's sheet. In the panel a "Settings" line opens the sheet, and so
 // does the agent's menu; shut, the rows are back where they were. Gateway
-// mode writes no agent's files, so none of it shows. Five languages, wide
+// mode writes no agent's files, so none of it shows, but Long conversations:
+// it sets the windows the gateway serves, which agents elsewhere read, so
+// with no Codex or Claude Code here (a gateway, magpie in Docker) it stays
+// in Settings › General, on the size set before (Linka on Discord). Five languages, wide
 // and narrow, Chromium and WebKit; no backend, the API is faked here.
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
@@ -32,8 +35,8 @@ function settingsPayload(over) {
   };
 }
 
-function server(lang, { gateway = false } = {}) {
-  const settings = settingsPayload({ lang, ...(gateway ? { web: true, gatewayMode: "", gatewayOn: true } : {}) });
+function server(lang, { gateway = false, none = false, posts = [] } = {}) {
+  let settings = settingsPayload({ lang, compactAt: 200000, ...(gateway ? { web: true, gatewayMode: "", gatewayOn: true } : {}) });
   // Codex with a memories field, so its memories row is there to show
   const codex = agentRow("codex", "Codex");
   codex.fields.push({ key: "memories", label: "memories", value: "", options: [{ value: "relay/m1", label: "m1", ref: "relay/m1" }] });
@@ -42,7 +45,13 @@ function server(lang, { gateway = false } = {}) {
     const json = (data) => route.fulfill({ json: data });
     if (url.pathname === "/boot.js") return route.fulfill({ contentType: "text/javascript", body: `window.bootPrefs = {lang:"${lang}",theme:"light",web:${gateway}${gateway ? ",gateway:true" : ""}};` });
     if (url.pathname === "/wails/runtime.js") return route.fulfill({ contentType: "text/javascript", body: "export const Window = {};" });
-    if (url.pathname === "/api/state") return json({ agents: [codex, agentRow("claude", "Claude Code"), agentRow("pi", "Pi")], profiles: [], settings: { lang, theme: "light" }, fx: settings.fx });
+    if (url.pathname === "/api/state") return json({ agents: none ? [agentRow("pi", "Pi")] : [codex, agentRow("claude", "Claude Code"), agentRow("pi", "Pi")], profiles: [], settings: { lang, theme: "light" }, fx: settings.fx });
+    if (url.pathname === "/api/settings/full-context") {
+      const body = route.request().postDataJSON();
+      posts.push(body);
+      settings = { ...settings, fullContext: body.on, ...(body.at !== undefined ? { compactAt: body.at } : {}) };
+      return json(settings);
+    }
     if (url.pathname === "/api/settings") return json(settings);
     if (url.pathname === "/api/plugins") return json({ plugins: [] });
     if (url.pathname === "/api/usage/quotas") return json([]);
@@ -161,4 +170,27 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     assert.equal(await page.locator(".agent-pref-link").count(), 0, "no link rows");
     assert.deepEqual(errors, []);
   });
+
+  // Long conversations with nothing here to hold it: in Settings › General,
+  // showing the size set before, and a new size is saved from there
+  for (const [what, opts] of [["gateway mode", { gateway: true }], ["no Codex or Claude Code", { none: true }]]) {
+    test(`${engine}: ${what} keeps Long conversations in Settings`, async (t) => {
+      const posts = [];
+      const { page, errors } = await newPage(engine, t, 1100, "en", { ...opts, posts });
+      await page.goto("http://magpie.test/?view=settings&tab=general");
+      const row = page.locator("#setPage-general #fullContextRow");
+      await row.waitFor();
+      for (const id of CODEX.filter((id) => id !== "fullContextRow")) assert.equal(await page.locator(`#view-settings #${id}`).count(), 0, `${id} not in Settings`);
+      const segs = row.locator("#fullContextSegs");
+      assert.match(await segs.locator(".opt.on").textContent(), /200K/i, "the size set before");
+      const num = segs.locator("input.compact-num");
+      assert.match(await num.inputValue(), /200k/i);
+      await num.fill("150k");
+      await num.press("Enter");
+      await num.blur();
+      await page.waitForFunction(() => document.querySelector("#fullContextSegs .opt.on")?.textContent.includes("150"));
+      assert.deepEqual(posts.at(-1), { on: false, at: 150000 });
+      assert.deepEqual(errors, []);
+    });
+  }
 }

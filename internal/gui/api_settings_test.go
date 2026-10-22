@@ -271,3 +271,28 @@ func TestSettingsColorblindMode(t *testing.T) {
 		}
 	}
 }
+
+// Masked words in any case is the Privacy page's: a page from before it
+// sends no redactWordsAnyCase, and its save leaves the user's choice as it
+// was; a page that sends it sets it (ZoeCats on Discord).
+func TestSettingsRedactWordsAnyCaseKept(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	h := Handler(nil, nil)
+	for _, c := range []struct {
+		body string
+		want bool
+	}{
+		{`{"theme":"dark","redactWords":["Nightjar"],"redactWordsAnyCase":true}`, true},
+		{`{"theme":"light","redactWords":["Nightjar"]}`, true},
+		{`{"theme":"light","redactWords":["Nightjar"],"redactWordsAnyCase":false}`, false},
+	} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("POST", "/api/settings", strings.NewReader(c.body)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("saving %s: %d %s", c.body, rec.Code, rec.Body)
+		}
+		if got := settings.Load(); got.RedactWordsAnyCase != c.want || !reflect.DeepEqual(got.RedactWords, []string{"Nightjar"}) {
+			t.Fatalf("after %s: any case %v, words %v; want %v", c.body, got.RedactWordsAnyCase, got.RedactWords, c.want)
+		}
+	}
+}

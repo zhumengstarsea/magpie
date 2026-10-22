@@ -1181,6 +1181,10 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		if _, sent := fields["noAutoDownload"]; !sent {
 			in.NoAutoDownload = cur.NoAutoDownload
 		}
+		// nor whether the masked words match in any case
+		if _, sent := fields["redactWordsAnyCase"]; !sent {
+			in.RedactWordsAnyCase = cur.RedactWordsAnyCase
+		}
 		// nor how long an image is given to be drawn
 		if _, sent := fields["imageTimeout"]; !sent {
 			in.ImageTimeout = cur.ImageTimeout

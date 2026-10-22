@@ -433,7 +433,8 @@ function renderAgents() {
     const fieldBtn = (f, cls) => {
       const b = el("button", "field " + cls);
       const opt = optionFor(f, f.value);
-      b.title = t("{label}: {value}", { label: t(f.label), value: f.value || t("agent default") }) + (opt?.note ? ` · ${opt.note}` : "");
+      b.title = claudePicks(a, f) && !f.value ? t("{label}: {value}", { label: t(f.label), value: t(AUTO_MODE_UNSET) }) + "\n" + t(CLAUDE_PICKS)
+        : t("{label}: {value}", { label: t(f.label), value: f.value || t("agent default") }) + (opt?.note ? ` · ${opt.note}` : "");
       if (f.value && opt?.direct) b.title += "\n" + directSaid(a, opt);
       const effort = f.key === "effort" || f.label === "effort" || f.label === "thinking" || TIER_EFFORTS.includes(f.label);
       if (opt?.icon || opt?.icons?.length) b.append(optionIcon(opt));
@@ -443,7 +444,7 @@ function renderAgents() {
       else if (!f.value && !f.menu && a.icon) b.append(icon(a.icon));
       else if (!wide(f) || !f.value) b.append(el("span", "k", t(f.label)));
       if ((f.label === "executor" || f.label === "planner") && !b.querySelector(".k")) b.append(el("span", "k", t(f.label)));
-      const shown = f.menu ? f.summary : effort ? effortName(opt || { value: f.value }) : (opt?.label || f.value || t(FOLLOWS_MODEL.includes(f.label) ? "same as model" : "default"));
+      const shown = f.menu ? f.summary : effort ? effortName(opt || { value: f.value }) : (opt?.label || f.value || t(claudePicks(a, f) ? AUTO_MODE_UNSET : FOLLOWS_MODEL.includes(f.label) ? "same as model" : "default"));
       if (f.menu) b.title = f.options.map((o) => `${o.label}: ${o.note}`).join("\n");
       b.append(el("span", "v" + (f.value || f.custom ? "" : " empty"), shown));
       if (f.value && opt?.fast) b.append(fastTag(opt.ultra));
@@ -3703,8 +3704,14 @@ const SUB_MODEL = "subagent model";
 // pick, not the model's
 const AUTO_MODE = "auto mode";
 const AUTO_MODE_UNSET = "Claude Code's own pick";
-const leadPicks = (a, f) => f.label === "subagents" && a.id.split("@wsl:")[0] === "codex";
+const leadPicks = (a, f) => f.label === "subagents" && ["codex", "claude"].includes(a.id.split("@wsl:")[0]);
 const LEAD_PICKS = "Codex's lead may name another model for a subagent; set the subagent model to hold every subagent to one";
+// Claude Code's subagents unset: magpie writes no CLAUDE_CODE_SUBAGENT_MODEL
+// and Claude Code picks, taking the Agent call's model, then the subagent's
+// own model:, then that variable, then the session's (2.1.306), so it is
+// its pick, not "same as model" (KorenKrita on Discord)
+const CLAUDE_PICKS = "Claude Code's lead, or a subagent's own definition, may name a model or tier for it; a model set here is for the subagents that name none";
+const claudePicks = (a, f) => leadPicks(a, f) && a.id === "claude";
 const extra = (f) => f.key === "tiers" || FOLLOWS_MODEL.includes(f.label) || f.label === "sign-in" || f.key === "ultracode" || f.label === SUB_EFFORT || f.label === SUB_MODEL || f.label === AUTO_MODE || f.label === MEMORIES;
 const EXTRA_GLYPH = {
   subagents: "M4.5 2.75v10.5M4.5 9.25c0-2.2 1.6-3.75 3.9-3.75h3.35M9.9 3.6l1.9 1.9-1.9 1.9",
@@ -3733,7 +3740,7 @@ function extraField(a, f) {
   b.append(svg(EXTRA_GLYPH[f.label] || EXTRA_GLYPH.tiers, 13, 1.5));
   const opt = optionFor(f, f.value);
   b.title = f.label === SUB_EFFORT ? subEffortTitle(a, f, opt) : f.menu ? menuTitle(f)
-    : t("{label}: {value}", { label: f.label === MEMORIES ? t("Codex memories model") : t(f.label), value: t(opt?.label || f.value || (f.label === MEMORIES ? MEMORIES_DEFAULT : f.label === SUB_MODEL ? "the model the lead asks for" : f.label === AUTO_MODE ? AUTO_MODE_UNSET : leadPicks(a, f) ? "the lead's pick, else same as model" : "same as model")) }) + (opt?.note && !FOLLOWS_MODEL.includes(f.label) ? "\n" + t(opt.note) : "") + (leadPicks(a, f) ? "\n" + t(LEAD_PICKS) : "");
+    : t("{label}: {value}", { label: f.label === MEMORIES ? t("Codex memories model") : t(f.label), value: t(opt?.label || f.value || (f.label === MEMORIES ? MEMORIES_DEFAULT : f.label === SUB_MODEL ? "the model the lead asks for" : f.label === AUTO_MODE ? AUTO_MODE_UNSET : leadPicks(a, f) ? "the lead's pick, else same as model" : "same as model")) }) + (opt?.note && !FOLLOWS_MODEL.includes(f.label) ? "\n" + t(opt.note) : "") + (leadPicks(a, f) ? "\n" + t(claudePicks(a, f) ? CLAUDE_PICKS : LEAD_PICKS) : "");
   b.setAttribute("aria-label", b.title);
   b.dataset.key = f.key;
   b.onclick = (ev) => openPicker(a, f, b, ev);
@@ -4600,7 +4607,8 @@ function openPicker(agent, field, anchor, ev, only) {
   if (FOLLOWS_MODEL.includes(field.label)) {
     const main = agent.fields.find((f) => f.key === "model");
     const mainName = main && (optionFor(main, main.value)?.label || main.value);
-    options.unshift(main && leadPicks(agent, field) ? { value: "", label: t("Lead's pick"), note: t("{model} unless the lead names another", { model: mainName }), icon: optionFor(main, main.value)?.icon, reset: true }
+    options.unshift(main && claudePicks(agent, field) ? { value: "", label: t(AUTO_MODE_UNSET), note: t("{model} unless the lead or the subagent names another", { model: mainName }), icon: agent.icon, reset: true }
+      : main && leadPicks(agent, field) ? { value: "", label: t("Lead's pick"), note: t("{model} unless the lead names another", { model: mainName }), icon: optionFor(main, main.value)?.icon, reset: true }
       : main ? { value: "", label: t("Same as model"), note: mainName, icon: optionFor(main, main.value)?.icon, reset: true }
       : { value: "", label: t("Not set"), note: t("a Claude model of the tier, else the chat's model"), icon: agent.icon, reset: true });
   } else if (!only && !field.menu && !field.onPick && !options.some((o) => o.value === "")) {
@@ -20878,6 +20886,12 @@ function renderAgentPrefLinks() {
   const box = $("#agentPrefLinks");
   box.replaceChildren();
   homeAgentPrefRows();
+  // Long conversations sets the windows the gateway serves, which an agent
+  // on another computer reads too: with no Codex or Claude Code here to
+  // hold it (a gateway, magpie in Docker) it stays in Settings (Linka)
+  const loose = $("#fullContextRow");
+  if (!state.agents.some((a) => agentPrefsOf(a)?.includes(loose.id))) box.before(loose);
+  else if (loose.parentElement === box.parentElement) $("#agentPrefRows").append(loose);
   for (const r of agentPrefRowEls) {
     const agents = state.agents.filter((a) => agentPrefsOf(a)?.includes(r.id) && !a.id.includes("@wsl:"));
     if (!agents.length || (r.id === "codexMemoriesRow" && r.hidden)) continue;
@@ -21807,6 +21821,9 @@ function renderRedact(s, keep) {
   i.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") save(); else if (e.key === "Escape") { i.value = words; i.blur(); } };
   i.onblur = save;
   row(t("Masked words"), t("Your own words to keep from vendors, separated by commas"), i);
+  // plain words, matched as written unless the user asks for any case
+  row(t("Masked words in any case"), t("A word also matches in other capitals: Nightjar masks NIGHTJAR and nightjar too"),
+    onOff(s.redactWordsAnyCase, (redactWordsAnyCase) => savePrefs({ ...keep, redactWordsAnyCase }))).id = "redactWordsAnyCaseRow";
   renderRedactRules(s, row);
   renderMaskActions(s);
   renderMaskTry(s);
@@ -21910,7 +21927,6 @@ const MASK_BY = { rule: "Rules", yours: "Your rules", word: "Your words", model:
 // what a request was, beside a chat (gateway's noteMasked)
 const MASK_WHAT = { search: "Web search", image: "Image", video: "Video", decide: "System One", embeddings: "Embeddings", audio: "Audio" };
 const SHIELD = "M8 1.8 13 3.6v4.1c0 3-2.1 5.4-5 6.5-2.9-1.1-5-3.5-5-6.5V3.6Z";
-const SPARK = "M7 2.2c.5 2.9 1.4 3.8 4.3 4.3-2.9.5-3.8 1.4-4.3 4.3-.5-2.9-1.4-3.8-4.3-4.3 2.9-.5 3.8-1.4 4.3-4.3Z M12.2 10.2c.2 1.1.6 1.5 1.7 1.7-1.1.2-1.5.6-1.7 1.7-.2-1.1-.6-1.5-1.7-1.7 1.1-.2 1.5-.6 1.7-1.7Z";
 const PLACEHOLDER = /\{\{[^{}\s]{1,64}\}\}/g;
 let maskS = null;            // the settings the card was drawn with
 let maskSum = null, maskSumDays = 0, maskAt = 0, maskBusy = null, maskBusyDays = 0;
@@ -22212,15 +22228,9 @@ function maskLedger(title, kind, rows, move) {
   rows.forEach((r, i) => {
     const b = el("button", "mo-row" + (r.model ? " model" : ""));
     b.type = "button";
-    if (r.model) {
-      const sp = el("span", "mo-spark");
-      sp.append(svg(SPARK, 12, 1.3));
-      b.append(sp);
-    } else {
-      const d = el("span", "mo-dotc");
-      d.style.background = r.c || "var(--faint)";
-      b.append(d);
-    }
+    const d = el("span", "mo-dotc");
+    d.style.background = r.c || (r.model ? "var(--c6)" : "var(--faint)");
+    b.append(d);
     const m = el("span", "mo-meter"), f = el("i");
     f.style.width = (100 * r.n) / max + "%";
     if (r.c) f.style.background = r.c;
@@ -23551,7 +23561,7 @@ function prefsKeep(s) {
     uiFont: s.uiFont || null, codeFont: s.codeFont || null,
     otel: s.otel || {},
     trayUsages: s.trayUsages || [],
-    redact: !!s.redact, redactPersonal: !!s.redactPersonal, redactKinds: s.redactKinds || {}, redactWords: s.redactWords || [], codexWarmup: s.codexWarmup || "",
+    redact: !!s.redact, redactPersonal: !!s.redactPersonal, redactKinds: s.redactKinds || {}, redactWords: s.redactWords || [], redactWordsAnyCase: !!s.redactWordsAnyCase, codexWarmup: s.codexWarmup || "",
     claudeWarmup: s.claudeWarmup || "", codexWarmAt: s.codexWarmAt || "", claudeWarmAt: s.claudeWarmAt || "",
     codexWarmAts: warmTimes(s.codexWarmAts, s.codexWarmAt), claudeWarmAts: warmTimes(s.claudeWarmAts, s.claudeWarmAt), workbuddyCheckin: !!s.workbuddyCheckin, traeCheckin: !!s.traeCheckin, minimaxCheckin: !!s.minimaxCheckin, qoderCheckin: !!s.qoderCheckin, noStats: !!s.noStats, noUsageStats: !!s.noUsageStats,
     memberModel: !!s.memberModel, noLoopGuard: !!s.noLoopGuard, claudeLeanPrompt: !!s.claudeLeanPrompt, refusalRetries: s.refusalRetries ?? null,

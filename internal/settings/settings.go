@@ -96,7 +96,10 @@ type Settings struct {
 	RedactPersonal bool            `json:"redactPersonal,omitempty"`
 	RedactKinds    map[string]bool `json:"redactKinds,omitempty"`
 	RedactWords    []string        `json:"redactWords,omitempty"`
-	RedactRules    []redact.Rule   `json:"redactRules,omitempty"`
+	// RedactWordsAnyCase matches RedactWords in any case (ZoeCats on
+	// Discord); off, the default, a word is matched as written.
+	RedactWordsAnyCase bool          `json:"redactWordsAnyCase,omitempty"`
+	RedactRules        []redact.Rule `json:"redactRules,omitempty"`
 	// RedactActions is what is done with a value of a kind (redact.Hit's
 	// Kind: API_KEY, EMAIL, a rule's own…) other than masking it, where
 	// the user chose: redact.Warn sends it as written and records it,

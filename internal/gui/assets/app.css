@@ -124,6 +124,17 @@ body {
   -webkit-user-select: none;
   cursor: default;
 }
+/* What the window shows can be selected and copied: what a request and
+   its vendor said, a conversation, an error, a hint, a value in a detail
+   (Outvi V on Discord: a bug report needs the text). Its controls can't,
+   as in a Mac app (HIG): buttons, tabs, menus, grips, labels. Both at no
+   specificity, so a view's own rule (a list being sorted, a blurred value)
+   still decides; a field typed into stays a field. An account's or a key's
+   name is text, though a click renames it (`.acc .rename`). */
+:where(p, pre, code, kbd, samp, dd, td, .hint, .note, .why, .err, .error, [class*="-err "], [class$="-err"], [class*="-error"], .empty-state, .sess-talk, .rt-log, .rt-steps, .rt-time) { user-select: text; -webkit-user-select: text; }
+:where(button, label, summary, select, nav, menu, [role="tab"], [role="menu"], [role="menuitem"], [role="option"], [role="switch"], [draggable="true"], .pop, .seg, .opt, .grip),
+:where(button, label, summary, select, nav, menu, [role="tab"], [role="menu"], [role="menuitem"], [role="option"], [role="switch"], [draggable="true"], .pop, .seg, .opt, .grip) * { user-select: none; -webkit-user-select: none; }
+:where(input, textarea, [contenteditable="true"], [contenteditable=""]) { user-select: text; -webkit-user-select: text; }
 /* The tray panel sits on a frosted NSVisualEffectView, so its own paint is thin. */
 body.panel { --panel-tint: color-mix(in srgb, var(--bg) 93%, transparent); background: var(--panel-tint); border-radius: 12px; }
 /* on the Mac the panel's colour is painted under the page, where it keeps up
@@ -2457,7 +2468,7 @@ body.window .ag-sk-icon { width: 22px; height: 22px; border-radius: 6px; }
 .accts > .keys-none + .acc, .accts > .keys-rest + .acc { border-top: 1px solid var(--line-2); }
 .accts > .keys-none, .accts > .keys-rest { padding: 8px 11px; font-size: 12px; border-top: 1px solid var(--line-2); }
 
-.acc .rename { font: inherit; font-weight: 500; color: inherit; background: none; border: 0; padding: 0; cursor: text; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acc .rename { font: inherit; font-weight: 500; color: inherit; background: none; border: 0; padding: 0; cursor: text; user-select: text; -webkit-user-select: text; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .acc .rename:hover { text-decoration: underline dotted var(--faint); text-underline-offset: 3px; }
 .acc .dot.tick { padding: 0; border: 0; background: none; cursor: default; transition: background .15s, box-shadow .15s; }
 .acc .dot.tick:hover { box-shadow: inset 0 0 0 1.5px var(--fg); }
@@ -3260,7 +3271,6 @@ body:not(.side-nav) #view-settings .set-head.stuck::before { box-shadow: 0 1px 0
 .mo-meter i { display: block; height: 100%; background: color-mix(in srgb, var(--fg) 40%, transparent); transform-origin: left; }
 .mo-row.model .mo-meter i { background: var(--c6); }
 .mo-dotc { flex: none; width: 7px; height: 7px; border-radius: 50%; }
-.mo-spark { flex: none; display: inline-flex; justify-self: center; color: var(--c6); }
 .mo-flow { display: grid; grid-template-columns: minmax(0, 200px) minmax(96px, 1fr) minmax(0, 200px); max-width: 760px; margin: 0 auto; }
 .mo-col { display: flex; flex-direction: column; justify-content: center; gap: 4px; min-width: 0; }
 .mo-node { display: flex; align-items: center; gap: 7px; height: 30px; min-width: 0; padding: 0 9px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--fg); font: inherit; font-size: 12px; cursor: default; }
