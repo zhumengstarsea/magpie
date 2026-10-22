@@ -2681,24 +2681,28 @@ func ListedWindow(m catalog.Model) int {
 // WindowOf is the window one of the provider's models takes, as agents are
 // told it and requests are routed on it: the one the user set for the
 // model over ListedWindow. The one set for all of the provider's models
-// ("*") is no larger than a model's own, where that is known (its listed
-// window, or the most it may be asked for, MaxContext): set to 512K to
-// spend less, it told opencode-go's cat-jam-free, which takes 262K, 512K
-// (#2112). One set for the model itself is the user's word on it, larger
-// or not. The catalog's entries and the Providers page's model lists both
-// read it, so the page shows the window agents are told.
+// ("*") is no larger than a model's own, where the provider says it (the
+// window its list or its models.dev catalog gives, or the most it may be
+// asked for, MaxContext): set to 512K to spend less, it told opencode-go's
+// cat-jam-free, which takes 262K, 512K (#2112). The window models.dev
+// gives the id under other vendors (catalog.ContextOf) is not the
+// provider's word but magpie's guess, and never caps what the user set: a
+// custom OpenAI-compatible relay set to 1M told its claude-sonnet-4-5
+// 200K (MisakaNatsuxun on Discord, 10-23). One set for the model itself
+// is the user's word on it, larger or not. The catalog's entries and the
+// Providers page's model lists both read it, so the page shows the window
+// agents are told.
 func (p Provider) WindowOf(m catalog.Model) int {
 	if n := p.Contexts[m.ID]; n > 0 {
 		return n
 	}
-	listed := ListedWindow(m)
 	if n := p.Contexts["*"]; n > 0 {
-		if most := max(listed, m.MaxContext); most > 0 && most < n {
+		if most := max(catalog.Window(m.Context), m.MaxContext); most > 0 && most < n {
 			return most
 		}
 		return n
 	}
-	return listed
+	return ListedWindow(m)
 }
 
 // ContextOf is the context the user set for the provider's model: its own,

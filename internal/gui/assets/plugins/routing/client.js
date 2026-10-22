@@ -477,11 +477,22 @@ function routingPage(part) {
   // sillytavern; a comma would part it in two (ParseRule)
   const uaName = (s) => String(s || "").trim().split(/[\/\s,]/)[0].toLowerCase();
   const agentName = (id) => agentOf(id)?.name || (id && id !== "other" ? id : t("your agent"));
+  // userShown is an account of provider as the user named it in magpie
+  // (provider.AccountNames, #1515), else as its vendor names it. The name
+  // is looked up as the page is drawn, by the account a request kept (its
+  // vendor's name, which the user's name is kept by), so every request
+  // reads by the name the account has now, one from before a rename too
+  // (plugins#310: a renamed Kiro account kept its old name on requests
+  // made after). Requests are still told apart by that vendor's name.
+  const userShown = (provider, user) => user && accountNameOf(providers?.providers?.find((p) => p.id === provider), user) || user;
+  // whoShown is the account or key a weighed one is: an account by its
+  // name of the user's own; a key's name is already the user's
+  const whoShown = (w) => w.kind === "account" ? userShown(w.provider, w.who) : w.who;
   // who names an account or key in a sentence
-  const who = (w) => w.kind === "provider" ? w.name : w.who;
+  const who = (w) => w.kind === "provider" ? w.name : whoShown(w);
   // where names one as a place a request went: the provider, and the
   // account or key when it has one
-  const where = (w) => w.kind === "provider" || !w.who ? w.name || w.provider : `${w.name || w.provider} · ${w.who}`;
+  const where = (w) => w.kind === "provider" || !w.who ? w.name || w.provider : `${w.name || w.provider} · ${whoShown(w)}`;
   // why one is left out: an account's plan lacks the model; a key's list
   // from its vendor does — relays list each key its own group's models
   // or the user set the account or key to serve other models only (#474)
@@ -987,7 +998,7 @@ function routingPage(part) {
     // a Codex reset spent by itself: with Codex's own sign-in the one try
     // it was spent for is the one that then answered
     const spent = tr.reset && tr.status < 400
-      ? t("Its week was used up, so one of {account}'s Codex resets was used by itself first.", { account: tr.reset.who }) + " "
+      ? t("Its week was used up, so one of {account}'s Codex resets was used by itself first.", { account: userShown(w?.provider, tr.reset.who) }) + " "
       : "";
     if (tr.status < 400 && tr.fail)
       return tr.rest
@@ -1002,7 +1013,7 @@ function routingPage(part) {
     }
     if (tr.reset)
       return t("{who} answered {status}: its week is used up and nobody else could take the request, so one of {account}'s Codex resets was used by itself and the request is asked again, before any of the reply reaches {agent}.",
-        { who: name, status: tr.status, account: tr.reset.who, agent });
+        { who: name, status: tr.status, account: userShown(w?.provider, tr.reset.who), agent });
     if (tr.fail === "canceled")
       return t("{agent} canceled the request while {who} was answering: nobody failed, so nobody rests and nobody else is asked.", { who: name, agent });
     if (tr.fail === "auth")
@@ -1995,37 +2006,45 @@ function routingPage(part) {
     bodies.replaceChildren(grid);
   }
   // holdStory keeps the story of the live request, its head and its lines,
-  // as tall as it has been since the reader began following live, at this
+  // as tall as the tallest of the last few requests answered, at this
   // width: a request under way is told in fewer lines than one answered
   // ("is answering…", then "answered in 4.0 s…" over two lines at a
   // phone's width), and its head gets View usage and Replay, taller than
   // the words, once it is done. So each new request moved the context
   // window under it up and back down (dumplings on Discord: the card
-  // jittered on every request). A request picked, a replay or a past day
+  // jittered on every request). Only the last STORY_HELD answered count: one
+  // told in many lines (a request handed on from member to member) no
+  // longer holds the box that tall for good, and it shrinks back once
+  // that many shorter ones have come after it (夜松云 on Discord: the box
+  // grew and never shrank back). A request picked, a replay or a past day
   // is drawn at its own height. A change of width measures it again at
   // once, as it is then (the list coming in under it can take a
   // scrollbar's width off it before the first live request)
-  let storyHold = { key: "", h: [0, 0] }, storyDrawn = "";
+  const STORY_HELD = 3;
+  let storyHold = { key: "", done: new Map() }, storyDrawn = "";
   function holdStory() {
     const follow = !pinned && !rp && !day;
     const w = steps.clientWidth;
     const key = JSON.stringify([follow, w, document.documentElement.lang]);
     if (key === storyHold.key && storyDrawn === headKey + stepsKey) return;
-    if (key !== storyHold.key) storyHold = { key, h: [0, 0] };
+    if (key !== storyHold.key) storyHold = { key, done: new Map() };
     storyDrawn = headKey + stepsKey;
+    [logHead, steps].forEach((e) => { e.style.minHeight = ""; });
+    if (!follow || !w || !logR) return;
+    const hs = [logHead, steps].map((e) => e.getBoundingClientRect().height);
+    // an answered request's own height, kept by its id: the last few only
+    if (logR.done) {
+      storyHold.done.set(logR.id, hs);
+      const ids = [...storyHold.done.keys()].sort((x, y) => y - x);
+      for (const id of ids.slice(STORY_HELD)) storyHold.done.delete(id);
+    }
     [logHead, steps].forEach((e, i) => {
-      e.style.minHeight = "";
-      if (!follow || !w) return;
-      const h = e.getBoundingClientRect().height;
-      storyHold.h[i] = Math.max(storyHold.h[i], h);
-      if (storyHold.h[i] > h) e.style.minHeight = storyHold.h[i] + "px";
+      const held = Math.max(0, ...[...storyHold.done.values()].map((h) => h[i]));
+      if (held > hs[i]) e.style.minHeight = held + "px";
     });
   }
-  new ResizeObserver(() => {
-    holdStory();
-    // grown since it was measured (a font come in): that is its height
-    [logHead, steps].forEach((e, i) => { storyHold.h[i] = Math.max(storyHold.h[i], e.getBoundingClientRect().height); });
-  }).observe(steps);
+  // grown since it was measured (a font come in): measured again as it is
+  new ResizeObserver(() => { storyDrawn = ""; holdStory(); }).observe(steps);
   // renderCtx draws the request's context window under its story, with
   // its session's prompts request by request; drawn again only when what
   // it shows changes. Live, the next request is patched into the card
@@ -5918,7 +5937,7 @@ function routingPage(part) {
   function pSeat(r, tr) {
     const w = tr && tried(r, tr);
     if (!w) return { key: r.provider || "?", name: r.provider || "?", sub: "" };
-    const sub = w.kind === "provider" ? "" : w.who || "";
+    const sub = w.kind === "provider" ? "" : whoShown(w) || "";
     return { key: w.provider || r.provider || "?", name: w.name || w.provider, sub };
   }
   // pPlace keeps those on the stage that are still wanted where they are,
