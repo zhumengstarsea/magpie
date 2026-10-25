@@ -5819,7 +5819,7 @@ let providersEarly = null;
 function prefetchProviders() {
   if (providers || providersEarly) return;
   const e = providersEarly = { read: api("providers") };
-  e.read.then((s) => { e.got = s; }, () => { if (providersEarly === e) providersEarly = null; });
+  e.read.then((s) => { e.got = s; markNewPartners(); }, () => { if (providersEarly === e) providersEarly = null; });
 }
 
 // The page's first reading, while it is on its way, is the one every ask
@@ -7632,14 +7632,20 @@ function countPartner(what, ids) {
 
 // a partner listed since the add sheet last showed the partners puts a
 // small dot on the add button, its name in the button's title, until the
-// sheet shows it (yetone: 有了新的合作伙伴的时候…提醒吸引用户点击查看)
+// sheet shows it (yetone: 有了新的合作伙伴的时候…提醒吸引用户点击查看),
+// and a still one on Providers in the nav, as Plugins has for an update
+// (yetone: 侧边栏…不要太打扰用户)
 function markNewPartners() {
-  const b = $("#addProvider");
-  if (!b) return;
-  const fresh = adding ? [] : (providers?.presets || []).filter((p) => p.kind === "partner" && p.new && !p.added && partnerShown(p));
-  b.classList.toggle("has-new", fresh.length > 0);
-  if (fresh.length) b.title = t("New in Partners: {names}", { names: fresh.map((p) => p.name).join(", ") });
-  else b.removeAttribute("title");
+  const list = providers || providersEarly?.got;
+  const fresh = adding ? [] : (list?.presets || []).filter((p) => p.kind === "partner" && p.new && !p.added && partnerShown(p));
+  const title = fresh.length ? t("New in Partners: {names}", { names: fresh.map((p) => p.name).join(", ") }) : "";
+  const nav = mode === "window" && document.querySelector('#nav button[data-view="providers"]');
+  for (const [b, cls] of [[$("#addProvider"), "has-new"], [nav, "has-dot"]]) {
+    if (!b) continue;
+    b.classList.toggle(cls, fresh.length > 0);
+    if (title) b.title = title;
+    else b.removeAttribute("title");
+  }
 }
 
 // partners new when the sheet showed them, each dotted until opened, this

@@ -17,4 +17,5 @@ export const SPONSORS = [
   { id: "kimi", readme: "https://www.kimi.ai/code?aff=magpie" },
   { id: "kimi-cn", readme: "https://www.kimi.com/code?aff=magpie" },
   { id: "apikeyfan", readme: "https://apikey.fan/?aff=mg_readme" },
+  { id: "wandapi", readme: "https://wandapi.ai/r/magpierepo" },
 ];

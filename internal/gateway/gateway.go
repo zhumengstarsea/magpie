@@ -32,6 +32,7 @@ import (
 	"github.com/yetone/magpie/internal/access"
 	"github.com/yetone/magpie/internal/awake"
 	"github.com/yetone/magpie/internal/catalog"
+	"github.com/yetone/magpie/internal/filememo"
 	"github.com/yetone/magpie/internal/gwbudget"
 	"github.com/yetone/magpie/internal/gwmw"
 	"github.com/yetone/magpie/internal/gwtool"
@@ -78,7 +79,34 @@ func agentOf(r *http.Request) string {
 		// and it is shown its models as with its key (mamba on Discord)
 		return "cursor-local"
 	}
+	if codexForClaudeCode(r.Header) {
+		return "codex"
+	}
 	return usage.AgentOf(ua)
+}
+
+// codexForClaudeCode is a Codex turn that Claude Code started under its
+// own name. OpenAI's Codex plugin for Claude Code (/codex:review,
+// /codex:rescue) runs `codex app-server` with clientInfo named "Claude
+// Code", and Codex makes that its originator and User-Agent ("Claude
+// Code/0.162.1 (Mac OS 26.2.0; arm64) … (Claude Code; 1.0.6)"), so the
+// turn read as Claude Code's, and its calls were counted under Claude
+// Code, never Codex (wyztony on X). Claude Code's own requests say
+// claude-cli/ and never carry the headers Codex puts on each turn
+// (x-codex-window-id, x-codex-turn-metadata), so the name with those is
+// Codex's. Only Claude Code's name is taken back this way: an app that
+// runs Codex as its own engine and names it after itself (Lody) is
+// counted as that app.
+func codexForClaudeCode(h http.Header) bool {
+	if h.Get("X-Codex-Window-Id") == "" && h.Get("X-Codex-Turn-Metadata") == "" {
+		return false
+	}
+	for _, v := range []string{h.Get("User-Agent"), h.Get("Originator")} {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(v)), "claude code") {
+			return true
+		}
+	}
+	return false
 }
 
 // startedByAgent says whether a request is from no agent magpie knows but
@@ -586,7 +614,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	defer stopLimits()
 	freshCtx, stopFresh := context.WithCancel(ctx)
 	defer stopFresh()
-	go pluginrt.KeepFresh(freshCtx, 2*time.Second, settings.Path(), provider.Path(), plugin.ListPath(), plugin.ToolsPath(), access.Path())
+	go pluginrt.KeepFresh(freshCtx, filememo.OthersEvery, settings.Path(), provider.Path(), plugin.ListPath(), plugin.ToolsPath(), access.Path())
 	srv := &http.Server{Handler: s.Front(), ReadHeaderTimeout: 30 * time.Second, IdleTimeout: 5 * time.Minute}
 	// the magpie serving the gateway, and only it, keeps the saved accounts
 	// signed in, so two never refresh one sign-in at once

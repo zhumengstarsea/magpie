@@ -179,10 +179,12 @@ type subscriptionRun struct {
 	timer         *time.Timer
 
 	// Claude Code's input, kept open for the next turn; owner is the account
-	// it runs as, and idleKey and idleAt say it is waiting for one. convKey
-	// is the conversation it has had, whatever the model (conversationKeys).
+	// it runs as (owned, named once in its life when it started unnamed:
+	// takeNamedOwner), and idleKey and idleAt say it is waiting for one.
+	// convKey is the conversation it has had, whatever the model
+	// (conversationKeys).
 	stdin   io.WriteCloser
-	owner   string
+	owner   atomic.Pointer[string]
 	idleKey string
 	idleAt  time.Time
 	convKey string
@@ -399,6 +401,46 @@ func claudeWorkDir() (string, error) {
 	return dir, nil
 }
 
+// clientWorkDir is the working directory the caller's instructions name,
+// the last one they name, as Claude Code ("Primary working directory:"),
+// Codex (<cwd>), OpenCode ("Working directory:") and pi ("Current working
+// directory:") write it; "" when they name none, or one that isn't an
+// absolute path to a folder on this computer (a caller elsewhere). The
+// model's own words are not read: what it says is no caller's.
+func clientWorkDir(req *Request) string {
+	texts := []string{req.System}
+	for _, m := range req.Messages {
+		if m.Role == "assistant" {
+			continue
+		}
+		for _, p := range m.Parts {
+			if p.Kind == Text {
+				texts = append(texts, p.Text)
+			}
+		}
+	}
+	dir := ""
+	for _, t := range texts {
+		for _, m := range clientCwdPattern.FindAllStringSubmatch(t, -1) {
+			for _, g := range m[1:] {
+				if g = strings.Trim(strings.TrimSpace(g), "`'\""); g != "" {
+					dir = g
+				}
+			}
+		}
+	}
+	if dir == "" || !filepath.IsAbs(dir) {
+		return ""
+	}
+	dir = filepath.Clean(dir)
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		return ""
+	}
+	return dir
+}
+
+var clientCwdPattern = regexp.MustCompile(`(?m)(?:Primary working directory|^\s*(?:-\s*)?Working directory|Current working directory): *([^\r\n]+)$|<cwd>([^<\r\n]+)</cwd>`)
+
 func evalSymlinks(path string) string {
 	if p, err := filepath.EvalSymlinks(path); err == nil {
 		return p
@@ -434,7 +476,7 @@ func (b *subscriptionBridge) handedOver(user string) {
 	var drop []*subscriptionRun
 	b.mu.Lock()
 	for key, run := range b.idle {
-		if u, own := ownerAccount(run.owner); !own && strings.EqualFold(u, user) {
+		if u, own := ownerAccount(run.owned()); !own && strings.EqualFold(u, user) {
 			delete(b.idle, key)
 			run.idleKey = ""
 			drop = append(drop, run)
@@ -679,7 +721,18 @@ func (b *subscriptionBridge) startRun(ctx context.Context, req *Request, model, 
 	if len(req.Format.schema()) > 0 {
 		args = append(args, "--json-schema", string(cliSchema(req.Format.schema())))
 	}
-	work, err := claudeWorkDir()
+	// in the caller's own folder when it says which it is and it is one
+	// here (clientWorkDir): Claude Code tells the model the folder it runs
+	// in as its working directory, and a model told magpie's folder wrote
+	// the caller's files there, through tools that run in the caller's
+	work := ""
+	if binary.wsl == nil {
+		work = clientWorkDir(req)
+	}
+	client := work != ""
+	if !client {
+		work, err = claudeWorkDir()
+	}
 	var sessions []string
 	switch {
 	case err != nil:
@@ -692,7 +745,11 @@ func (b *subscriptionBridge) startRun(ctx context.Context, req *Request, model, 
 		// go on with it (claudeSessions)
 		sessions = claudeSessions(configDir, work)
 		args = slices.DeleteFunc(args, func(a string) bool { return a == "--no-session-persistence" })
-		b.sweepSessions(sessions)
+		// a caller's folder keeps its own sessions beside the runs': only
+		// magpie's own folder is swept, a run's session removed by its id
+		if !client {
+			b.sweepSessions(sessions)
+		}
 	}
 	if from != nil {
 		defer from.discard() // unless the run took it
@@ -759,7 +816,8 @@ func (b *subscriptionBridge) startRun(ctx context.Context, req *Request, model, 
 	}
 	cmd.Stdout, cmd.Stderr = stdoutW, stderrW
 
-	run := &subscriptionRun{bridge: b, token: token, model: model, cmd: cmd, tmp: tmp, schema: len(req.Format.schema()) > 0, pending: map[string]chan mcpToolResult{}, stdin: stdin, owner: owner, effort: req.Effort, sessions: sessions}
+	run := &subscriptionRun{bridge: b, token: token, model: model, cmd: cmd, tmp: tmp, schema: len(req.Format.schema()) > 0, pending: map[string]chan mcpToolResult{}, stdin: stdin, effort: req.Effort, sessions: sessions}
+	run.owner.Store(&owner)
 	run.names = bridgeNames(req.Tools)
 	run.safeguardBeta = req.SafeguardBeta
 	run.clientMarks = req.clientCache != nil
@@ -1191,7 +1249,7 @@ func (b *subscriptionBridge) rewritten(req *Request, owner string) (*subscriptio
 	var saved *savedSession
 	found := 0
 	for _, r := range b.idle {
-		if r.owner == owner && r.loose != nil && r.loose.key == l.key && r.loose.rewrote(l) {
+		if r.owned() == owner && r.loose != nil && r.loose.key == l.key && r.loose.rewrote(l) {
 			run, found = r, found+1
 		}
 	}
@@ -1252,7 +1310,7 @@ func (b *subscriptionBridge) retire(owner string, msgs []Message) {
 	var drop []*subscriptionRun
 	b.mu.Lock()
 	for key, run := range b.idle {
-		if run.owner == owner && run.convKey != "" && slices.Contains(keys, run.convKey) {
+		if run.owned() == owner && run.convKey != "" && slices.Contains(keys, run.convKey) {
 			delete(b.idle, key)
 			run.idleKey = ""
 			drop = append(drop, run)
@@ -1313,14 +1371,17 @@ func (r *subscriptionRun) ended(req *Request, said, stop string, ok bool) {
 		r.abort()
 		return
 	}
+	// kept under the name the next turn comes by: a run that began on
+	// Claude Code's own sign-in before it had one has named it since
+	r.nameOwner()
 	reply := Message{Role: "assistant", Parts: []Part{{Kind: Text, Text: said}}}
 	msgs := append(req.Messages[:len(req.Messages):len(req.Messages)], reply)
-	key := turnKey(r.owner, req, msgs)
+	key := turnKey(r.owned(), req, msgs)
 	conv := ""
-	if keys := conversationKeys(r.owner, msgs); len(keys) > 0 {
+	if keys := conversationKeys(r.owned(), msgs); len(keys) > 0 {
 		conv = keys[len(keys)-1]
 	}
-	loose := newLooseTurn(r.owner, req, msgs, true)
+	loose := newLooseTurn(r.owned(), req, msgs, true)
 	r.bridge.mu.Lock()
 	r.loose = loose
 	// the conversation before this turn, when the run was resumed for
@@ -1442,7 +1503,7 @@ func (b *subscriptionBridge) shelve(run *subscriptionRun) {
 		return
 	}
 	key := run.idleKey
-	s := &savedSession{session: sid, sessions: sessions, owner: run.owner, conv: run.convKey, key: key, loose: run.loose, tools: tools, at: run.idleAt, cachePrefix: run.cachePrefix}
+	s := &savedSession{session: sid, sessions: sessions, owner: run.owned(), conv: run.convKey, key: key, loose: run.loose, tools: tools, at: run.idleAt, cachePrefix: run.cachePrefix}
 	if old := b.shelf[key]; old != nil {
 		go old.discard()
 	}
@@ -2007,6 +2068,11 @@ func cleanClaudeEnv(env []string) []string {
 	// prompt of all the account's others, and a change to it would undo
 	// the cache from there on
 	return append(out, "ENABLE_CLAUDEAI_MCP_SERVERS=0", "DISABLE_AUTO_COMPACT=1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1",
+		// run in a caller's folder (clientWorkDir), Claude Code would put
+		// its repository's status in the prompt too: the caller tells its
+		// model that itself, and a status changing with each commit undoes
+		// the cache from there on
+		"CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS=1",
 		// an hour's cache, as Claude Code writes it on a subscription within
 		// its limits, always: the mark on the caller's instructions
 		// (renderClaudePrompt) is an hour's, which may not follow a 5m one
@@ -2335,7 +2401,7 @@ func (r *subscriptionRun) readOutput(rd io.Reader) {
 			// a run in Claude Code's own home is on whatever account
 			// Claude Code is signed in to by now: switched off the
 			// owner's, what it says is another's (nil_1024)
-			if user, own := ownerAccount(r.owner); user != "" && !(own && provider.ClaudeCodeMovedOff(user)) {
+			if user, own := ownerAccount(r.owned()); user != "" && !(own && provider.ClaudeCodeMovedOff(user)) {
 				provider.NoteClaudeLimits(user, claudeLimits(envelope.RateLimitInfo))
 			}
 			return
@@ -2375,7 +2441,7 @@ func (r *subscriptionRun) readOutput(rd io.Reader) {
 				// it isn't run again on that one (provider/claude_auth.go) —
 				// not when Claude Code's own run went on as another account,
 				// which is read only for such an error
-				if user, own := ownerAccount(r.owner); user != "" && provider.ClaudeSignInRequired(text) &&
+				if user, own := ownerAccount(r.owned()); user != "" && provider.ClaudeSignInRequired(text) &&
 					!(own && provider.ClaudeCodeMovedOff(user)) {
 					provider.NoteClaudeSignInFailure(user, r.loginVersion, text)
 				}
@@ -4099,6 +4165,59 @@ func (b *subscriptionBridge) removeRun(run *subscriptionRun) {
 	}
 }
 
+// owned is the account the run runs as (serveClaudeSubscription's owner).
+func (r *subscriptionRun) owned() string {
+	if o := r.owner.Load(); o != nil {
+		return *o
+	}
+	return ""
+}
+
+// takeNamedOwner has a run started on Claude Code's own sign-in while it
+// was known by no name (unnamedOwner) go on as owner, that sign-in named
+// since: a run in Claude Code's own home runs as whatever it is signed in
+// to, as a new run there would. It says whether the run took it.
+func (r *subscriptionRun) takeNamedOwner(owner string) bool {
+	o := r.owner.Load()
+	if o == nil {
+		return false
+	}
+	w, n := strings.Split(*o, "\x00"), strings.Split(owner, "\x00")
+	if len(w) != 4 || w[2] != ownHome || w[3] != unnamedOwner || len(n) < 3 || n[0] != w[0] || n[2] != ownHome {
+		return false
+	}
+	if !r.owner.CompareAndSwap(o, &owner) {
+		return false
+	}
+	log.Printf("claude: the run on Claude Code's own sign-in, %q until it was named, goes on as %q", w[1], n[1])
+	return true
+}
+
+// nameOwner has a run begun on Claude Code's own sign-in while it had no
+// name take the name that sign-in has now, when it has one: the turn the
+// run waits for comes by it (takeNamedOwner).
+func (r *subscriptionRun) nameOwner() {
+	o := r.owner.Load()
+	if o == nil {
+		return
+	}
+	f := strings.Split(*o, "\x00")
+	if len(f) != 4 || f[2] != ownHome || f[3] != unnamedOwner {
+		return
+	}
+	if user, ok := claudeOwnName(); ok {
+		r.takeNamedOwner(f[0] + "\x00" + user + "\x00" + ownHome)
+	}
+}
+
+// claudeOwnName is provider.ClaudeOwnName; tests name the sign-in.
+var claudeOwnName = provider.ClaudeOwnName
+
+// unnamedOwner marks a run's owner as Claude Code's own sign-in while it
+// is known by no name (provider's Account.Unnamed): the name in the owner
+// is made from its plan, and the next turn may come named by its email.
+const unnamedOwner = "unnamed"
+
 // ownHome marks a run's owner as Claude Code's own sign-in, run in its
 // own home.
 const ownHome = "own"
@@ -4141,7 +4260,7 @@ func (b *subscriptionBridge) whyNoRun(req *Request, owner string) string {
 		if r.behindKey == key {
 			return "its run went on with a turn this one doesn't follow, and wasn't taken back"
 		}
-		if r.owner != owner || r.convKey == "" || !slices.Contains(keys, r.convKey) {
+		if r.owned() != owner || r.convKey == "" || !slices.Contains(keys, r.convKey) {
 			continue
 		}
 		if r.convKey == keys[len(keys)-1] {
@@ -4150,7 +4269,7 @@ func (b *subscriptionBridge) whyNoRun(req *Request, owner string) string {
 		return "its run waits at an earlier turn of the conversation"
 	}
 	for _, r := range b.runs {
-		if r.owner == owner && r.idleKey == "" && r.convKey != "" && slices.Contains(keys, r.convKey) {
+		if r.owned() == owner && r.idleKey == "" && r.convKey != "" && slices.Contains(keys, r.convKey) {
 			return "its run is busy with another request"
 		}
 	}
@@ -4190,6 +4309,9 @@ func (s *Server) serveClaudeSubscription(w http.ResponseWriter, r *http.Request,
 			// A process in the agent's home reads that home's current sign-in.
 			// A saved account must not resume it after the sign-in moves.
 			owner += "\x00" + ownHome
+			if p.Account.Unnamed() {
+				owner += "\x00" + unnamedOwner
+			}
 		}
 	}
 	start := func(ctx context.Context, req *Request) (*subscriptionRun, <-chan Event, error) {
@@ -4327,7 +4449,11 @@ func (s *Server) serveSubscription(w http.ResponseWriter, r *http.Request, from 
 	// Tool-call IDs find the process that made them, independently of the
 	// account routing selected. Continuing a different owner's process would
 	// spend its quota and report its reply or limit against the chosen account.
-	if run != nil && run.owner != owner {
+	// The first turn on Claude Code's own sign-in, known by no name yet, is
+	// the exception: its run's Claude Code puts the account's profile in
+	// Claude Code's config, so its tool results come back on the same
+	// sign-in named by its email, and the run goes on under that name.
+	if run != nil && run.owned() != owner && !run.takeNamedOwner(owner) {
 		run.abort()
 		run, how = nil, accountChanged
 	}

@@ -76,5 +76,23 @@ export const PARTNERS = [
     },
     langs: ["zh", "en"],
     from: "2026-10-24T00:00:00+08:00",
+    until: "2026-11-24T00:00:00+08:00",
+  },
+  {
+    id: "wandapi",
+    name: "WandAPI",
+    chat: "https://api.wandapi.ai/v1",
+    responses: "https://api.wandapi.ai/v1",
+    anthropic: "https://api.wandapi.ai",
+    keysUrl: "https://wandapi.ai/r/magpieapp",
+    website: "https://wandapi.ai",
+    iconUrl: "https://usemagpie.ai/img/partner-wandapi.png",
+    notes: {
+      en: "Enterprise-grade AI gateway, seamless access to global AI models",
+      zh: "企业级 AI 网关，畅连全球 AI 大模型",
+      "zh-TW": "企業級 AI 閘道，暢連全球 AI 大模型",
+    },
+    from: "2026-10-25T00:00:00+08:00",
+    until: "2026-11-25T00:00:00+08:00",
   },
 ];

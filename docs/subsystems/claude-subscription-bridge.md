@@ -358,6 +358,27 @@ is either refused or kept and then taken out by `removeRun`.
   copies it, with the tool names the run's agent had, to the
   `savedSession`.
 
+### Claude Code's own sign-in before it has a name
+
+The owner in every key is the provider, the account's name and, for Claude
+Code's own sign-in, `own` (`ownHome`). `claude auth status` gives no email
+until Claude Code puts the account's profile (`oauthAccount`) in its
+config, which its first run does. Until then the account is named from its
+plan ("Claude Max", `Account.Unnamed`), and its owner ends in `unnamed`
+(`unnamedOwner`).
+
+The first run on such an account then names it, mid-turn. Its tool
+results came under the email, the owner no longer matched, and the run
+was let go ("tool results account changed"). A new run was told the whole
+conversation again, about 8k more cache writes. Now a run whose owner is
+unnamed takes the named owner of the same provider's own sign-in
+(`takeNamedOwner`), and goes on: a run in Claude Code's own home runs as
+whatever that home is signed in to. A turn that ends without a tool call
+takes the name before its keys are made (`nameOwner`, from
+`provider.ClaudeOwnName`), so the next turn finds the idle run. Every
+other change of owner still lets the run go. The owner is an atomic
+pointer (`owned`), read by the run's reader without a lock.
+
 ### A conversation the client rewrote (#912)
 
 Some clients send a turn's conversation back changed. Alma takes the
@@ -502,19 +523,60 @@ run time, how it ended and its peak RSS (`proc.PeakRSS`, rusage
 `ru_maxrss`; not on Windows) when it ends: an OOM report's pid can be found
 in magpie's log.
 
+## The run's working folder (`clientWorkDir`)
+
+Claude Code tells its model the folder it runs in as the "Primary working
+directory". A run has no tools of its own: the client's run in the
+client's folder. Run in magpie's shared work folder (`claudeWorkDir`,
+`<tmp>/magpie-claude-work-<uid>`), the model was told that folder. It then
+wrote the client's files there, through the client's own tools, while the
+client's own prompt named another folder. Under a real Claude Code client,
+`pelican.html` landed in magpie's folder.
+
+A run therefore starts in the folder the caller names. `clientWorkDir`
+reads the system prompt and every message that is not the model's, and
+takes the last folder named. It knows four ways of naming it:
+
+- Claude Code: "Primary working directory: X";
+- Codex: `<cwd>X</cwd>`;
+- OpenCode: "Working directory: X";
+- pi: "Current working directory: X".
+
+The folder is taken only when it is an absolute path to a folder on this
+computer. Otherwise, as for a caller elsewhere, a Windows path on a Mac,
+or no folder named, the run starts in the shared folder as before. A
+Claude Code in WSL always takes the shared folder.
+
+Nothing else of the folder reaches the run. `--setting-sources ""` loads
+no CLAUDE.md, settings or skills from it. Auto memory is off, and
+`CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS=1` keeps the repository's status out
+of the prompt, which would change it, and Anthropic's cache with it,
+whenever a file changes. The system prompt magpie sends is unchanged; only
+the folder Claude Code runs in is.
+
+A run's sessions are saved in that folder's project
+(`<config>/projects/<the caller's folder>`), beside the user's own Claude
+Code sessions there when the run is on the user's own sign-in. Claude
+Code's `--resume` picker lists them while they last. That project is never
+swept: only magpie's own folder is (`sweepSessions`). A run's session is
+removed there by its id, when it ends or is discarded (`removeSession`).
+A session that a stopped gateway left there, and its temp files, stay
+there as the user's own sessions do; a sweep can't tell them apart.
+
 ## Files a run leaves
 
 - Its session: `<config>/projects/<work project>/<session>.jsonl`, for
   `--resume` (`claudeSessions`). It is removed when the run ends unless
   shelved, and when a saved session is discarded (`removeSession`).
-  `sweepSessions` removes those a stopped gateway left, once older than
-  `idleLongest`.
+  `sweepSessions` removes those a stopped gateway left in magpie's own
+  work folder's project, once older than `idleLongest`; a caller's folder
+  is never swept (`clientWorkDir`).
 - Claude Code's temp files for the session, the images it was given:
   `<CLAUDE_CODE_TMPDIR or /tmp>/claude-<uid>/<work project>/<session>`
   (`claudeTempDir`, not on Windows). They are removed with the session
   (`removeSession`). The sweep removes those whose session file is gone and
   in which nothing changed for `tempLongest` (a day). The folder is
-  the work folder's for every account, and another account's session files
+  the run's work folder's for every account, and another account's session files
   are in its own config folder.
 
 A run started anew still sends every image in the conversation. Replacing

@@ -34,6 +34,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/yetone/magpie/internal/filememo"
 	"github.com/yetone/magpie/internal/lastgood"
 	"github.com/yetone/magpie/internal/netproxy"
 	"github.com/yetone/magpie/internal/proc"
@@ -228,6 +229,7 @@ func save(l List) error {
 	if err := lastgood.Keep(listPath(), lastgood.JSON, 0o600); err != nil {
 		return err
 	}
+	defer filememo.Forget() // what follows plugins.json looks again (Written)
 	if err := writeWhole(listPath(), append(b, '\n')); err != nil {
 		return err
 	}

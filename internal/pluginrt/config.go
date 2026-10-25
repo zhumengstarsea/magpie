@@ -17,6 +17,7 @@ import (
 
 	"github.com/yetone/magpie/internal/appdir"
 	"github.com/yetone/magpie/internal/filelock"
+	"github.com/yetone/magpie/internal/filememo"
 )
 
 // plugins.yml says which built-in plugins are on, and each one's config:
@@ -292,6 +293,7 @@ func write(f File) error {
 	}
 	b = append([]byte(header), b...)
 	path := Path()
+	defer filememo.Forget() // KeepFresh looks again (Written)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
@@ -374,16 +376,21 @@ func KeepFresh(ctx context.Context, every time.Duration, also ...string) {
 	tick := time.NewTicker(every)
 	defer tick.Stop()
 	for {
+		// taken before the look, so a write made during it isn't missed
+		written := filememo.Written()
 		if now := stamp(); now != last {
 			last = now
 			if _, err := Refresh(); err != nil {
 				log.Printf("plugins: %v", err)
 			}
 		}
+		// a write of this process's is looked at once made; every only
+		// catches another process's
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
+		case <-written:
 		}
 	}
 }

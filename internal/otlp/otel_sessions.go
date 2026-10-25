@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/yetone/magpie/internal/filememo"
 	"github.com/yetone/magpie/internal/redact"
 	"github.com/yetone/magpie/internal/sessions"
 	"github.com/yetone/magpie/internal/settings"
@@ -113,22 +114,37 @@ func (e *otelExporter) watchSessions(ctx context.Context, started time.Time, eve
 	defer ticker.Stop()
 	var reader *sessions.TraceReader
 	var prior settings.OTel
+	written := filememo.Written() // before each look, so a save during it isn't missed
 	if config, err := settings.OTelExport(); err == nil && config.Enabled && config.Sessions {
 		reader = sessions.NewTraceReader(started)
 		reader.SetSessionIndex(&e.identities)
 		prior = config
 	}
+	// while sessions aren't exported, a save here turns them on at once
+	// (Written), and OthersEvery only catches the CLI's (#3185: a 2s tick
+	// woke an idle magpie that exports nothing)
+	wait := every
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		case <-written:
 		}
+		written = filememo.Written()
 		config, err := settings.OTelExport()
 		if err != nil || !config.Enabled || !config.Sessions {
 			reader = nil
 			e.sessions.Store(nil)
+			if wait != filememo.OthersEvery {
+				wait = filememo.OthersEvery
+				ticker.Reset(wait)
+			}
 			continue
+		}
+		if wait != every {
+			wait = every
+			ticker.Reset(wait)
 		}
 		if reader == nil || !reflect.DeepEqual(config, prior) {
 			reader = sessions.NewTraceReader(time.Now())

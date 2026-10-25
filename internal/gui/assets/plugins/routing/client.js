@@ -310,7 +310,20 @@ function routingPage(part) {
   let skew = 0; // the gateway's clock less this page's
   // now is the gateway's time — or, in a replay, the time it is replaying
   const now = () => rp ? rp.real : Date.now() + skew;
-  const at = (s) => new Date(s).getTime();
+  // the times the trace says, each read once: every route names each of
+  // its keys' rest and try times, and a provider of hundreds of keys
+  // (#3164) had the stage, the story and the lists parse ~1M of them a
+  // second, more than a third of the page's time
+  const atOf = new Map();
+  const at = (s) => {
+    if (typeof s !== "string") return new Date(s).getTime();
+    let v = atOf.get(s);
+    if (v === undefined) {
+      if (atOf.size > 50000) atOf.clear();
+      atOf.set(s, v = new Date(s).getTime());
+    }
+    return v;
+  };
   // when each rest was lifted by hand, by the key it rests by (#1869), on
   // the gateway's clock: here, or anywhere else the trace tells of
   // (d.lifted: the provider's editor's Try now, a key's new value)
@@ -1412,21 +1425,45 @@ function routingPage(part) {
   }
   function show(c) { capLo = !!c.lo; cap.textContent = c.s; cap.classList.remove("in"); void cap.offsetWidth; cap.classList.add("in"); capAt = performance.now(); }
 
+  // curve is a wire's S from (x0, y0) to (x3, y3), its bends at mx: one
+  // cubic, cut into exact pieces of it about 1000 px tall (the middle ones
+  // up to 1.5 times that). WebKit dashes a cubic at a cost that grows faster
+  // than its length, and a key's fold hundreds of rows from magpie (#3164)
+  // had its flowing wire as one 18,000 px cubic: ~75 ms of each frame. The
+  // pieces trace the same curve.
+  function curve(x0, y0, mx, x3, y3) {
+    let a = [x0, y0], b = [mx, y0], c = [mx, y3];
+    const d = [x3, y3], lerp = (p, q, t) => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t];
+    let s = `M${x0} ${y0}`;
+    for (let n = Math.min(64, Math.ceil(Math.abs(y3 - y0) / 1000)); n > 1; n--) {
+      const t = 1 / n, ab = lerp(a, b, t), bc = lerp(b, c, t), cd = lerp(c, d, t), abc = lerp(ab, bc, t), bcd = lerp(bc, cd, t), m = lerp(abc, bcd, t);
+      s += ` C${ab[0]} ${ab[1]} ${abc[0]} ${abc[1]} ${m[0]} ${m[1]}`;
+      a = m; b = bcd; c = cd;
+    }
+    return s + ` C${b[0]} ${b[1]} ${c[0]} ${c[1]} ${x3} ${y3}`;
+  }
+
   function layout() {
     const r = stage.getBoundingClientRect();
     if (!r.width) return;
-    const b = (e) => { const x = e.getBoundingClientRect(); return { l: x.left - r.left, r: x.right - r.left, t: x.top - r.top, b: x.bottom - r.top, cx: (x.left + x.right) / 2 - r.left, cy: (x.top + x.bottom) / 2 - r.top }; };
-    wires.setAttribute("viewBox", `0 0 ${r.width} ${r.height}`);
-    sky.setAttribute("viewBox", `0 0 ${r.width} ${r.height}`);
+    // every box is read before any wire is drawn, each once: a wire drawn
+    // between two reads had the next read lay the stage out again, and
+    // hundreds of keys open (#3164) laid it out once a row, seconds a time
+    const boxes = new Map(), sets = [];
+    const b = (e) => {
+      let v = boxes.get(e);
+      if (!v) { const x = e.getBoundingClientRect(); boxes.set(e, v = { l: x.left - r.left, r: x.right - r.left, t: x.top - r.top, b: x.bottom - r.top, cx: (x.left + x.right) / 2 - r.left, cy: (x.top + x.bottom) / 2 - r.top }); }
+      return v;
+    };
     const h = b(hub), low = b(srcs).b;
     for (const a of agents.values()) {
       const s = b(a.node), mx = (s.r + h.l) / 2;
-      a.wire.setAttribute("d", h.l > s.r ? `M${s.r} ${s.cy} C${mx} ${s.cy} ${mx} ${h.cy} ${h.l} ${h.cy}` : `M${s.cx} ${s.b} L${h.cx} ${h.t}`);
+      sets.push([a.wire, h.l > s.r ? curve(s.r, s.cy, mx, h.l, h.cy) : `M${s.cx} ${s.b} L${h.cx} ${h.t}`]);
     }
     const fromHub = (a) => {
       if (a.l > h.r) {
         const mx = (h.r + a.l) / 2;
-        return `M${h.r} ${h.cy} C${mx} ${h.cy} ${mx} ${a.cy} ${a.l} ${a.cy}`;
+        return curve(h.r, h.cy, mx, a.l, a.cy);
       }
       // the accounts sit under magpie: a lane down their left, from below the agents too
       const x = a.l - 12, y = Math.max(h.b, low - 8);
@@ -1440,19 +1477,25 @@ function routingPage(part) {
     };
     for (const s of subs.values()) {
       const up = s.up && subs.get(s.up);
-      s.wire.setAttribute("d", up ? fromSub(up, b(s.li)) : fromHub(b(s.li)));
+      sets.push([s.wire, up ? fromSub(up, b(s.li)) : fromHub(b(s.li))]);
     }
     for (const f of folds.values()) {
-      if (!f.li.isConnected) { f.wire.removeAttribute("d"); continue; }
+      if (!f.li.isConnected) { sets.push([f.wire, null]); continue; }
       const up = f.up && subs.get(f.up);
-      f.wire.setAttribute("d", up ? fromSub(up, b(f.li)) : fromHub(b(f.li)));
+      sets.push([f.wire, up ? fromSub(up, b(f.li)) : fromHub(b(f.li))]);
     }
     for (const row of rows.values()) {
       // a key folded away has no wire: its fold's is the way to it
-      if (!row.li.isConnected) { row.wire.removeAttribute("d"); continue; }
+      if (!row.li.isConnected) { sets.push([row.wire, null]); continue; }
       const f = row.fold && folds.get(row.fold);
       const up = f?.open ? f : row.up && subs.get(row.up), a = b(row.li);
-      row.wire.setAttribute("d", up ? fromSub(up, a) : fromHub(a));
+      sets.push([row.wire, up ? fromSub(up, a) : fromHub(a)]);
+    }
+    wires.setAttribute("viewBox", `0 0 ${r.width} ${r.height}`);
+    sky.setAttribute("viewBox", `0 0 ${r.width} ${r.height}`);
+    for (const [p, d] of sets) {
+      if (d === null) { if (p.hasAttribute("d")) p.removeAttribute("d"); }
+      else if (p.getAttribute("d") !== d) p.setAttribute("d", d);
     }
     holdAll();
   }
@@ -1466,8 +1509,24 @@ function routingPage(part) {
     if (p?.account && w.kind === "account") {
       const user = (w.who || "").toLowerCase();
       i = loginsInOrder(p.account, p).findIndex((l) => (l.user || "").toLowerCase() === user);
-    } else if (p && w.kind === "key") i = (p.keyList || []).findIndex((k) => w.id === p.id + "#" + k.id);
+    } else if (p && w.kind === "key") i = keyRank(p, w.id);
     return i >= 0 ? i : (p ? 1000 : 0) + (w.rank || 0);
+  }
+  // keyRank is where a key is in its provider's list, by an index made
+  // once for the list: a sort of a route's hundreds of keys asked it for
+  // each comparison, and each looked through every key (#3164). An index
+  // the list has moved under (a drag reorders it in place) is made again.
+  const keyRanks = new WeakMap(); // keyList → { n, at: key id → place }
+  function keyRank(p, id) {
+    const ks = p.keyList || [], pre = p.id + "#";
+    if (!id.startsWith(pre)) return -1;
+    const kid = id.slice(pre.length);
+    let x = keyRanks.get(ks), i = x?.n === ks.length ? x.at.get(kid) : undefined;
+    if (!x || x.n !== ks.length || (i !== undefined && ks[i]?.id !== kid)) {
+      keyRanks.set(ks, x = { n: ks.length, at: new Map(ks.map((k, j) => [k.id, j])) });
+      i = x.at.get(kid);
+    }
+    return i ?? -1;
   }
 
   // seated: a route's accounts and keys each in a place of its own, not in
@@ -1490,13 +1549,14 @@ function routingPage(part) {
       if (m < 0) m = members.findIndex((x) => x.startsWith(w.provider + "/"));
       return [w.fallback ? 1 : 0, m < 0 ? members.length : m, w.name || w.provider, w.aside ? 1 : 0, rankOf(w), w.who || "", w.id];
     };
-    const cmp = (a, b) => {
-      const x = key(a), y = key(b);
+    const cmp = (x, y) => {
       for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return typeof x[i] === "number" ? x[i] - y[i] : String(x[i]).localeCompare(String(y[i]));
       return 0;
     };
     const on = new Set(r.order.map(seat));
-    return [...r.order, ...(r.left || []).filter((w) => heldOut(w) && !on.has(seat(w)))].sort(cmp);
+    // each one's key made once, not at each comparison (#3164)
+    return [...r.order, ...(r.left || []).filter((w) => heldOut(w) && !on.has(seat(w)))]
+      .map((w) => [key(w), w]).sort((a, b) => cmp(a[0], b[0])).map(([, w]) => w);
   }
 
   // a seat is one of a route's keys or accounts for one model: two of a
@@ -1513,7 +1573,13 @@ function routingPage(part) {
     || r.order.find((x) => x.id === tr.id);
   // tryseat is the seat of the row a try went to: its row is keyed by it
   const tryseat = (r, tr) => seat(tried(r, tr) || tr);
-  const setOf = (r) => r.order.map(seat).sort().join("\n");
+  // made once for each route's list, which a trace update replaces whole
+  const setsOf = new WeakMap();
+  const setOf = (r) => {
+    let s = setsOf.get(r.order);
+    if (s === undefined) setsOf.set(r.order, s = r.order.map(seat).sort().join("\n"));
+    return s;
+  };
   // whole fills in the lists a route's JSON can leave null: a route the
   // gateway weighed no seats for has "order": null, and the page reads
   // r.order, r.tries and r.left as lists everywhere — one null threw in
@@ -1753,16 +1819,17 @@ function routingPage(part) {
     const latest = new Map();
     for (const r of rs) latest.set(setOf(r), r);
     sets = [...sets.filter((k) => latest.has(k)), ...[...latest.keys()].filter((k) => !sets.includes(k))];
-    const ids = [], wOf = new Map(), rOf = new Map();
+    // a Set beside the list: hundreds of keys looked each other up (#3164)
+    const ids = [], has = new Set(), wOf = new Map(), rOf = new Map();
     for (const k of sets) {
       const r = latest.get(k);
-      for (const w of seated(r)) if (!ids.includes(seat(w))) ids.push(seat(w));
+      for (const w of seated(r)) { const id = seat(w); if (!has.has(id)) { has.add(id); ids.push(id); } }
     }
     for (const r of rs) for (const w of [...r.order, ...(r.left || [])]) { wOf.set(seat(w), w); rOf.set(seat(w), r.id); }
     // where each was, of those on the stage: a key folded away was nowhere
     const before = new Map([...[...rows].map(([id, row]) => [id, row.li]), ...[...folds].map(([k, f]) => ["\u0001" + k, f.li])]
       .filter(([, li]) => li.isConnected).map(([id, li]) => [id, li.getBoundingClientRect().top]));
-    for (const [id, row] of rows) if (!ids.includes(id)) { row.li.remove(); row.wire.remove(); rows.delete(id); }
+    for (const [id, row] of rows) if (!has.has(id)) { row.li.remove(); row.wire.remove(); rows.delete(id); }
     if (list.querySelector(".idle")) list.replaceChildren();
     for (const id of ids) {
       let row = rows.get(id);
@@ -1805,7 +1872,8 @@ function routingPage(part) {
     for (const id of ids) {
       const row = rows.get(id), via = row.w.via || [], f = foldOf.get(id);
       row.fold = f ? f.key : null;
-      row.li.style.setProperty("--depth", via.length + (f ? 1 : 0));
+      const depth = String(via.length + (f ? 1 : 0));
+      if (row.li.style.getPropertyValue("--depth") !== depth) row.li.style.setProperty("--depth", depth);
       row.up = via.length ? via.join(">") : null;
       row.shut = null;
       for (let d = 0; d < via.length; d++) {
@@ -1842,13 +1910,15 @@ function routingPage(part) {
     // FLIP: from where each was to its new place
     let moved = false;
     const placed = [...[...rows].map(([id, row]) => [id, row.li]), ...[...folds].map(([k, f]) => ["\u0001" + k, f.li])].filter(([, li]) => li.isConnected);
-    for (const [id, li] of placed) {
-      const dy = before.has(id) ? before.get(id) - li.getBoundingClientRect().top : 0;
-      if (!dy || still()) continue;
+    // each row's place read before any is moved: a row moved between two
+    // reads laid the stage out again, once a row of hundreds (#3164)
+    const dys = still() ? [] : placed.map(([id, li]) => before.has(id) ? before.get(id) - li.getBoundingClientRect().top : 0);
+    placed.forEach(([, li], i) => {
+      if (!dys[i]) return;
       moved = true;
       li.style.transition = "none";
-      li.style.transform = `translateY(${dy}px)`;
-    }
+      li.style.transform = `translateY(${dys[i]}px)`;
+    });
     if (moved) {
       void list.offsetWidth;
       for (const [, li] of placed) { li.style.transition = ""; li.style.transform = ""; }
@@ -1940,17 +2010,18 @@ function routingPage(part) {
     for (const r of rs) for (const tr of r.tries) if (!tr.done) { trying.add(tryseat(r, tr)); busy.add(r.agent); }
     const onWire = new Set();
     for (const f of flying.values()) { onWire.add(f.id); busy.add(f.agent); }
-    for (const [id, row] of rows) {
-      // each row as the latest staged request that weighed it found it
-      // rests by key or account, and by key or account and model for a
-      // rest of one model only: the account's other models' rows don't
-      // rest with it (#1960)
-      const r = src().get(row.rid) || pinned || cur, answered = new Set(), rests = new Map(), gave = new Map(), went = new Map();
+    // what each request found, read once a pass: hundreds of a route's
+    // keys each read their route's whole list again (#3164)
+    const found = new Map();
+    const findings = (r) => {
+      let f = found.get(r);
+      if (f) return f;
+      const answered = new Set(), rests = new Map(), gave = new Map(), went = new Map();
       // a rest lifted since it was found (#1869), here or in the
       // provider's editor, is over: the row doesn't say it until the next
       // request is refused again (zoecats on Discord)
-      const restAt = (id, m, rest, found) => {
-        if (lifted(rest.key, found)) return;
+      const restAt = (id, m, rest, since) => {
+        if (lifted(rest.key, since)) return;
         const rm = restModel(rest, m); rests.set(rm ? id + "\u0000" + rm : id, rest);
       };
       const modelOf = (tr) => tried(r, tr)?.model || tr.model || "";
@@ -1967,6 +2038,15 @@ function routingPage(part) {
       }
       // it answered: whatever rest it began in is over
       for (const tr of r.tries) if (tr.done && tryOk(tr)) { rests.delete(tr.id); rests.delete(tr.id + "\u0000" + modelOf(tr)); }
+      found.set(r, f = { answered, rests, gave, went });
+      return f;
+    };
+    for (const [id, row] of rows) {
+      // each row as the latest staged request that weighed it found it
+      // rests by key or account, and by key or account and model for a
+      // rest of one model only: the account's other models' rows don't
+      // rest with it (#1960)
+      const r = src().get(row.rid) || pinned || cur, { answered, rests, gave, went } = findings(r);
       const w = row.w, rest = rests.get(w.id) || rests.get(w.id + "\u0000" + (w.model || "")), resting = rest && at(rest.until) > n;
       let s;
       if (w.unlisted) s = unlistedWord(w);
@@ -2986,7 +3066,10 @@ function routingPage(part) {
   // place: the list scrolls on its own, and WebKit, a row taken out for a
   // moment, would send it back to its top from under the row just picked.
   // A list made mostly anew (another day) is put in at once, not row by
-  // row among the old ones.
+  // row among the old ones. A row going (one made again, its request having
+  // moved on) is taken out first: left where it was, every row after it was
+  // put in again in front of it, ~40 rows moved and laid out on each of the
+  // updates a busy gateway sends a second (#3164).
   function placeRows(els) {
     const kids = reqs.children;
     if (kids.length === els.length && els.every((e, i) => kids[i] === e)) return;
@@ -2996,6 +3079,8 @@ function routingPage(part) {
     for (const e of els) if (e.parentNode === reqs) kept++;
     if (kept * 2 < els.length) reqs.replaceChildren(...els);
     else {
+      const want = new Set(els);
+      for (const e of [...kids]) if (!want.has(e)) e.remove();
       let at = reqs.firstElementChild;
       for (const e of els) {
         if (e === at) { at = at.nextElementSibling; continue; }
@@ -3196,6 +3281,10 @@ function routingPage(part) {
     const n = now();
     let prov = "";
     const out = [];
+    // each provider's keys and accounts, gathered once: each of hundreds
+    // of keys looked through the whole list for its own (#3164)
+    const kin = new Map(), kinOf = (w) => w.provider + "\u0000" + w.kind;
+    for (const a of list) { const k = kinOf(a.w); kin.has(k) ? kin.get(k).push(a) : kin.set(k, [a]); }
     for (const a of list) {
       const w = a.w;
       if (w.provider !== prov) {
@@ -3216,7 +3305,7 @@ function routingPage(part) {
       // up (#1319), opened to each in place; its accounts too, folded
       // when LONG or more
       if (folding(w)) {
-        const ks = list.filter((x) => x.w.provider === w.provider && x.w.kind === w.kind);
+        const ks = kin.get(kinOf(w));
         if (ks.length >= FOLD_AT) {
           const pk = w.provider + (w.kind === "account" ? "/@" : "/*"), open = isOpen(pk, w.kind === "account" && ks.length < LONG);
           if (ks[0] === a) out.push(keysRow(ks, pk, open, n, w.kind));
