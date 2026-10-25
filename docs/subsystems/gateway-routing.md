@@ -255,6 +255,21 @@ recorded as a prediction failure (`noPrediction`).
   has in flight. `TestHandedOverGatewayFinishesItsStream`,
   `TestInheritedForAnotherAddressIsLetGo`, `TestToolCallOfTheMagpieBeforeGoesToIt` in
   [`handover_test.go`](../../internal/gateway/handover_test.go).
+- An agent's turn (Chat, Responses, Messages, Gemini's generateContent and
+  Codex's backend `/responses`) that magpie holds before any route is begun
+  for it is watched in `counted` ([`unrouted.go`](../../internal/gateway/unrouted.go);
+  heyusaku6 on X: Codex thought for over ten minutes with the Routing page
+  empty, until Codex and magpie were restarted; what held it wasn't
+  found). After `unroutedShow` (15s) a route of provider `magpie` shows it
+  on the Routing page as routing, and gives way to the request's own route
+  once one is begun (`noteRoute`, `trace.drop`). After `unroutedMost` (2m)
+  with no route and nothing written, it is answered 504 in its client's
+  protocol, whole (`Content-Length`, `Connection: close`) so the client
+  has it while the handler may still be held; its context ends with
+  `errUnrouted`, its route ends with the error, and the log has every
+  goroutine's stack (at most once in 10 minutes). The handler's writes go
+  through `heldWriter`, and nowhere once magpie has answered for it.
+  `TestUnroutedRequestShownThenAnswered`, `TestUnroutedShownGivesWayToItsRoute`.
 
 ## Remote magpie APIs
 

@@ -1470,6 +1470,7 @@ func (s *Server) handle(from provider.Protocol) http.HandlerFunc {
 			writeError(w, from, 400, err.Error())
 			return
 		}
+		noteAsked(r.Context(), model)
 		// Codex with magpie as its provider: spawn_agent names every
 		// model a subagent may be put on, not only Codex's first five
 		// (Gearclickist on Discord)
@@ -1564,6 +1565,7 @@ func (s *Server) gemini(w http.ResponseWriter, r *http.Request) {
 		writeError(w, provider.Gemini, 400, err.Error())
 		return
 	}
+	noteAsked(r.Context(), model)
 	var stream bool
 	switch method {
 	case "generateContent":

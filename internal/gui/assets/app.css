@@ -4228,6 +4228,9 @@ body.window .row + .row.agent.conn > .who { min-height: 41px; } /* the line abov
 .ag-diff-line .ind { text-decoration: none; }
 .ag-diff-line.del code .t { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--red) 45%, transparent); }
 .ag-diff-line.back .op { color: var(--green); }
+/* the row's view, before → now: what connecting put in, and what it replaced */
+.ag-diff-line.add .op, .ag-diff-line.add code { color: var(--green); }
+.ag-diff-line.old .op, .ag-diff-line.old code { color: var(--red); }
 .ag-tag { flex: none; padding: 0 6px; border-radius: 4px; background: var(--pill); font-family: inherit; font-size: 10.5px; line-height: 16px; color: var(--muted); }
 .ag-tag.del { background: color-mix(in srgb, var(--red) 12%, transparent); color: var(--red); }
 /* 短窗口只滚动正文，不压缩预览所在的行，以免与下方说明重叠。 */

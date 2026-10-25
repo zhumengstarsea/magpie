@@ -1207,9 +1207,7 @@ function fillMenuButton(b, a) {
   b.replaceChildren(...(k ? [k] : []));
   b.append(icon("magpie"));
   b.append(el("span", "v" + (c.shown ? "" : " empty"), menuSaid(c)));
-  const ch = el("span", "chev");
-  ch.append(svg(CHEV, 11, 1.7));
-  b.append(ch);
+  b.append(el("span", "chev", svg(CHEV, 11, 1.7)));
   const pick = t("Pick which models {agent} lists", { agent: a.name });
   b.title = pick + "\n" + t("{agent} reads its model list as it starts: quit and reopen it after a change", { agent: a.name });
   b.setAttribute("aria-label", pick + ": " + menuSaid(c));
@@ -1383,9 +1381,7 @@ function expandLink(a) {
   b.setAttribute("aria-expanded", String(open));
   b.append(el("span", "", open ? t("Collapse") : a.id === "claude" ? t("Tiers") : a.models && !listsMenu(a) ? t("Models {n}", { n: a.models.shown }) : t("Details")));
   if (!open) {
-    const c = el("span", "chev");
-    c.append(svg(CHEV_R, 10, 1.6));
-    b.append(c);
+    b.append(el("span", "chev", svg(CHEV_R, 10, 1.6)));
   }
   b.onclick = (e) => {
     e.stopPropagation();
@@ -1439,9 +1435,7 @@ function startButton(a, f, fieldBtn) {
   const b = fieldBtn(f, "ag-start");
   if (!a.wired && !a.native && f.key !== "model" && !f.options.some((o) => o.direct)) {
     b.replaceChildren(el("span", "v empty", t("Pick a model")));
-    const c = el("span", "chev");
-    c.append(svg(CHEV, 11, 1.7));
-    b.append(c);
+    b.append(el("span", "chev", svg(CHEV, 11, 1.7)));
     b.title = t("Pick one of magpie's models: {agent} is connected and starts on it", { agent: a.name });
     b.onclick = (ev) => openPicker(a, f, b, ev, (o) => !!o.ref);
   } else if (!a.wired) {
@@ -2011,9 +2005,7 @@ function connectPanel(a, { fields, fieldBtn }) {
     const pick = el("button", "ag-quiet");
     pick.type = "button";
     pick.append(el("span", "", t("Pick")));
-    const c = el("span", "chev");
-    c.append(svg(CHEV_R, 10, 1.6));
-    pick.append(c);
+    pick.append(el("span", "chev", svg(CHEV_R, 10, 1.6)));
     pick.onclick = (ev) => openAgentModels(a, pick, ev);
     holdAgentModels(a, pick);
     chips.append(pick);
@@ -2081,9 +2073,7 @@ function connectPanel(a, { fields, fieldBtn }) {
     view.classList.toggle("open", !diff.hidden);
   };
   view.append(el("span", "", t("View")));
-  const vc = el("span", "chev");
-  vc.append(svg(CHEV_R, 10, 1.6));
-  view.append(vc);
+  view.append(el("span", "chev", svg(CHEV_R, 10, 1.6)));
   const off = el("button", "ag-quiet red", t("Disconnect and restore"));
   off.type = "button";
   off.onclick = () => askDisconnect(a);
@@ -2111,29 +2101,29 @@ async function loadPreview(a) {
   return { changes: previews[a.id], revision: typeof r?.revision === "string" ? r.revision : "" };
 }
 
-// changesList: what disconnecting does to each file, line by line
-function changesList(changes) {
+// changesList: what connecting changed (− old, + new), or with back
+// what disconnecting does
+function changesList(changes, back) {
   const box = el("div", "ag-diff");
   for (const c of changes) {
     const f = el("div", "ag-diff-file");
-    const h = el("div", "ag-diff-path");
+    const h = el("div", "ag-diff-path"), gone = !c.removed == !back;
     h.append(el("span", "", c.path));
-    if (c.removed) h.append(el("span", "ag-tag del", t("Deleted")));
-    if (c.created) h.append(el("span", "ag-tag", t("Created")));
+    if (c.removed || c.created) h.append(el("span", gone ? "ag-tag del" : "ag-tag", t(gone ? "Deleted" : "Created")));
     f.append(h);
     const line = (l) => {
-      const r = el("div", "ag-diff-line " + (l.op === "-" ? "del" : "back"));
+      const op = back ? (l.op == "-" ? "del" : "back") : l.op == "+" ? "add" : "old";
       // the indent shows where it was, and isn't struck through
-      const code = el("code"), ind = l.text.match(/^\s*/)[0];
+      const r = el("div", "ag-diff-line " + op), code = el("code"), ind = l.text.match(/^\s*/)[0];
       code.append(el("span", "ind", ind), el("span", "t", l.text.slice(ind.length)));
-      r.append(el("span", "op", l.op === "-" ? "−" : "↺"), code);
-      if (l.op !== "-") r.append(el("span", "ag-tag", t("value before connecting")));
-      if (l.op === "~" && l.was) r.title = t("Now: {line}", { line: l.was });
+      r.append(el("span", "op", op == "back" ? "↺" : op == "add" ? "+" : "−"), code);
+      if (op == "back") r.append(el("span", "ag-tag", t("value before connecting")));
+      if (back && l.was) r.title = t("Now: {line}", { line: l.was });
       return r;
     };
     // a list magpie wrote whole (Claude Code's modelPicker, Codex's
     // catalog) is a few lines and the rest on asking
-    const lines = c.lines || [], FEW = 8;
+    const lines = (c.lines || []).flatMap((l) => back ? l : l.op == "~" ? [{ text: l.text }, { op: "+", text: l.was }] : { op: l.op == "-" ? "+" : "", text: l.text }), FEW = 8;
     f.append(...lines.slice(0, FEW).map(line));
     if (lines.length > FEW + 2) {
       const rest = el("button", "ag-diff-more", t("{n} more lines", { n: lines.length - FEW }));
@@ -2161,7 +2151,7 @@ function askDisconnect(a) {
   const said = el("p", "lib-confirm", t("magpie takes out everything it wrote into {agent}'s config — its endpoint, key, models and effort — and puts back the settings {agent} had before. magpie's providers and accounts stay as they are.", { agent: a.name }));
   const body = el("div", "ag-diff-wrap");
   const show = (changes) => {
-    if (changes?.length) body.replaceChildren(changesList(changes));
+    if (changes?.length) body.replaceChildren(changesList(changes, 1));
     else body.replaceChildren(said);
   };
   if (previews[a.id]) show(previews[a.id]);
@@ -2521,9 +2511,7 @@ function paintInstalls() {
   head.type = "button";
   head.setAttribute("aria-expanded", String(open));
   head.dataset.unrolls = ""; // it stays put, and its commands open beneath it
-  const chev = el("span", "chev");
-  chev.append(svg(CHEV, 10, 1.8));
-  head.append(el("span", "", t("Install another agent ({n})", { n: items.length })), chev);
+  head.append(el("span", "", t("Install another agent ({n})", { n: items.length })), el("span", "chev", svg(CHEV, 10, 1.8)));
   head.onclick = (e) => {
     e.stopPropagation();
     installsOpen = !open;
@@ -2597,9 +2585,7 @@ function importButton(a) {
     ? t("{name} has magpie as a provider · click to add it again", { name: a.name })
     : t("Opens {name} to add magpie as a provider — confirm it there", { name: a.name });
   b.append(icon("magpie"), el("span", "v" + (a.added ? "" : " empty"), a.added ? "magpie" : t("Add magpie")));
-  const c = el("span", "chev");
-  c.append(svg(OUT, 11, 1.6));
-  b.append(c);
+  b.append(el("span", "chev", svg(OUT, 11, 1.6)));
   b.onclick = (ev) => {
     ev.stopPropagation();
     if (web) location.href = a.import;
@@ -3109,9 +3095,7 @@ function fillModelsEntry(b, a) {
     words.append(pre, el("b", "", String(c.shown)), post || "");
   }
   b.append(words);
-  const ch = el("span", "chev");
-  ch.append(svg(CHEV_R, 10, 1.6));
-  b.append(ch);
+  b.append(el("span", "chev", svg(CHEV_R, 10, 1.6)));
   b.title = t("Pick which models {agent} lists", { agent: a.name });
 }
 
@@ -9477,8 +9461,10 @@ function drawEditor(p, presetID) {
 
   // a server on this machine (Ollama, LM Studio, oMLX, MLX-Serve) can
   // listen on another port, or be another computer's: its address moves each URL, each API
-  // keeping its path, as provider.AtAddress does
-  let address = null, addressMore = null;
+  // keeping its path, as provider.AtAddress does. Shown first and never
+  // folded: folded under the key, an LM Studio on another computer read
+  // as one whose base URL can't be changed (mengxiangziyou on X)
+  let address = null, addressField = null;
   if (pr?.kind === "local") {
     // a saved provider's URLs (or a duplicate's) start it; a new one's are
     // the preset's, sent as none unless moved, so the gateway takes them
@@ -9486,8 +9472,7 @@ function drawEditor(p, presetID) {
     // oMLX's decision API (#1641) is the same server's, and moves with it
     draft.addressFrom ??= { chat: draft.chat ?? pr.chat ?? "", responses: draft.responses ?? pr.responses ?? "", anthropic: draft.anthropic ?? pr.anthropic ?? "", decide: draft.decide ?? (p?.decide || pr.decide || "") };
     draft.addressWas ??= own ? originOf(draft.addressFrom) : "";
-    const from = draft.addressFrom, addressWas = draft.addressWas;
-    draft.address ??= addressWas;
+    draft.address ??= draft.addressWas;
     address = input(draft.address, originOf(pr));
     address.inputMode = "url";
     address.classList.add("address");
@@ -9501,14 +9486,7 @@ function drawEditor(p, presetID) {
     };
     const keys = address.onkeydown;
     address.onkeydown = (e) => { keys(e); if (e.key === "Enter" && isNew) save(); };
-    // folded: most run where the preset says; open for one that doesn't,
-    // or an address typed before the editor was drawn again
-    addressMore = el("details", "more");
-    addressMore.open = (own && originOf(from) !== originOf(pr)) || draft.address.trim() !== addressWas;
-    addressMore.append(el("summary", "", t("Server address")));
-    const inner = el("div", "inner");
-    inner.append(...field(t("Address"), address, t("Where the server listens; change the port, or give another computer's address")));
-    addressMore.append(inner);
+    addressField = field(t("Server address"), address, t("Where the server listens; change the port, or give another computer's address"));
   }
 
   // null, not false, when there is none: false?.key is undefined, and a
@@ -9611,11 +9589,11 @@ function drawEditor(p, presetID) {
       ...field(t("Service account"), box("impersonate", t("optional · a service account's email"), "vertex-impersonate"), t("Requests are then made as this service account, impersonated with the credentials above: their account needs roles/iam.serviceAccountTokenCreator on it.")),
     ];
   };
+  if (addressField) ed.append(...addressField);
   if (p?.keyList?.length) ed.append(...field(t("Accounts"), renderKeyAccounts(p), p.routing ? t("Tick every key to use; Routing says how requests spread over them.") : t("Tick every key to use. Requests go to the first; when it runs out of quota or hits a rate limit, the next ticked key takes over.")));
   if (p?.keyList?.filter((k) => k.on).length > 1) ed.append(...renderRouting(p));
   else if (vertex) ed.append(...vertexFields());
   else ed.append(...field(t("API key"), keyWrap, isNew ? t("Kept in ~/.config/magpie/providers.json, readable by you alone. Nothing is read from your shell.") : ""));
-  if (addressMore) ed.append(addressMore);
 
   // A user-defined provider can have its own picture; presets keep theirs.
   if (custom) ed.append(...field(t("Icon"), iconPicker(ed), ""));
@@ -10129,7 +10107,7 @@ function drawEditor(p, presetID) {
     if (vertex && !body.vertex.project) { vertexProject?.focus({ preventScroll: true }); return editorError(t("Google Vertex AI needs the id of your Google Cloud project"), "warn"); }
     if (address) {
       const a = (draft.address || "").trim();
-      if (localAddress(a) === null) { addressMore.open = true; address.focus({ preventScroll: true }); return editorError(t("Address: {v} isn't an address like http://localhost:11434", { v: a }), "warn"); }
+      if (localAddress(a) === null) { address.focus({ preventScroll: true }); return editorError(t("Address: {v} isn't an address like http://localhost:11434", { v: a }), "warn"); }
       Object.assign(body, movedURLs(draft));
     }
     editorError("");

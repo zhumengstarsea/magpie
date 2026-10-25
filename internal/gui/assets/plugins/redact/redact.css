@@ -65,7 +65,7 @@
 .mo-th.one { stroke-width: .9; }
 .mo-mem { stroke: var(--accent); stroke-opacity: .55; stroke-width: 1; }
 .mo-tick { stroke: var(--accent); stroke-opacity: .35; stroke-width: .6; }
-.mo-scan { fill: var(--accent); opacity: 0; animation: mo-scan 5.5s cubic-bezier(.45, 0, .55, 1) infinite; }
+.mo-scan { fill: var(--accent); opacity: 0; animation: mo-scan 5.5s cubic-bezier(.45, 0, .55, 1) 2; }
 @keyframes mo-scan { 0% { transform: translateY(0); opacity: 0; } 15%, 85% { opacity: 1; } 100% { transform: translateY(var(--h)); opacity: 0; } }
 .mo-dot { fill: var(--fg); opacity: 0; }
 .mo-dot.out { fill: var(--accent); }
@@ -88,7 +88,7 @@
 .msk-list { margin-top: 14px; }
 .msk-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .msk-live { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--muted); }
-.msk-live i { width: 6px; height: 6px; border-radius: 50%; background: var(--green, var(--accent)); animation: msk-live 2.4s ease-in-out infinite; }
+.msk-live i { width: 6px; height: 6px; border-radius: 50%; background: var(--green, var(--accent)); animation: msk-live 2.4s ease-in-out; }
 @keyframes msk-live { 50% { opacity: .35; } }
 .msk-facets { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px; }
 .msk-facet { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border: 1px solid var(--line); border-radius: 99px; background: var(--card); color: var(--fg-2); font: inherit; font-size: 12px; cursor: default; white-space: nowrap; }

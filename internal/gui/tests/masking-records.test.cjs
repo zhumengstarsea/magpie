@@ -125,7 +125,7 @@ function serve(lang, sum, asked, opts = {}) {
 
 async function open(engine, lang, width, sum, where, opts) {
   const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({ channel: "chromium" }));
-  const page = await (await browser.newContext({ viewport: { width, height: 1000 }, reducedMotion: "reduce" })).newPage();
+  const page = await (await browser.newContext({ viewport: { width, height: 1000 }, reducedMotion: opts?.motion ? "no-preference" : "reduce" })).newPage();
   page.setDefaultTimeout(8000);
   const errors = [], asked = [];
   page.on("pageerror", (e) => errors.push(e.message));
@@ -164,6 +164,38 @@ async function stillClick(page, loc) {
   await loc.click();
   await page.waitForTimeout(100);
   assert.deepEqual(await scrolled(page), before, "no click moved the page");
+}
+
+// The page comes to rest while it sits open (#3185): the flow's dots, its
+// scan mark and the Live dot each play a few times when drawn. Endless,
+// the dots (SMIL) laid the page out ~700 times a second in Chromium, 16%
+// of a core and ~0.5W; in WebKit 180 wakeups a second. SMIL's clock is
+// moved on and each CSS animation's end is read, so nothing waits.
+for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
+  for (const width of [1100, 640]) {
+    test(`${engine} ${width}px: the masking page's motion ends`, async (t) => {
+      const { browser, page, errors } = await open(engine, "en", width, summary, "", { motion: true });
+      t.after(() => browser.close());
+      const card = page.locator("#maskCard");
+      await card.locator(".mo-flow .mo-dot").first().waitFor({ state: "attached" });
+      await page.locator("#maskList .msk-live i").waitFor({ state: "attached" });
+      const rest = await page.evaluate(() => {
+        const smil = [...document.querySelectorAll("#view-masking animate, #view-masking animateMotion")];
+        for (const svg of new Set(smil.map((a) => a.ownerSVGElement))) svg.setCurrentTime(3600);
+        // WebKit keeps an ended one's start time, so only Chromium is asked
+        // the clock; both are asked each one's own timing
+        const on = smil.filter((a) => { try { a.getStartTime(); return true; } catch { return false; } }).length;
+        const forever = smil.filter((a) => ["repeatCount", "repeatDur", "dur", "end"].some((k) => a.getAttribute(k) === "indefinite") || !(+a.getAttribute("repeatCount") > 0)).length;
+        const endless = document.getAnimations().filter((a) => a.effect?.getComputedTiming().endTime === Infinity).map((a) => a.animationName || a.id || "?");
+        return { smil: smil.length, on, forever, endless };
+      });
+      assert(rest.smil > 0, "the flow moves when drawn");
+      assert.equal(rest.forever, 0, "a dot set to go round for good");
+      if (engine === "chromium") assert.equal(rest.on, 0, "an hour on, a dot still goes round");
+      assert.deepEqual(rest.endless, [], "an animation that never ends");
+      assert.deepEqual(errors, []);
+    });
+  }
 }
 
 for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {

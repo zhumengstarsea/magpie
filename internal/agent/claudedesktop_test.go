@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/yetone/magpie/internal/desktopdir"
+	"github.com/yetone/magpie/internal/edit"
 	"github.com/yetone/magpie/internal/gateway"
 	"github.com/yetone/magpie/internal/provider"
 )
@@ -143,6 +144,7 @@ func TestClaudeDesktopFresh(t *testing.T) {
 		"inferenceProvider": "gateway", "inferenceGatewayBaseUrl": gateway.URL(),
 		"inferenceGatewayApiKey": "magpie-claude-desktop", "inferenceGatewayAuthScheme": "bearer",
 		"disableDeploymentModeChooser": true, "coworkEgressAllowedHosts": []any{"*"},
+		"claudeAiImport": map[string]any{"enabled": true, "bannerBehavior": "detect"},
 	}
 	if prof := desktopJSON(t, p.prof); !reflect.DeepEqual(prof, want) {
 		t.Errorf("profile: %v", prof)
@@ -366,6 +368,7 @@ func TestClaudeDesktopOnKeepsTheUsersOwnGatewayProfile(t *testing.T) {
 	json.Unmarshal([]byte(body), &want)
 	want["inferenceGatewayApiKey"] = "magpie-claude-desktop"
 	want["inferenceGatewayAuthScheme"] = "bearer"
+	want["claudeAiImport"] = map[string]any{"enabled": true, "bannerBehavior": "detect"}
 	if prof := desktopJSON(t, p.prof); !reflect.DeepEqual(prof, want) {
 		t.Errorf("magpie's profile:\n%v\nwant\n%v", prof, want)
 	}
@@ -756,5 +759,89 @@ func TestClaudeDesktopLanguageOddValues(t *testing.T) {
 	}
 	if m := desktopJSON(t, p.config3p); m["deploymentMode"] != "3p" {
 		t.Errorf("takeover stopped: %v", m)
+	}
+}
+
+// lambdua on X: Desktop on magpie runs in Claude-3p, a userData of its own,
+// so the Code and Cowork sessions it had signed in with Anthropic were out
+// of sight. Desktop imports them itself (Settings → Import) once its
+// claudeAiImport policy is on: magpie's profile gets it, once, on a switch
+// on and, for a Desktop already on magpie, from Sync at the next start.
+// A claudeAiImport the user has, or took away since, stays theirs, and
+// Desktop's own sessions are never touched.
+func TestClaudeDesktopOffersItsSessionImport(t *testing.T) {
+	home, p := desktopSandbox(t)
+	on := map[string]any{"enabled": true, "bannerBehavior": "detect"}
+	// a session Desktop wrote signed in with Anthropic
+	session := filepath.Join(p.dir, "claude-code-sessions", "acct", "org", "local_1.json")
+	desktopWrite(t, session, `{"sessionId":"local_1","title":"mine"}`)
+	a := claudeDesktop(home)
+	if a.Sync == nil {
+		t.Fatal("no Sync: a Desktop already on magpie never gets the import")
+	}
+	// not on magpie: Sync writes nothing
+	before := desktopTree(t, p)
+	if err := a.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if after := desktopTree(t, p); !reflect.DeepEqual(after, before) {
+		t.Fatalf("Sync off magpie wrote:\n%v", after)
+	}
+
+	// on magpie before this change: a profile with no claudeAiImport and
+	// nothing in the stash; Sync seeds it
+	if err := a.Field("provider").Set("magpie"); err != nil {
+		t.Fatal(err)
+	}
+	if got := desktopJSON(t, p.prof)["claudeAiImport"]; !reflect.DeepEqual(got, on) {
+		t.Fatalf("switch on: claudeAiImport %v", got)
+	}
+	prof := desktopJSON(t, p.prof)
+	delete(prof, "claudeAiImport")
+	b, _ := json.Marshal(prof)
+	desktopWrite(t, p.prof, string(b))
+	forget(desktopImport + p.key)
+	if err := a.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if got := desktopJSON(t, p.prof)["claudeAiImport"]; !reflect.DeepEqual(got, on) {
+		t.Fatalf("Sync on magpie: claudeAiImport %v", got)
+	}
+
+	// the user turns it off in Desktop's window (the key gone): stays off
+	desktopWrite(t, p.prof, string(b))
+	if err := a.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Field("provider").Set("magpie"); err != nil {
+		t.Fatal(err)
+	}
+	if _, has := desktopJSON(t, p.prof)["claudeAiImport"]; has {
+		t.Fatal("seeded again over the user's choice")
+	}
+
+	// a claudeAiImport of the user's own, seen first: kept as it is
+	if err := a.Field("provider").Set(""); err != nil {
+		t.Fatal(err)
+	}
+	forget(desktopImport+p.key, desktopProfile+p.key)
+	theirs := map[string]any{"enabled": false}
+	if err := a.Field("provider").Set("magpie"); err != nil {
+		t.Fatal(err)
+	}
+	if err := edit.SetJSON(p.prof, edit.KV{Path: "claudeAiImport", Value: theirs}); err != nil {
+		t.Fatal(err)
+	}
+	forget(desktopImport + p.key)
+	if err := a.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if got := desktopJSON(t, p.prof)["claudeAiImport"]; !reflect.DeepEqual(got, theirs) {
+		t.Fatalf("the user's claudeAiImport: %v", got)
+	}
+
+	// Desktop's own sessions are where they were, as they were
+	if got, _ := os.ReadFile(session); string(got) != `{"sessionId":"local_1","title":"mine"}` {
+		t.Fatalf("session: %q", got)
 	}
 }

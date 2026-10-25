@@ -183,6 +183,19 @@ func claudeDesktop(home string) *Agent {
 					Note: "Desktop's third-party gateway: Code and Cowork on magpie's models, no Anthropic sign-in (restart Desktop)"}}
 			},
 		}}, append(desktopTierFields(ps), desktopSubagentField(ps), desktopSubagentEffortField(ps))...),
+		// a Desktop already on magpie gets the import policy too
+		// (desktopSeedImport); nothing else is written here
+		Sync: func() error {
+			var errs []error
+			for _, p := range ps {
+				if desktopWired(p) {
+					if err := desktopSeedImport(p); err != nil {
+						errs = append(errs, err)
+					}
+				}
+			}
+			return joinErrs(errs)
+		},
 	}
 }
 
@@ -386,9 +399,10 @@ const (
 	desktopMade    = "claude-desktop.made"
 	desktopProfile = "claude-desktop.profile"
 	desktopLocale  = "claude-desktop.locale"
+	desktopImport  = "claude-desktop.import"
 )
 
-var desktopStashKeys = []string{desktopStashed, desktopMode, desktopMode3p, desktopApplied, desktopMade, desktopProfile, desktopLocale}
+var desktopStashKeys = []string{desktopStashed, desktopMode, desktopMode3p, desktopApplied, desktopMade, desktopProfile, desktopLocale, desktopImport}
 
 // desktopAdoptStash moves the stash a packaged Desktop's folders got
 // before they had keys of their own (when magpie wrote only one set) onto
@@ -481,6 +495,9 @@ func desktopOn(p desktopPaths) error {
 	if err := edit.SetJSON(p.prof, kvs...); err != nil {
 		return err
 	}
+	if err := desktopSeedImport(p); err != nil {
+		return err
+	}
 
 	// _meta.json: magpie's entry (where it was, if it was), applied
 	if !wired {
@@ -502,6 +519,44 @@ func desktopOn(p desktopPaths) error {
 			return err
 		}
 	}
+	return nil
+}
+
+// desktopImportOn is Desktop's own "Claude.ai data import" policy
+// (claudeAiImport, a 3p-only key of Desktop 1.28929 and later) turned on,
+// with its banner shown only when there is something to import.
+var desktopImportOn = map[string]any{"enabled": true, "bannerBehavior": "detect"}
+
+// desktopSeedImport lets Desktop on magpie bring in the sessions it had
+// signed in with Anthropic. 3p mode runs in a userData of its own
+// (Claude-3p), whose Code and Cowork sessions are keyed by its install id
+// and a fixed org (claude-code-sessions/<ant-did>/00000000-0000-4000-8000-
+// 000000000001), so the Code tab came up empty and the signed-in sessions,
+// in Claude/claude-code-sessions/<account>/<org>, were out of sight until
+// Desktop was switched back (lambdua on X: 切换账号，对话都能全都不见).
+// Nothing is lost; Desktop only offers its importer (Settings → Import,
+// "earlier Claude sessions on this computer": Claude/, other Claude*
+// folders and ~/.claude/projects, copied with the originals left in place)
+// when claudeAiImport.enabled is true, false by default (Desktop 2.7032's
+// B9/VKi). It is seeded into magpie's profile once, where the profile has
+// no claudeAiImport of its own: one the user set, or took away in
+// Desktop's window since, stays theirs. Run on every switch on and from
+// Sync, so a Desktop already on magpie gets it at magpie's next start.
+// The mark is read, never unstashed: it outlives the check and a switch
+// off, or the next Sync would write the policy back.
+func desktopSeedImport(p desktopPaths) error {
+	if stashLoad()[desktopImport+p.key] != "" {
+		return nil
+	}
+	if desktopObject(p.prof) != nil {
+		return nil
+	}
+	if _, ok := edit.GetJSON(p.prof, "claudeAiImport"); !ok {
+		if err := edit.SetJSON(p.prof, edit.KV{Path: "claudeAiImport", Value: desktopImportOn}); err != nil {
+			return err
+		}
+	}
+	stash(map[string]string{desktopImport + p.key: "1"})
 	return nil
 }
 

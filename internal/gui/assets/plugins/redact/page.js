@@ -317,7 +317,9 @@ function maskFlow(sum, move) {
           if (q === ks[i] >> 1 && !still) for (let k = 0, dots = 1 + Math.round(2 * r.n / max); k < dots; k++) {
             const dur = 1.7 + i * .5, begin = (out ? dur : 0) + k * 2 * dur / dots + "s";
             const z = out ? 1.8 : 1.7, dot = add("rect", { x: -z, y: -z, width: 2 * z, height: 2 * z, rx: out ? .6 : z, class: "mo-dot" + (out ? " out" : "") });
-            const a = { dur: dur + "s", begin, repeatCount: "indefinite" };
+            // twice round when drawn, not forever: an endless motion lays the
+            // page out each frame, ~16% of a core while it sits open (#3185)
+            const a = { dur: dur + "s", begin, repeatCount: 2 };
             add("animateMotion", { path: d, ...a }, dot);
             add("animate", { attributeName: "opacity", values: "0;1;1;0", keyTimes: "0;.1;.85;1", ...a }, dot);
           }
