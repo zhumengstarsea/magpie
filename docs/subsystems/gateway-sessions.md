@@ -406,6 +406,30 @@ reporter's real wire files), `TestCodeBuddyCalls`, `TestWorkBuddyCalls*`,
 `TestPiCalls*` (Pi 1.1.0's and omp 18.9.1's own files) and
 `TestWSLSessionsListed`.
 
+Antigravity CLI's (agy's) conversations are sessions too (RickyWei on
+Discord): one per `brain/<conversation id>/` of `~/.gemini/antigravity-cli`,
+read from the same `transcript_full.jsonl` its calls are (`agyFiles`,
+[`agy.go`](../../internal/sessions/agy.go)). The steps give the times, the
+first prompt (out of agy's `<USER_REQUEST>` wrapper), the tool calls and the
+tokens, counted under the model `agy` since no step names one; a step agy
+writes again replaces its tokens, read on or read whole. Its title and
+folder are its row of `conversation_summaries.db` (`title`, and the first
+local `workspace_uris` entry, `agyFolder` turning `file:///C:/…` into
+`C:\…` on Windows). agy writes the title after the transcript, so the row
+is the file's `rev` and a new title reads the conversation again; the
+database is read again only when it or its `-wal` changed, and a failed
+read keeps the rows read before. A row whose conversation has its
+`conversations/<id>.db` and no transcript (#1718; that database is protobuf,
+not read) is listed from the row alone: title, folder, `last_modified_time`,
+no tokens and no conversation to open (`readable`). Resume is `agy --conversation <id>`, which
+picks it up from any folder; when agy is set to use magpie it is the
+agent's launch command (the gateway's variables and `--model`) with
+`--conversation` after it (`sessions.AgyStart`, set by package agent).
+Subagents (`parent_conversation_id`) and agy in WSL are not read.
+Verification: `TestAgySessions`, `TestAgyTitleLater`, `TestAgyGrows`,
+`TestAgyTranscript`, `TestAgyFolder`, `TestAgyRowOnly`, on conversations agy 1.3.5 and 1.4.7
+wrote in a sandbox.
+
 A read of every call decodes each file's cached shard, and over a long
 history that is tens of thousands of files (#2278: 68k shards, 415 MB).
 Asks for the same calls while one read is under way wait for it and get

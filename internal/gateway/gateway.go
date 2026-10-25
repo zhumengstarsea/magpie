@@ -1667,6 +1667,13 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		body = rewriteModel(body, asked)
 		plain = rewriteModel(plain, asked)
 	}
+	// the body as the agent wrote it is rarely the one read (requestModel,
+	// spawnAgentModels and the Lite lift each write a new one), and its
+	// turn, folder and git are read from it two or three times (affine,
+	// dirOf, a pause by folder): held, one parse serves them all
+	// (factsOf), where each read parsed the whole conversation again,
+	// ~27 MB a time for a 4 MB Codex request (XiaoYin_OK on X)
+	holdBody(r.Context(), plain)
 	capture := &captureResponseWriter{ResponseWriter: w}
 	if wholeBodies {
 		capture.whole = &spool{limit: wholeBodyLimit, pattern: "magpie-whole-*"}
@@ -2196,7 +2203,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	// (#63): its reasoning, sealed by the account that wrote it, is refused
 	// by another.
 	before := len(cands)
-	cands, pl, aff, stuck := affine(scope, mode, rotate, r.Header, from, body, cands, pl)
+	cands, pl, aff, stuck := affine(scope, mode, rotate, r.Header, from, body, plain, cands, pl)
 	// a strict conversation left with its own account of several: its
 	// failure rests the account as it would with the others still there,
 	// for new conversations to go elsewhere meanwhile (#1797)

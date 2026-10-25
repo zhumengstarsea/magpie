@@ -93,20 +93,21 @@ function serve(lang, sum, asked, opts = {}) {
     if (url.pathname === "/api/masking/records") {
       asked.push(url.search);
       const q = url.searchParams, kinds = q.get("kind")?.split(",");
-      const rs = (opts.none ? [] : records).filter((r) => (!kinds || r.values.some((v) => kinds.includes(v.k))) && (!q.get("by") || r.values.some((v) => v.b === q.get("by")))
+      const rs = (opts.none ? [] : opts.records || records).filter((r) => (!kinds || r.values.some((v) => kinds.includes(v.k))) && (!q.get("by") || r.values.some((v) => v.b === q.get("by")))
         && (!q.get("agent") || r.agent === q.get("agent")) && (!q.get("provider") || r.provider === q.get("provider")) && (!q.get("blocked") || r.blocked));
       return json({ records: rs, more: false });
     }
     if (url.pathname === "/api/masking/record") {
-      const r = records.find((r) => r.key === +url.searchParams.get("key"));
+      const r = (opts.records || records).find((r) => r.key === +url.searchParams.get("key"));
       return r ? json(r) : route.fulfill({ status: 404, body: "404 page not found" });
     }
     if (url.pathname === "/api/masking/sent") {
       asked.push("sent " + url.searchParams.get("key"));
-      return url.searchParams.get("key") === "1002" ? json({ body: SENT }) : route.fulfill({ status: 404, body: "404 page not found" });
+      const body = opts.sent ? opts.sent[url.searchParams.get("key")] : url.searchParams.get("key") === "1002" && SENT;
+      return body ? json({ body }) : route.fulfill({ status: 404, body: "404 page not found" });
     }
     if (url.pathname === "/api/masking/values") {
-      const known = { [KEY]: SECRET, [MAIL]: ADDR };
+      const known = { [KEY]: SECRET, [MAIL]: ADDR, ...opts.known };
       const ps = JSON.parse(req.postData()).ps;
       asked.push("values " + ps.join(","));
       return json({ values: Object.fromEntries(ps.filter((p) => known[p]).map((p) => [p, known[p]])) });
@@ -188,11 +189,24 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         // to the ring's top left)
         const bird = await card.locator(".msk-hub svg").boundingBox();
         assert(Math.abs(bird.x + bird.width / 2 - (hub.x + hub.width / 2)) < 1 && Math.abs(bird.y + bird.height / 2 - (hub.y + hub.height / 2)) < 1, "the bird in the middle of its ring");
-        // each agent and provider with its logo, on the side the lines are
+        // each agent and provider with its logo
         assert.deepEqual(await card.locator(".mo-node .ic").evaluateAll((ns) => ns.map((n) => n.dataset.icon)), ["claudecode-color", "codex-color", "anthropic", "openai"]);
-        const agentNode = card.locator(".mo-col.agent .mo-node").first(), provNode = card.locator(".mo-col.provider .mo-node").first();
-        assert((await agentNode.locator(".ic").boundingBox()).x > (await agentNode.locator(".nm").boundingBox()).x, "an agent's logo after its name");
-        assert((await provNode.locator(".ic").boundingBox()).x < (await provNode.locator(".nm").boundingBox()).x, "a provider's logo before its name");
+        // on both sides the logo first, then the name; a side's logos in one
+        // column and its names on one edge; every logo on a disc of one size
+        // (bare, a logo that fills its box and one that doesn't read as two
+        // sizes)
+        const nodes = await card.locator(".mo-node:not(:disabled)").evaluateAll((ns) => ns.map((b) => {
+          const ic = b.querySelector(".ic").getBoundingClientRect(), nm = b.querySelector(".nm").getBoundingClientRect();
+          return { side: b.parentElement.classList.contains("agent") ? "agent" : "provider", ic: { x: ic.x, w: ic.width, h: ic.height, r: getComputedStyle(b.querySelector(".ic")).borderRadius }, nm: nm.x };
+        }));
+        for (const n of nodes) {
+          assert(n.ic.x + n.ic.w <= n.nm, `the logo before the name: ${JSON.stringify(n)}`);
+          assert.deepEqual([n.ic.w, n.ic.h, n.ic.r], [24, 24, "50%"], `one disc for every logo: ${JSON.stringify(n)}`);
+        }
+        for (const side of ["agent", "provider"]) {
+          const of = nodes.filter((n) => n.side === side);
+          assert(of.every((n) => Math.abs(n.ic.x - of[0].ic.x) < 0.5 && Math.abs(n.nm - of[0].nm) < 0.5), `${side}s' logos in one column, names on one edge: ${JSON.stringify(of)}`);
+        }
         assert.match(await card.locator(".mo-cap").textContent(), /magpie/);
         assert.equal(await page.evaluate(() => [...document.querySelectorAll("#maskCard, #maskCard *")].some((n) => /gradient/.test(getComputedStyle(n).backgroundImage))), false, "flat: no gradient");
         // short: the list starts in the first screen
@@ -367,4 +381,33 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     await page.locator("#maskCard .msk-num").waitFor();
     assert.deepEqual(errors, []);
   });
+}
+
+// "Keep a key's form" sends a made-up key of the real one's form in place of
+// a {{…}} placeholder (redact's shape.go): the page marks it, and puts the
+// real key against it, as it does a placeholder (#3599)
+const MADE = "sk_hYQWRBFmdHNIo5XVT2VnIIGh4mmMiJNm", REAL = "sk_w3axCByTQgK1PxqPhfKTrJOLBqz6sbZv";
+const made = {
+  records: [{ key: 1005, t: ago(60e3), route: "chat", what: "chat", agent: "codex", provider: "openai", model: "gpt-5", n: 2, back: { [MADE]: 1 },
+    values: [{ p: MADE, k: "API_KEY", b: "rule", h: "sk_w", l: 35, n: 2, known: true }],
+    snips: { [MADE]: `OPENAI_API_KEY=${MADE}` } }],
+  sent: { 1005: JSON.stringify({ model: "gpt-5", messages: [{ role: "user", content: `OPENAI_API_KEY=${MADE} sk_live_other\nonce more: ${MADE}` }] }) },
+  known: { [MADE]: REAL },
+};
+for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
+  for (const lang of ["en", "zh"]) {
+    test(`${engine} ${lang}: a made-up key is marked as a placeholder is`, async (t) => {
+      const { browser, page, errors } = await open(engine, lang, 1100, summary, "", made);
+      t.after(() => browser.close());
+      await page.locator("#maskList .msk-row").first().click();
+      const one = page.locator("#maskOne");
+      await one.locator(".msk-msg").first().waitFor();
+      assert.deepEqual(await one.locator(".msk-msg .msk-text").last().locator("mark").allTextContents(), [MADE, MADE], "as the vendor got it");
+      assert.deepEqual(await one.locator(".msk-msg .msk-text").first().locator("mark").allTextContents(), [REAL, REAL], "as written here");
+      await stillClick(page, one.locator(".msk-val").first());
+      assert.equal(await one.locator("mark.lit").count(), 4);
+      await untranslated(page, lang);
+      assert.deepEqual(errors, []);
+    });
+  }
 }

@@ -120,7 +120,7 @@ type Session struct {
 	// Gateway: seen only through magpie's gateway, with no file of the
 	// agent's on this computer (external.go)
 	Gateway       bool          `json:"gateway,omitempty"`
-	Agent         string        `json:"agent"` // magpie agent id: claude, codex, opencode, pi, omp, zcode, dsh, cline, qoder, qoder-cn, grok, workbuddy, codebuddy, droid, cursor, hermes, alma, kimi
+	Agent         string        `json:"agent"` // magpie agent id: claude, codex, opencode, pi, omp, zcode, dsh, cline, qoder, qoder-cn, grok, workbuddy, codebuddy, droid, cursor, hermes, alma, kimi, agy
 	ID            string        `json:"id"`
 	Cwd           string        `json:"cwd"`
 	Title         string        `json:"title"` // the name it was given, else the agent's own title, else the first prompt
@@ -225,6 +225,9 @@ type state struct {
 	// Kimi Code: where its wire file was read to, and what the read
 	// carries on with
 	Kimi *kimiCarry `json:"kimi,omitempty"`
+	// agy: where its transcript was read to, and what the read carries on
+	// with
+	Agy *agyCarry `json:"agy,omitempty"`
 	// dsh: where its file was read to, and its header
 	Dsh *dshCarry `json:"dsh,omitempty"`
 	// Cline: the messages file its counts were read from
@@ -410,8 +413,10 @@ type file struct {
 	manifest string
 	hermes   *hermesDB
 	// Alma: its database, and what tells the chat's rows changed
-	alma     *almaStore
-	rev      string
+	alma *almaStore
+	rev  string
+	// agy: what conversation_summaries.db says of the conversation
+	agy      *agySummary
 	readOnly bool
 	editor   *cursorEditorMeta
 	// wsl: the WSL distro whose home it is in; cold: that distro isn't
@@ -537,7 +542,7 @@ func allFiles() []file {
 	var out []file
 	for _, fs := range [][]file{callFiles(), openCodeFiles(), piFiles(),
 		wslFiles("pi", "omp", "kimi"), zcodeFiles(), dshFiles(), clineFiles(), ccFiles("qoder", QoderDir("qoder")), ccFiles("qoder-cn", QoderDir("qoder-cn")),
-		grokFiles(), workbuddyFiles(), codebuddyFiles(), droidFiles(), ompFiles(), cursorFiles(), hermesFiles(), almaFiles(), kimiFiles()} {
+		grokFiles(), workbuddyFiles(), codebuddyFiles(), droidFiles(), ompFiles(), cursorFiles(), hermesFiles(), almaFiles(), kimiFiles(), agyFiles()} {
 		out = append(out, fs...)
 	}
 	return distinctPaths(out)
@@ -584,6 +589,7 @@ func Dirs() []string {
 		{AlmaDir(), almaDB()},
 		{MiniMaxDir(), minimaxSessions()},
 		{KimiCodeDir(), kimiSessions()},
+		{AgyDir(), filepath.Join(AgyDir(), "brain")},
 	} {
 		if _, err := os.Stat(d.sessions); err != nil {
 			continue
@@ -616,6 +622,41 @@ const zstSuffix = ".zst"
 // reading CodexDir alone left out every other account's sessions and
 // calls (phantom3792 on X).
 func codexFiles() []file {
+	if !quiet() {
+		return listCodexFiles()
+	}
+	warmListing.Lock()
+	defer warmListing.Unlock()
+	if warmListing.files != nil && time.Since(warmListing.at) < warmListingFor {
+		return slices.Clone(warmListing.files)
+	}
+	files := listCodexFiles()
+	warmListing.at, warmListing.files = time.Now(), slices.Clone(files)
+	return files
+}
+
+// warmListing is codexFiles' listing kept through the warm-up: its reads
+// (the stats of every day and of 30, the Requests page) each listed every
+// rollout again within a few seconds, ~12k lstat()s and ~45 MB a time
+// (#3493). It is kept only while nobody but the warm-up reads (quiet) and
+// for warmListingFor at most, the age statsFor's memo already answers
+// with; Warm lets it go when it ends.
+var warmListing struct {
+	sync.Mutex
+	at    time.Time
+	files []file
+}
+
+const warmListingFor = 10 * time.Second
+
+func forgetWarmListing() {
+	warmListing.Lock()
+	warmListing.files = nil
+	warmListing.Unlock()
+}
+
+// listCodexFiles is codexFiles listed now.
+func listCodexFiles() []file {
 	var out []file
 	for _, dir := range CodexDirs() {
 		out = append(out, codexFilesIn(dir)...)
@@ -870,7 +911,7 @@ func refresh(want, all []file) {
 		if f.cold {
 			continue // in a stopped WSL distro: what was read of it stands
 		}
-		if s := cache[f.path]; s == nil || s.Size != f.size || s.Mod != f.mod.UnixNano() || (f.agent == "hermes" && (f.hermes == nil || f.rev == "" || s.DBRevision != f.rev)) || ((f.agent == "alma" || f.agent == "cursor") && s.DBRevision != f.rev) {
+		if s := cache[f.path]; s == nil || s.Size != f.size || s.Mod != f.mod.UnixNano() || (f.agent == "hermes" && (f.hermes == nil || f.rev == "" || s.DBRevision != f.rev)) || ((f.agent == "alma" || f.agent == "cursor" || f.agent == "agy") && s.DBRevision != f.rev) {
 			if parsing[f.path] != nil {
 				// a refresh is reading it, another or this one (a path
 				// listed twice): its last parse stands until that one is
@@ -1145,6 +1186,7 @@ func Reset() {
 	grokKinds.reset()
 	wslReset()
 	forgetHermesPrints()
+	forgetAgySummaries()
 	mu.Lock()
 	defer mu.Unlock()
 	saved()
@@ -1255,7 +1297,7 @@ func assemble(fs []file, price func(string) *catalog.Price, codexTitle func(stri
 	if !s.ReadOnly {
 		s.Resume = resumeCommand(s.WSL, s.Agent, s.ID, s.Cwd, s.Path)
 	}
-	s.Carry, s.Transcript = carries(s), HasTranscript(s.Agent)
+	s.Carry, s.Transcript = carries(s), readable(s)
 	if s.Transcript {
 		s.Subagents = subagentsOf(s, fs)
 	}
@@ -1384,6 +1426,8 @@ func parserFor(agent string) sessionParser {
 		return sessionParser{grow: parseKimi}
 	case "droid":
 		return sessionParser{grow: parseDroid}
+	case "agy":
+		return sessionParser{grow: parseAgy}
 	case "cursor":
 		return sessionParser{whole: parseCursor}
 	case "codex":
@@ -2028,6 +2072,16 @@ func resumeCommand(distro, agent, id, cwd, path string) string {
 		run = "droid --resume " + id
 	case "kimi":
 		run = "kimi --session " + id
+	case "agy":
+		// --conversation picks it up from any folder; one started on
+		// magpie's gateway needs the variables and --model it was
+		// started with
+		run = "agy --conversation " + id
+		if AgyStart != nil && distro == "" {
+			if start := AgyStart(); start != "" {
+				run = start + " --conversation " + id
+			}
+		}
 	case "cursor":
 		// its chats are looked up by the folder it runs in
 		if cwd == "" {

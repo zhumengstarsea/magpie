@@ -784,9 +784,14 @@ type MarketSkill struct {
 }
 
 // featuredSkills are magpie's own skills, first in the market: in
-// magpie-community/plugins, beside its plugins (ttmouse on X: an official
-// skill for an agent to read what magpie quota tells).
+// magpie-community/plugins, beside its plugins. magpie-setup has an agent
+// set magpie up as the user asks, through its commands (Leyuu_5 on X: so
+// many features that an AI could do the setting up); magpie-quota reads
+// what magpie quota tells (ttmouse on X).
 var featuredSkills = []MarketSkill{{
+	Source: "magpie-community/plugins", SkillID: "magpie-setup", Name: "magpie-setup", Official: true, Featured: true,
+	Description: "Set magpie up as you ask, through its own commands: add keys and subscriptions, point agents at models, build routing groups with fallbacks and time-of-day rules, give devices gateway keys with budgets, and share MCP servers and instructions with every agent.",
+}, {
 	Source: "magpie-community/plugins", SkillID: "magpie-quota", Name: "magpie-quota", Official: true, Featured: true,
 	Description: "Check how much is left of the user's AI subscriptions, coding plans and API key balances through magpie: each usage window's percent used and when it resets, each key's balance, and wait until a subscription has allowance again.",
 }}

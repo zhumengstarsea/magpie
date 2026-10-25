@@ -59,10 +59,14 @@ func modelSpans(s string, o Options) []span {
 			continue
 		}
 		a, b := f.Start, f.End
-		for a < b && isSpace(s[a]) {
+		edge := isSpace
+		if kind != "SECRET" {
+			edge = delimiter
+		}
+		for a < b && edge(s[a]) {
 			a++
 		}
-		for b > a && isSpace(s[b-1]) {
+		for b > a && edge(s[b-1]) {
 			b--
 		}
 		if kind == "PERSON" {
@@ -85,6 +89,15 @@ func modelSpans(s string, o Options) []span {
 }
 
 func isSpace(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
+
+// delimiter says c may end a span of the model's and is no part of a
+// name, a phone number, an address or an account: a space, or what is
+// between values in JSON or a CSV row. The model's span may start at the
+// token before the value, and a phone number in {"phone":"+86 139 …"}
+// came as `":"+86 139 …`, or in a CSV row as `,+81 90-…`, and was no
+// number to the PHONE check: it went as written (#3591). A secret's
+// edges are its own (a password may start with a quote).
+func delimiter(c byte) bool { return isSpace(c) || strings.IndexByte(`"',;:`, c) >= 0 }
 
 // modelTakes says v is masked as the model's kind: a secret as long as the
 // rules ask of one, never an id a vendor or a tool made (req_…, toolu_…,
@@ -208,7 +221,8 @@ func withModel(o Options, texts []string) Options {
 //     assistant's or a model's own (Claude, Codex, Haiku 4.5);
 //   - an account that is a commit's hash, a version, or a number with
 //     nothing before it to say it is an account's; a phone number that is
-//     digits only with nothing to say it is one, and no 0 or + to start;
+//     digits only with nothing to say it is one, and no 0 or + to start,
+//     or a Unix time whatever is before it;
 //   - a secret that is a pattern's words, a|b|c, holds a UUID (a session's
 //     file) or is a piece of JSON;
 //   - an account or a phone number that is a size (1624x1487), drawing
@@ -232,7 +246,7 @@ func modelFits(s string, a, b int, kind string) bool {
 		}
 		return strings.Trim(v, digits) != "" || cued(s, a, accountCues)
 	case "PHONE":
-		if !numberLike(v) || countDigits(v) < 7 {
+		if !numberLike(v) || countDigits(v) < 7 || epochNumber(v) {
 			return false
 		}
 		return strings.Trim(v, digits) != "" || v[0] == '0' || cued(s, a, phoneCues)
@@ -318,6 +332,19 @@ func numberLike(v string) bool {
 		}
 	}
 	return letters <= 4 && countDigits(v)*2 > len(v)
+}
+
+// epochNumber says v is a Unix time, as a log or a tool's JSON has one:
+// ten digits, or thirteen in milliseconds, and nothing else, starting with
+// 1. The model took "timestamp": 1792903687 for a phone, with "tool_call"
+// before it as the cue (#3577). No phone is written so: a North American
+// number's area code starts with 2 to 9, and a Chinese mobile has eleven
+// digits (the PHONE rule's).
+func epochNumber(v string) bool {
+	if len(v) != 10 && len(v) != 13 || v[0] != '1' {
+		return false
+	}
+	return strings.Trim(v, digits) == ""
 }
 
 func countDigits(v string) int {

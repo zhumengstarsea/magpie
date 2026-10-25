@@ -181,6 +181,9 @@ type movedAccount struct {
 	Key  string `json:"key"`
 	User string `json:"user"`
 	Own  bool   `json:"own,omitempty"`
+	// ID is the vendor's id of the account (WorkBuddy's uid), where the
+	// mover reads one: two accounts of one name are told apart by it.
+	ID string `json:"id,omitempty"`
 	// Was is what the plugin kept at Key before, when the user had signed
 	// in to the same account through the plugin already.
 	Was map[string]any `json:"was,omitempty"`
@@ -199,28 +202,39 @@ func signinHash(a map[string]any) string {
 // sent: the built-in renewed them while the move went on (a request, a
 // refresh) and, a refresh token being spent once used, the plugin's copy
 // may be dead.
-func renewedSince(mv *mover, moved []movedAccount) []string {
+func renewedSince(mv *mover, moved []movedAccount) []movedAccount {
 	now, err := mv.out()
 	if err != nil {
 		return nil
 	}
-	var out []string
+	var out []movedAccount
 	for _, ma := range moved {
 		if ma.Own {
 			continue
 		}
-		for _, a := range now {
-			if strings.EqualFold(a.User, ma.User) && signinHash(a.Auth) != ma.Sent {
-				out = append(out, ma.User)
-			}
+		if slices.ContainsFunc(now, func(a Moving) bool { return !a.Own && a.same(ma) && signinHash(a.Auth) != ma.Sent }) {
+			out = append(out, ma)
 		}
 	}
 	return out
 }
 
+// same is whether a is the account moved as ma: by the vendor's id where
+// both have one, a name being no one's own (wakkana on Discord), else by
+// name.
+func (a Moving) same(ma movedAccount) bool {
+	if a.ID != "" && ma.ID != "" {
+		return a.ID == ma.ID
+	}
+	return strings.EqualFold(a.User, ma.User)
+}
+
 // Moving is one of a built-in's accounts on its way to the plugin.
 type Moving struct {
-	User      string
+	User string
+	// ID is the vendor's id of the account, where the built-in kept one
+	// (WorkBuddy's uid).
+	ID        string
 	First, On bool
 	// Lapsed is an account the vendor already refused: it goes along, but
 	// isn't tried.
@@ -695,7 +709,7 @@ func move(ctx context.Context, id string, mv *mover) (err error) {
 		if err != nil {
 			return fmt.Errorf("%s: %w", a.User, err)
 		}
-		ma := movedAccount{Key: key, User: a.User, Own: a.Own, Was: before[key], Sent: signinHash(a.Auth)}
+		ma := movedAccount{Key: key, User: a.User, Own: a.Own, ID: a.ID, Was: before[key], Sent: signinHash(a.Auth)}
 		moved = append(moved, ma)
 		if err := setMigration(id, func(m *Migration) { m.Accounts = moved }); err != nil {
 			return err
@@ -776,7 +790,11 @@ func keepOrder(pp plugin.Provider, accts []Moving, moved []movedAccount) error {
 // commitMove hands the id over: the built-in's accounts go aside.
 func commitMove(id string, mv *mover, moved []movedAccount, installed bool, host string) error {
 	if r := renewedSince(mv, moved); len(r) > 0 {
-		return fmt.Errorf("%s renewed while moving; tried again later", strings.Join(r, ", "))
+		var users []string
+		for _, ma := range r {
+			users = append(users, ma.User)
+		}
+		return fmt.Errorf("%s renewed while moving; tried again later", strings.Join(users, ", "))
 	}
 	var kept json.RawMessage
 	if mv.take != nil {
@@ -855,7 +873,7 @@ func putBack(ctx context.Context, id string, mv *mover, why string) {
 	}
 	renewed := renewedSince(mv, m.Accounts)
 	skip := func(ma movedAccount, a map[string]any) bool {
-		return signinHash(a) == ma.Sent || slices.ContainsFunc(renewed, func(u string) bool { return strings.EqualFold(u, ma.User) })
+		return signinHash(a) == ma.Sent || slices.ContainsFunc(renewed, func(r movedAccount) bool { return r.Key == ma.Key })
 	}
 	_, _, _ = handBack(ctx, id, mv, m.Accounts, keys, skip, nil, func(ls []savedLogin, _ map[string]string) []savedLogin { return ls })
 	for _, ma := range m.Accounts {

@@ -137,6 +137,9 @@ go test -tags nogui ./internal/agent ./internal/edit -run 'TestSyncKeepsAnAddres
 go test -tags nogui ./internal/edit -run 'BOM|CRLF'
 go test -tags nogui ./internal/agent ./internal/proc -run 'ClaudeCloud|TestT3CodeSaysAClaudeCloudSwitch|TestLoginEnvClaudeProvidersNotSet'
 go test -tags nogui ./internal/agent -run '^TestAnte'
+go test -tags nogui ./internal/agent -run 'AionUi|Cindy'
+go test -tags nogui ./internal/gui -run 'TestAionUiImportRow|TestImportStatusUnreadableIsUnknown|TestLodyImportHandoff'
+node --test internal/gui/tests/import-row.test.cjs
 go test -tags nogui ./internal/agent -run '^TestAstrBot'
 go test -tags nogui ./internal/agent -run '^TestJcode'
 go test -tags nogui ./internal/agent -run '^TestRaycast'
@@ -199,5 +202,38 @@ read or write Lody's private document store, select models there, or claim
 that opening the link completed the import. Lody exposes no public status
 reader: `Agent.Added` remains nil and the JSON row omits `added`. The GUI
 shows a confirmation hint for this unknown state; Cindy still reports its
-known true/false status. Reopening the link lets Lody handle duplicates.
+known true/false status. `Added` returns `(added, known)`: Cindy's
+databases are read without writing beside them (`sessions.OpenUntouched`,
+immutable with no WAL log, from a copy with one; a plain read-only open
+made `-wal` and `-shm` in Cindy's folder while it was closed), and one that
+can't be read, or a stopped WSL distro's, is unknown, never "not added"
+(`TestCindyHasClosedWALAndUnreadable`, `TestImportStatusUnreadableIsUnknown`).
+Reopening the link lets Lody handle duplicates.
 Bub requires its separately installed ACP plugin.
+
+## AionUi add-provider link
+
+AionUi (`internal/agent/aionui.go`) keeps its providers in its own SQLite
+database, `<userData>/aionui/aionui-backend.db` in WAL mode, with each key
+encrypted, so magpie has no file to write there. Its row is the link that
+AionUi 2.2.2's main process parses (`parseDeepLinkUrl`) and its renderer
+sends to Settings → Model, where the add form opens filled in for the user
+to confirm:
+
+```
+aionui://add-provider?api_key=<agentKeyAt("aionui")>&base_url=<gateway>/v1&name=magpie&platform=custom
+```
+
+`custom` is AionUi's OpenAI-compatible platform, and its OpenAI-compatible
+base URLs end in `/v1`. `TestAionUiLinkParsedAs2_2_2` runs the link through
+the parser copied byte for byte from 2.2.2's `app.asar`
+(`testdata/aionui/deeplink-2.2.2.js`). userData is `os.UserConfigDir()/AionUi`
+on every OS. `Added` reads `providers.base_url` for the gateway's address
+untouched (`sessions.OpenUntouched`), from the real 2.2.2 schema
+(`TestAionUiHas`). It keeps the last read while the database and its log
+keep their size and time, for 15 seconds at most. A database it can't read
+is unknown. Released 2.2.2 asks for an aionui.com sign-in before any page,
+Settings included, so the form, the saved row and gateway traffic have not
+been tried end to end. As with Cindy and Lody, the TUI leaves the row out
+because there is nothing to pick. `magpie aionui add` opens the link.
+

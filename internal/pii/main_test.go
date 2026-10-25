@@ -56,6 +56,8 @@ func fakeServe(mode string) {
 		}
 	}
 	logf("start %s %s", name, device)
+	logf("path %s", filepath.Base(filepath.Dir(os.Args[0])))
+	logf("residency %s", os.Getenv("GGML_METAL_NO_RESIDENCY"))
 	if mode == "noload" || mode == "novulkan" && name == "pf-serve-vulkan" {
 		json.NewEncoder(os.Stdout).Encode(map[string]string{"error": "can't load " + mode})
 		os.Exit(1)

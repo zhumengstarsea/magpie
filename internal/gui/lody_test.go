@@ -144,3 +144,81 @@ func TestLodyImportRunsLodyOnLinux(t *testing.T) {
 		t.Fatalf("Lody ran with %q, want %q", b, want)
 	}
 }
+
+// Cindy's database that can't be read leaves its row's added out, as
+// unknown: the window never says "Not added" for what it couldn't read.
+func TestImportStatusUnreadableIsUnknown(t *testing.T) {
+	sandboxHome(t)
+	cfg, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(cfg, "Cindy")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "cindy-local-v1.db"), []byte("half-written, no database"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range state().Agents {
+		if a.ID == "cindy" {
+			if b, _ := json.Marshal(a); strings.Contains(string(b), `"added"`) {
+				t.Fatalf("unreadable Cindy database said: %s", b)
+			}
+			return
+		}
+	}
+	t.Fatal("no Cindy row")
+}
+
+// AionUi's row is its add-provider link, opened as it is and no other
+// aionui:// link; with AionUi's folder and no database yet it says not
+// added, and with a database it can't read it says nothing.
+func TestAionUiImportRow(t *testing.T) {
+	sandboxHome(t)
+	cfg, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(cfg, "AionUi", "aionui")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	find := func() *agentJSON {
+		s := state()
+		for i := range s.Agents {
+			if s.Agents[i].ID == "aionui" {
+				return &s.Agents[i]
+			}
+		}
+		return nil
+	}
+	row := find()
+	if row == nil || !strings.HasPrefix(row.Import, agent.AionUiScheme) || !strings.Contains(row.Import, "platform=custom") {
+		t.Fatalf("AionUi's row: %+v", row)
+	}
+	if row.Added == nil || *row.Added {
+		t.Fatalf("AionUi with no database: %+v, want added false", row.Added)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "aionui-backend.db"), []byte("not a database"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := json.Marshal(find()); strings.Contains(string(b), `"added"`) {
+		t.Fatalf("an unreadable database says added: %s", b)
+	}
+	w := &importWindows{}
+	mux := http.NewServeMux()
+	providerRoutes(mux, w)
+	for _, link := range []string{row.Import, "aionui://other?x=1", "aionui://add-provider-x?a=1", "aionui:add-provider?a=1"} {
+		w.opened = ""
+		body, _ := json.Marshal(map[string]string{"url": link})
+		mux.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/open", strings.NewReader(string(body))))
+		if link == row.Import {
+			if w.opened != link {
+				t.Fatal("AionUi's link was not handed to the desktop")
+			}
+		} else if w.opened != "" {
+			t.Fatalf("opened unrelated URL %s", w.opened)
+		}
+	}
+}

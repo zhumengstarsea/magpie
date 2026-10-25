@@ -80,6 +80,7 @@ func start(cpu bool) (*helper, error) {
 	if !Installed() {
 		return nil, ErrNotInstalled
 	}
+	go upgrade()
 	var errs []error
 	for _, path := range candidates(cpu) {
 		h, err := startOne(path, cpu)
@@ -93,7 +94,13 @@ func start(cpu bool) (*helper, error) {
 
 func startOne(path string, cpu bool) (*helper, error) {
 	cmd := proc.Command(path, modelPath())
-	cmd.Env = os.Environ()
+	// Without GGML_METAL_NO_RESIDENCY, ggml's Metal residency set keeps a
+	// heartbeat that woke an idle pf-serve ~146 times a second for the 10
+	// minutes it stays up after a request, and macOS's Energy Impact
+	// counted magpie among the top for it (#3185). With it set: 0.3 a
+	// second, and the first request after an idle spell takes 0.1-0.45s
+	// more (51-78ms hot either way).
+	cmd.Env = append(os.Environ(), "GGML_METAL_NO_RESIDENCY=1")
 	if cpu {
 		cmd.Env = append(cmd.Env, "PF_DEVICE=cpu")
 	}

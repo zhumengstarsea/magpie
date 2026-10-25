@@ -725,7 +725,13 @@ func list(agents []*agent.Agent, detectedOnly bool, dimFrom int) error {
 				r.vals += label.Render("  ·  " + said)
 			}
 			if a.Import != nil {
-				if a.Added != nil && a.Added() {
+				// unknown reads as not added here: the line only offers the
+				// command, never says magpie is missing
+				added := false
+				if a.Added != nil {
+					added, _ = a.Added()
+				}
+				if added {
 					r.vals = value.Render("magpie added")
 				} else {
 					r.vals = label.Render("magpie "+a.ID+" add") + faint.Render("  to add magpie")

@@ -453,11 +453,15 @@ func strictOnly(cs []candidate, pl planned, at int) ([]candidate, planned) {
 }
 
 // affine puts first whoever answered the conversation last, while its
-// affinity says to keep it there.
-func affine(scope, mode string, rotate bool, in http.Header, from provider.Protocol, body []byte, cs []candidate, pl planned) ([]candidate, planned, *Affinity, string) {
+// affinity says to keep it there. Its turn is counted in written, the body
+// as the agent wrote it, which the turn's folder is read from too
+// (dirOf): one parse of a held body serves both (factsOf), where counting
+// it in the masked body parsed the conversation a second time, ~27 MB
+// more for each 4 MB Codex request in flight.
+func affine(scope, mode string, rotate bool, in http.Header, from provider.Protocol, body, written []byte, cs []candidate, pl planned) ([]candidate, planned, *Affinity, string) {
 	key := scope + "|" + conversationID(in, body)
 	a := &Affinity{Mode: mode}
-	a.Turn, a.Within = turnOf(from, body)
+	a.Turn, a.Within = turnOf(from, written)
 	sticks.Lock()
 	st, had := stickOf(key)
 	sticks.Unlock()

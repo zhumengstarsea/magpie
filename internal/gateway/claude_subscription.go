@@ -1328,6 +1328,10 @@ func (r *subscriptionRun) ended(req *Request, said, stop string, ok bool) {
 	// there when the conversation's own next turn comes (resume)
 	r.behindKey, r.behindTurn = back, turn
 	r.bridge.mu.Unlock()
+	if why, over := r.oversized(2); over {
+		r.bridge.letGoOversized(r, key, conv, why)
+		return
+	}
 	if !r.bridge.keepIdle(r, key, conv) {
 		return // it ended during its reply (#1667)
 	}
@@ -1791,6 +1795,11 @@ func (r *subscriptionRun) park() {
 		return
 	case r.stdin == nil:
 		r.timer.Reset(parkLongest)
+		return
+	}
+	if why, over := r.oversized(3); over {
+		log.Printf("claude: Claude Code pid %d (%s) is let go while it waits on tool calls: %s; their results go to a new one told the whole conversation", r.pid(), r.model, why)
+		r.abortFor(why)
 		return
 	}
 	b := r.bridge
@@ -3765,8 +3774,15 @@ func (r *subscriptionRun) launch() error {
 	r.mu.Lock()
 	r.tree, r.exited = t, exited
 	r.mu.Unlock()
+	started := time.Now()
+	log.Printf("claude: Claude Code pid %d started, a run on %s", r.pid(), r.model)
 	go func() {
 		err := t.Wait()
+		how := "exited"
+		if err != nil {
+			how = err.Error()
+		}
+		log.Printf("claude: Claude Code pid %d (%s) ended after %s (%s), %d MiB resident at most", r.pid(), r.model, time.Since(started).Round(time.Second), how, proc.PeakRSS(r.cmd)>>20)
 		r.drain()
 		// exited closes under mu, which abort reads it under: a run it
 		// counts as leaving the room is one whose room is freed here

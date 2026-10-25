@@ -250,7 +250,6 @@
   window.pluginTabTo = (id) => { tab = id; };
   // pluginQuery: Discover, looking for q (the add sheet found nothing by it)
   window.pluginQuery = (q) => {
-    if (q === query && !q) return;
     query = q;
     tab = "discover";
     clearTimeout(searchTimer);
@@ -1573,14 +1572,24 @@
     // the button follows an install or a sign-in made while it's open
     const tick = setInterval(() => { if (!ed.isConnected) return stop(); redrawAct(); }, 600);
     function stop() { clearInterval(tick); }
+    // the README takes the skeleton's place, and the dialog grows to it on
+    // the spring it opened on, centred as it goes, not in one jump
+    const fill = (n) => {
+      const d = ed.parentElement, h = d.offsetHeight, y = d.style.top;
+      readme.replaceChildren(n);
+      if (!ed.isConnected || calm()) return;
+      holdModal();
+      d.animate([{ height: h + "px", top: y, overflow: "hidden" }, { height: d.offsetHeight + "px", top: d.style.top, overflow: "hidden" }], { duration: 570, easing: SPRING });
+      readme.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, easing: "ease-out" });
+    };
     try {
       const p = await api("plugins/page?name=" + encodeURIComponent(l.package));
       const at = l.github && !entryOf(l.package) ? l.github.pushed : p.updated;
       upd.textContent = at && !at.startsWith("0001") ? new Date(at).toLocaleDateString(intlLang(), { year: "numeric", month: "short", day: "numeric" }) : "—";
-      readme.replaceChildren(markdown(p.readme || t("No README")));
+      fill(markdown(p.readme || t("No README")));
     } catch (e) {
       upd.textContent = "—";
-      readme.replaceChildren(el("p", "pm-note", t(l.github && isGit(l.package) && !entryOf(l.package) ? "GitHub didn't answer: {error}" : local ? "Couldn't read the folder's README: {error}" : "npm didn't answer: {error}", { error: e.message })));
+      fill(el("p", "pm-note", t(l.github && isGit(l.package) && !entryOf(l.package) ? "GitHub didn't answer: {error}" : local ? "Couldn't read the folder's README: {error}" : "npm didn't answer: {error}", { error: e.message })));
     }
   }
 

@@ -946,14 +946,15 @@ function routingPage(part) {
     if ((m = /^agent (.+)$/.exec(c))) return m[1].split("|").map(agentName).join(" / ");
     if ((m = /^not folder (.+)$/.exec(c))) return t("not in {folders}", { folders: m[1].split("|").join(" / ") });
     if ((m = /^folder (.+)$/.exec(c))) return t("in {folders}", { folders: m[1].split("|").join(" / ") });
-    if ((m = /^time (all day|(\d\d:\d\d)–(\d\d:\d\d))(?: (.+))?$/.exec(c))) {
-      // the days as the gateway writes them: Mon–Fri, Sat,Sun, Mon,Wed–Fri
+    if ((m = /^time (all day|(\d\d:\d\d)–(\d\d:\d\d))(?: ([^ (]+))?(?: \(([^)]+)\))?$/.exec(c))) {
+      // the days as the gateway writes them: Mon–Fri, Sat,Sun, Mon,Wed–Fri;
+      // the zone the hours are in after them, in brackets, when they have one
       const days = [];
       for (const part of (m[4] || "").split(",").filter(Boolean)) {
         const [a, b] = part.split("–").map((d) => WEEK.indexOf(d.toLowerCase()));
         for (let i = a; i >= 0 && i <= (b >= 0 ? b : a); i++) days.push(WEEK[i]);
       }
-      return timeText({ from: m[2] || "00:00", to: m[3] || "00:00", days });
+      return timeText({ from: m[2] || "00:00", to: m[3] || "00:00", days, zone: m[5] || "" });
     }
     return c;
   }
@@ -976,7 +977,37 @@ function routingPage(part) {
   function timeText(w) {
     const hours = w.from === w.to ? t("all day") : t("{from}–{to}", { from: w.from, to: w.to });
     const days = daysText(w.days);
-    return days ? t("{hours} {days}", { hours, days }) : hours;
+    const text = days ? t("{hours} {days}", { hours, days }) : hours;
+    const zone = zoneNote(w);
+    return zone ? t("{hours} ({zone})", { hours: text, zone }) : text;
+  }
+  // A rule's hours are in the zone they were set in (provider.TimeWindow
+  // Zone): the browser's, saved with them. magpie on a server in another
+  // zone (gaubeebangeel on X: a cloud box in UTC, its user in Beijing)
+  // reads them there, and the zone is told beside them; hours set before
+  // zones were kept are on the server's clock, told with its offset. When
+  // the clocks agree nothing is added.
+  const browserZone = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { return ""; } };
+  // zoneOffset is how far zone is ahead of UTC now, in minutes; null when
+  // this browser doesn't know it
+  function zoneOffset(zone, at = new Date()) {
+    try {
+      const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: zone, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })
+        .formatToParts(at).map((x) => [x.type, x.value]));
+      return Math.round((Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - Math.floor(at.getTime() / 1000) * 1000) / 60000);
+    } catch { return null; }
+  }
+  const utcText = (min) => "UTC" + (min < 0 ? "−" : "+") + Math.floor(Math.abs(min) / 60) + (Math.abs(min) % 60 ? ":" + String(Math.abs(min) % 60).padStart(2, "0") : "");
+  function zoneNote(w) {
+    let clock;
+    try { clock = groups?.clock; } catch { return ""; } // before the groups are in
+    if (!clock || typeof clock.offset !== "number") return "";
+    const server = Math.round(clock.offset / 60);
+    if (w.zone) {
+      const off = zoneOffset(w.zone);
+      return off === server ? "" : t("{zone} time", { zone: w.zone });
+    }
+    return -new Date().getTimezoneOffset() === server ? "" : t("server time, {offset}", { offset: utcText(server) });
   }
   // "9:5" is no time; "9:05" is 09:05
   const clockOf = (s) => {
@@ -5753,15 +5784,19 @@ function routingPage(part) {
           wrap("exceptFolders", xf);
           if (mine === "exceptFolders") focus = () => xi.focus({ preventScroll: true });
         }
-        // hours of the day, on this computer's clock (a vendor's peak
+        // hours of the day, in the browser's time zone (a vendor's peak
         // hours, say): typed as 09:00 and 18:00, past midnight when the
         // second comes first; the days are picked like the agents, and
-        // days alone are all day
+        // days alone are all day. Hours changed here are in this browser's
+        // zone, saved with them; hours left alone keep theirs
         if (kinds.includes("time")) {
           const tm = el("span", "rt-cond tm");
           const tw = () => r.time || (r.time = { from: "", to: "", days: [] });
+          // a change to the hours or days: they are now in this browser's zone
+          const zoned = () => { const w = tw(), z = browserZone(); if (z) w.zone = z; return w; };
           const tFrom = input(r.time?.from || "", "09:00"), tTo = input(r.time?.to || "", "18:00");
-          tm.title = t("The turn begins within these hours, on this computer's clock — a provider's peak-price hours sent to another, say");
+          tm.title = t("The turn begins within these hours, in your time zone — a provider's peak-price hours sent to another, say");
+          const zoneTag = el("span", "rt-zone");
           tm.onclick = (e) => { if (e.target === tm || e.target.tagName === "SPAN") (tFrom.value ? tTo : tFrom).focus({ preventScroll: true }); };
           const dayBtn = el("button", "rt-cond");
           const drawTime = () => {
@@ -5771,13 +5806,17 @@ function routingPage(part) {
             tm.classList.toggle("bad", [[tFrom, w?.from], [tTo, w?.to]].some(([b, v]) => v && !clockOf(v) && document.activeElement !== b));
             dayBtn.textContent = daysText(w?.days) || t("every day");
             dayBtn.classList.toggle("on", !!daysText(w?.days));
+            // the zone the hours are in, when the server's clock is another
+            zoneTag.textContent = w && (w.from || w.to || w.days?.length) ? zoneNote(w) : "";
+            zoneTag.hidden = !zoneTag.textContent;
+            zoneTag.title = zoneTag.textContent;
           };
           for (const [box, key] of [[tFrom, "from"], [tTo, "to"]]) {
             box.className = "clock";
             box.maxLength = 5;
             box.inputMode = "numeric";
-            box.oninput = () => { tw()[key] = box.value.trim(); drawTime(); warn(); };
-            box.onblur = () => { const v = clockOf(box.value); if (v) { box.value = v; tw()[key] = v; } drawTime(); warn(); };
+            box.oninput = () => { zoned()[key] = box.value.trim(); drawTime(); warn(); };
+            box.onblur = () => { const v = clockOf(box.value); if (v) { box.value = v; if (tw()[key] !== v) zoned()[key] = v; } drawTime(); warn(); };
             box.onkeydown = (e) => e.stopPropagation();
           }
           tm.append(el("span", "", t("from")), tFrom, el("span", "", t("to")), tTo);
@@ -5786,14 +5825,14 @@ function routingPage(part) {
             ...presets.map(([v, label, ds]) => ({ value: "=" + v, label: t(label), note: ds.length ? daysText(ds) : t("not a condition") })),
             ...WEEK.map((d) => ({ value: d, label: t(DAY_NAMES[d]), note: r.time?.days?.includes(d) ? "✓" : "" })),
           ], (v) => {
-            const w = tw();
+            const w = zoned();
             if (v.startsWith("=")) w.days = [...presets.find(([id]) => "=" + id === v)[2]];
             else w.days = w.days.includes(v) ? w.days.filter((x) => x !== v) : WEEK.filter((x) => x === v || w.days.includes(x));
             if (w.days.length === 7) w.days = [];
             drawTime(); warn();
           });
           drawTime();
-          wrap("time", tm, dayBtn);
+          wrap("time", tm, dayBtn, zoneTag);
           if (mine === "time") focus = () => tFrom.focus({ preventScroll: true });
         }
         // the quiet + that adds a condition: what the rule doesn't show yet,

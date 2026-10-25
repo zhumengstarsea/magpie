@@ -473,6 +473,35 @@ for the same room), and the request isn't tried again after a moment. A
 member of the group at another provider answers it. Alone, the client gets
 the 503.
 
+## How large one Claude Code process may grow (`claudeRunBudget`, #3256)
+
+`claudeRoom` bounds how many Claude Code processes run, not how large each
+is. A run is kept for its conversation's next turn, turn after turn, and a
+service that is never restarted kept one for days: on a 31 GiB host a
+`node-MainThread` in magpie.service reached 8 GiB RSS and the kernel's OOM
+killer took the machine's other work with it.
+
+Each time a run's reply ends, `oversized` (`claude_rss.go`) reads the
+resident memory of its process tree (`proc.Tree.RSS`: `/proc/<pid>/status`
+VmRSS on Linux, `ps -o rss=` on macOS, the working sets of every process in
+its job on Windows, where an npm install's `claude.cmd` is a cmd.exe with
+the node under it) and logs it with the pid. The budget is an eighth of the
+memory magpie may use (`memLimit` on Linux, `proc.MemTotal` elsewhere), at
+least 1 GiB, 4 GiB where neither is known. It is read once per process.
+
+- A whole turn (`ended`, stop) over the budget: the run is not kept idle.
+  Its session is shelved at the conversation's key (`letGoOversized`), and
+  the next turn resumes it in a new Claude Code (`--resume`), told only the
+  new messages, so Anthropic's cache is read as before.
+- A reply that called the client's tools (`park`) over 1.5× the budget:
+  the run is let go, and the results start a new run told the whole
+  conversation. It has no session to shelve there, so it waits for more.
+
+Each Claude Code a run starts logs its pid and model when it starts, and its
+run time, how it ended and its peak RSS (`proc.PeakRSS`, rusage
+`ru_maxrss`; not on Windows) when it ends: an OOM report's pid can be found
+in magpie's log.
+
 ## Files a run leaves
 
 - Its session: `<config>/projects/<work project>/<session>.jsonl`, for
