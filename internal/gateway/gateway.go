@@ -787,7 +787,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, provider.Chat, http.StatusNotFound, "magpie serves /v1/chat/completions, /v1/responses, /v1/messages, /v1/systemone, /v1/images/generations, /v1/images/edits, /v1/videos, /v1/embeddings, /v1/rerank, /v1/audio/transcriptions, /v1/audio/translations and /v1beta/models/*")
 	})
-	return s.counted(holdCatalog(corsGuard(callerGuard(withCaller(keyLimited(mux))))))
+	// the goroutine dump first, ahead of every lock the rest can be stuck
+	// on (dumpFirst)
+	return s.dumpFirst(s.counted(holdCatalog(corsGuard(callerGuard(withCaller(keyLimited(mux)))))))
 }
 
 // responsesOverHTTP answers a GET on /v1/responses, which is how a client

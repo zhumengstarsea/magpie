@@ -5,7 +5,8 @@
 // wire ends it meets anew — getTotalLength and getPointAtLength took ~10 s
 // of a 40 s look at a busy page — and each render formatted every row's
 // token counts with a new formatter. A path is measured again only when it
-// moves, and the numbers still read in the page's language.
+// moves, its points are read from its d, and the numbers still read in
+// the page's language.
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -128,6 +129,12 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       // a wire's two ends are asked for once by its tips and once among
       // the points along it: two a d at most, never one a frame
       assert(ptAgain <= 2 * len, `${ptAgain} of ${pt} points measured again along the ${len} d's measured`);
+      // and the points along it are read from its d by the page: the
+      // browser walks a path from its start for each point, and along the
+      // wires to keys hundreds of rows down that was a sixth of WebKit's
+      // time (#3164). The browser is asked for the ends (~1.2 a d), not
+      // for points along the way (~3.3 a d here, ~20 on long wires)
+      assert(pt <= 2 * len, `${pt} points asked of the browser along the ${len} d's measured`);
       // the rows' numbers come from one formatter, not one per number
       assert(fmt < 200, `${fmt} numbers formatted one formatter each over ${frames} frames`);
       // and they still read in the page's language

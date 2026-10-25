@@ -135,7 +135,21 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         }
         return { wire: Math.round(wire), cubic: Math.round(cubic) };
       });
-      t.diagnostic(`folded ${JSON.stringify(folded)}, open ${JSON.stringify(opened)}, wires ${JSON.stringify(tall)}`);
+      // a key far below the fold of the window is not drawn, and is as tall
+      // as the keys drawn: drawn, WebKit painted all 800 again on each frame
+      // a magpie flew, ~40 frames a second
+      const rows = await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => {
+        const keys = [...document.querySelectorAll("#view-routing .rt-accts > li:not(.rt-fold):not(.rt-sub):not(.idle):not(.hit)")];
+        const drawn = (li) => li.firstElementChild.checkVisibility({ contentVisibilityAuto: true });
+        const mid = (li) => { const r = li.getBoundingClientRect(); return Math.abs((r.top + r.bottom) / 2 - innerHeight / 2); };
+        const seen = keys.reduce((a, li) => (mid(li) < mid(a) ? li : a));
+        const h = (li) => Math.round(li.getBoundingClientRect().height);
+        done({ shown: mid(seen) < innerHeight / 2 && drawn(seen), last: drawn(keys[keys.length - 1]), heights: [...new Set(keys.map(h))] });
+      }))));
+      t.diagnostic(`folded ${JSON.stringify(folded)}, open ${JSON.stringify(opened)}, wires ${JSON.stringify(tall)}, rows ${JSON.stringify(rows)}`);
+      assert.equal(rows.shown, true, "a key in sight is drawn");
+      assert.equal(rows.last, false, "the last of 800 keys, out of sight, is not drawn");
+      assert.equal(rows.heights.length, 1, `keys drawn and not are one height: ${rows.heights}`);
       for (const [name, n] of [["folded", folded], ["open", opened]]) {
         // a key's place is looked up in an index of its provider's list:
         // before, a sort of 800 keys looked through the 500 for each of

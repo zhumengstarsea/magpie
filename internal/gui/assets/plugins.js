@@ -259,6 +259,9 @@
   };
 
   async function refresh() {
+    // a plugin installed, switched on or off, or removed brings its
+    // page's tab, or takes it, now: not on the Plugins page's next load
+    window.loadPluginPages?.();
     try {
       const [m, p] = await Promise.all([api("plugins"), api("providers")]);
       mine = m;
