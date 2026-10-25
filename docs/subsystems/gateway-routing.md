@@ -6,7 +6,29 @@ the provider, key or account and model for each request. When the upstream
 doesn't speak the agent's API, the gateway translates. When an upstream
 fails before any of the reply is sent, the gateway moves to the next
 candidate.
-For a Codex account pool whose candidates all fail with a transient upstream 5xx or 529 before content, Responses makes one fresh pass through the pool after a short pause. While it waits for every Codex account's quota window, a write to the remembered account pool wakes the request immediately and makes a fresh plan, so an account added in the GUI can answer the same request.
+For a Codex account pool whose candidates all fail with a transient upstream
+5xx or 529 before content, Responses makes one fresh pass through the pool
+after a short pause. Quota recovery uses the full eligible Codex pool before
+`probeOne`, including a pool reduced to one probe and a group with third-party
+fallbacks. If those fallbacks fail, the same request waits for the earliest
+official quota reset. A fallback still silent at that reset is canceled and
+the official pool is planned again; a reply already passed to the caller is
+never replaced. Replanning preserves the group's selected members, gateway-key
+account limits and native checkpoint compatibility, and is disabled for an
+explicit account pin or strict affinity. Writes to the account pool wake the
+wait through `provider.AccountChanges`, subscribed before re-reading the
+accounts, without polling. Client cancellation ends the wait and retries.
+
+While such a Codex stream is held, `holdWriter.pulse` sends the extension SSE
+event `magpie.keepalive`. Codex ignores its content and resets its stream idle
+timer; an SSE comment alone does not. The event carries no response id,
+assistant output, tool call or completion. After an upstream reply is passed,
+heartbeats remain comments so they cannot split a partial upstream event.
+Other protocols retain their existing keepalives. The reset wait is bounded
+by `codexQuotaResumeMax`. See `codex_quota_resume_test.go` and the existing
+`TestCodexOwnModelResumesAfter*` tests. Codex CLI 0.164.0-alpha.11.1 was also
+tested against an isolated loopback server: comments hit a 300ms idle timeout;
+extension events every 100ms kept one request alive until its 1.5s reply.
 
 This page covers how a request is routed. Plugins that change requests and
 replies are in [Gateway middleware](gateway-middleware.md). Subscriptions

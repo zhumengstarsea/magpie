@@ -945,18 +945,14 @@ func quotaHeld(cs []candidate) (Rest, time.Time, bool) {
 	return first, back, len(cs) > 0
 }
 
-// codexQuotaBack is the earliest reset of a Codex account pool whose every
-// account just answered with its usage limit. It is used only while the
-// current Responses request is still alive; other providers keep returning
-// their normal Retry-After response instead of holding a request open.
+// codexQuotaBack is the earliest reset of the Codex accounts in a route,
+// including a single resting probe or a group with third-party fallbacks.
+// Every eligible Codex account must be resting for quota, not auth or errors.
 func codexQuotaBack(cs []candidate) (time.Time, bool) {
 	var back time.Time
-	if len(cs) == 0 {
-		return time.Time{}, false
-	}
 	for _, c := range cs {
 		if c.p.ID != "codex" || c.p.Account == nil {
-			return time.Time{}, false
+			continue
 		}
 		r, ok := restingOf(c)
 		if !ok || r.Why != failQuota {
@@ -1749,6 +1745,10 @@ type holdWriter struct {
 	// takes; slow says it took longer, and was let go with nothing sent
 	firstWait time.Duration
 	slow      bool
+	// resumeAt stops a silent fallback when the official quota is back.
+	// It never stops a reply already passed to the caller.
+	resumeAt time.Time
+	resumed  bool
 
 	// loop reads a streamed reply for a loop it won't leave (#1359), nil
 	// when Settings' NoLoopGuard is on or the agent asked for no stream;
@@ -1790,6 +1790,8 @@ func (h *holdWriter) onLoop(f func(loopTrip) bool) {
 // errSlowStart is what a try's writes get once it was let go for taking
 // longer than its group waits for a first token.
 var errSlowStart = errors.New("let go: no first token in time")
+
+var errQuotaResumed = errors.New("let go: ChatGPT quota reset before content")
 
 // errLooped is what a try's writes get once its reply was ended for
 // looping (cutLoop).
@@ -1867,6 +1869,9 @@ func (h *holdWriter) Write(b []byte) (int, error) {
 	defer h.mu.Unlock()
 	if h.slow {
 		return 0, errSlowStart
+	}
+	if h.resumed {
+		return 0, errQuotaResumed
 	}
 	if h.looped != "" || h.relooped {
 		return 0, errLooped
@@ -2172,6 +2177,11 @@ func (h *holdWriter) scan() {
 		// the vendor's server_is_overloaded 21s later the agent's error,
 		// with the group's next member never asked (#1418)
 		longest = max(longest, holdLead)
+		if !h.resumeAt.IsZero() {
+			// Keep a fallback's empty lifecycle frames private until the
+			// known official reset, so it can still be replaced then.
+			longest = max(longest, time.Since(h.since)+time.Until(h.resumeAt)+time.Second)
+		}
 	}
 	// a group that asks the next member when one is slow to start holds
 	// the stream until then, for nothing of it to have reached the agent
@@ -2205,6 +2215,9 @@ type keptAlive struct {
 	// it asked; streams, whether it asked for a stream
 	told    time.Time
 	streams bool
+	// events is enabled for a recoverable Codex Responses request: comments
+	// alone do not reset Codex's SSE idle timeout.
+	events bool
 	// Only opted-in Claude cache reporting can defer initial keepalives.
 	// Selection releases it before process startup; expiry keeps the stream alive.
 	cacheReportUntil time.Time
@@ -2224,7 +2237,7 @@ var agentQuietMost = 4 * time.Minute
 // tooQuiet says whether a Responses agent that has had no event of its
 // reply would go agentQuietMost without one after d more.
 func (a *keptAlive) tooQuiet(d time.Duration) bool {
-	return a != nil && a.streams && a.proto == provider.Responses && !a.told.IsZero() && time.Since(a.told)+d >= agentQuietMost
+	return a != nil && !a.events && a.streams && a.proto == provider.Responses && !a.told.IsZero() && time.Since(a.told)+d >= agentQuietMost
 }
 
 // keepAlive tells the agent of a stream held past keepHeldAfter for its
@@ -2267,10 +2280,23 @@ func (h *holdWriter) keepAlive() {
 		h.w.WriteHeader(http.StatusOK)
 		a.sent = true
 	}
-	// no blank line after it, as sseWriter.comment
-	_, _ = io.WriteString(h.w, ": keepalive\n")
-	a.at = time.Now()
-	h.wrote, h.atLine = a.at, true
+	h.pulse()
+}
+
+// pulse is only transport liveness. Codex ignores this extension event but
+// counts it toward its SSE idle timeout; no response lifecycle is invented.
+func (h *holdWriter) pulse() {
+	now := time.Now()
+	if h.alive != nil && h.alive.events && h.alive.proto == provider.Responses && !h.passing {
+		_, _ = io.WriteString(h.w, "event: magpie.keepalive\ndata: {\"type\":\"magpie.keepalive\"}\n\n")
+		h.alive.told = now
+	} else {
+		_, _ = io.WriteString(h.w, ": keepalive\n")
+	}
+	if h.alive != nil {
+		h.alive.at = now
+	}
+	h.wrote, h.atLine = now, true
 	if f, ok := h.w.(http.Flusher); ok {
 		f.Flush()
 	}
@@ -2557,6 +2583,12 @@ func (h *holdWriter) watch() func() {
 	go func() {
 		defer close(over)
 		var deadline <-chan time.Time
+		var resumed <-chan time.Time
+		if !h.resumeAt.IsZero() {
+			t := time.NewTimer(max(time.Until(h.resumeAt), 0))
+			defer t.Stop()
+			resumed = t.C
+		}
 		if first {
 			t := time.NewTimer(h.firstWait)
 			defer t.Stop()
@@ -2605,6 +2637,16 @@ func (h *holdWriter) watch() func() {
 					return
 				}
 				first = false
+			case <-resumed:
+				resumed = nil
+				h.mu.Lock()
+				resume := !h.passing && !h.ended && h.failure == 0 && h.status < 400
+				h.resumed = resume
+				h.mu.Unlock()
+				if resume {
+					h.stop()
+					return
+				}
 			}
 		}
 	}()
@@ -2627,7 +2669,7 @@ func (h *holdWriter) keepQuiet() {
 	if h.slow || h.relooped || h.ended || h.alive == nil || h.alive.proto == provider.Gemini || h.ctx != nil && h.ctx.Err() != nil {
 		return
 	}
-	if !h.heard.IsZero() && time.Since(h.heard) >= keepaliveLongest {
+	if !h.heard.IsZero() && time.Since(h.heard) >= keepaliveLongest && (h.resumeAt.IsZero() || h.passing) {
 		return // a stream stuck this long is left for a timeout to end
 	}
 	if !h.passing && h.stream && h.failure == 0 && !h.whole && !h.wantWhole && h.held.Len() > 0 && h.alive.tooQuiet(0) {
@@ -2648,12 +2690,7 @@ func (h *holdWriter) keepQuiet() {
 	if !h.atLine || time.Since(h.wrote) < keepaliveEvery || !strings.HasPrefix(h.w.Header().Get("Content-Type"), "text/event-stream") {
 		return
 	}
-	// no blank line after it, as sseWriter.comment
-	_, _ = io.WriteString(h.w, ": keepalive\n")
-	h.wrote = time.Now()
-	if f, ok := h.w.(http.Flusher); ok {
-		f.Flush()
-	}
+	h.pulse()
 }
 
 // started says whether the try has begun its reply, or ended, as far as
