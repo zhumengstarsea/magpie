@@ -5,22 +5,22 @@ class Magpie < Formula
 
   on_macos do
     on_arm do
-      url "https://github.com/zhumengstarsea/magpie/releases/download/v0.1.1485/magpie-cli-darwin-arm64"
-      sha256 "423f2cc8bce1a704662168b6fdb5038e9120213564fd9c07edd9ba322853bef5"
+      url "https://github.com/zhumengstarsea/magpie/releases/download/v0.1.1488/magpie-cli-darwin-arm64"
+      sha256 "a6f7c117efb25f2427d875d23b61f469bf4e46d082e8ee1dec6574995f7be1b3"
     end
     on_intel do
-      url "https://github.com/zhumengstarsea/magpie/releases/download/v0.1.1485/magpie-cli-darwin-amd64"
-      sha256 "ccb2a1fc3c51b739e6ec7ff927fbe8288567b79f98580ac2c23cc20f3434d555"
+      url "https://github.com/zhumengstarsea/magpie/releases/download/v0.1.1488/magpie-cli-darwin-amd64"
+      sha256 "c7b242ff9e47760c779f5a21eb0730ac17f908215a0d2cba865565fdfa67ed05"
     end
   end
   on_linux do
     on_arm do
-      url "https://github.com/zhumengstarsea/magpie/releases/download/v0.1.1485/magpie-cli-linux-arm64"
-      sha256 "45d2b7861ffd388569fa57e5f293bbe11455492246a6224a09d78576cef5388c"
+      url "https://github.com/zhumengstarsea/magpie/releases/download/v0.1.1488/magpie-cli-linux-arm64"
+      sha256 "1cc8afba31ac962f544f9fc4ac5cdacdab50f9423b75001ca74a3c7a5106d513"
     end
     on_intel do
-      url "https://github.com/zhumengstarsea/magpie/releases/download/v0.1.1485/magpie-cli-linux-amd64"
-      sha256 "1fdcafbb1845c78b4acf236f7f50c5a71e1059e8fdf04c5bda3dfe988404a3ff"
+      url "https://github.com/zhumengstarsea/magpie/releases/download/v0.1.1488/magpie-cli-linux-amd64"
+      sha256 "d9c73003cc2859217d3d1568f41ad896961a1f48e7f78dc7d0746ffd037d5d99"
     end
   end
 

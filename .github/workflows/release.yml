@@ -61,7 +61,10 @@ jobs:
           fetch-tags: false
       - name: 同步上游对应分支
         id: branches
-        run: bash scripts/sync-upstream-branches.sh
+        run: |
+          python3 -m pip install --disable-pip-version-check PyYAML==6.0.3
+          export GNUPGHOME="$RUNNER_TEMP/release-gnupg"
+          bash scripts/sync-upstream-branches.sh
       - name: 检查并同步上游发布
         id: sync
         continue-on-error: true

@@ -17,6 +17,17 @@ commit updates Homebrew after the release; after that commit is pushed, the
 workflow adds its link to that version's English and Chinese notes. Older
 publication commits are excluded from the product changes.
 
+The fork's branch synchronization leaves `master` untouched and mirrors other
+upstream branches. `main` has one exception: `scripts/guard-main-workflows.py`
+excludes pushes to `main` in every upstream workflow, preserving other events
+and filters. `scripts/sync-upstream-branches.sh` signs that workflow-only tree
+as a child of the upstream tip and reuses it until upstream changes. It builds
+through a temporary Git index, without checking out `main` or editing the
+running `master` checkout. Pushes use a force-with-lease against the branch
+snapshot; an intervening remote update fails rather than being overwritten.
+No workflow is disabled repository-wide, so `master` keeps its existing tests
+and release jobs. Verification: `python3 scripts/test_main_workflows.py`.
+
 ## Responsibilities and sources of truth
 
 | Part | Responsibility | Source |
