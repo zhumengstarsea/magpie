@@ -152,12 +152,23 @@ var rules = append([]rule{
 	// code calls anything a key: a map's "key": "value", sort_key, keyboard.
 	{kind: "SECRET", re: regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9_.-])` + quote + `key` + quote + `[ \t]*[:=][ \t]*` + quote + `(` + secretCh + `{16,})`),
 		markers: fieldNames{{"key", "key"}}.markers(), ok: secretValue, at: notCode},
+	// a password after its name in Chinese, Japanese or Korean, as people
+	// write one into a message: 密码：786kih, 密碼是 hunter2, パスワード: … .
+	// Unlike password = in a config, nothing in code is called 密码, so
+	// any value of four or more is taken, digits only too (CyberCaius on
+	// Discord); a sentence's closing stop is no part of it.
+	{kind: "PASSWORD", re: regexp.MustCompile(`(?:` + strings.Join(cjkPasswordNames, "|") + `)[ \t]*(?:[:：=][ \t]*|是[ \t]*|は[ \t]*|는[ \t]*)?(?:\\?["'“「])?(` + secretCh + `{3,63}[A-Za-z0-9_\-/+=~!@#%^&*])`),
+		markers: cjkPasswordNames, ok: notAVariable},
 
 	{kind: "EMAIL", re: regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}`), markers: []string{"@"}, bound: alnum + "._%+-", ok: realEmail, at: notUserinfo, cat: catPersonal},
 	{kind: "ID_CARD", re: regexp.MustCompile(`[1-9]\d{5}(?:18|19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx]`), bound: alnum, ok: chineseID, cat: catPersonal},
 	{kind: "PHONE", re: regexp.MustCompile(`(?:\+?86[- ]?)?1[3-9]\d{9}`), bound: digits, cat: catPersonal},
 	{kind: "BANK_CARD", re: regexp.MustCompile(`[3-6]\d{3}(?:[ -]?\d{4}){2,3}(?:[ -]?\d{1,3})?`), bound: digits, ok: luhn, cat: catPersonal},
 }, moreRules...)
+
+// cjkPasswordNames are what a password is called in Chinese, Japanese and
+// Korean.
+var cjkPasswordNames = []string{"密码", "密碼", "口令", "パスワード", "비밀번호"}
 
 // fieldNames are what a field that holds a secret is called: a pattern for
 // each name, and text that any match of it has in it, so a rule's markers
