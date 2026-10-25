@@ -479,6 +479,7 @@ jobs:
           ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
         run: |
           set -euo pipefail
+          python3 -B -m unittest discover -s scripts -p test_release_notes.py
           # Prefer the previous release of this fork, not inherited upstream tags.
           PREV_TAG=""
           gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$RUNNER_TEMP/releases.json"
@@ -580,6 +581,21 @@ jobs:
           if git diff --cached --quiet; then exit 0; fi
           git -c commit.gpgsign=true commit -S -m "发布 $VERSION 版本"
           git push origin "HEAD:$TAP_BRANCH"
+      - name: 补充当前版本发布提交
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SUBJECT=$(git log -1 --format=%s)
+          if [ "$SUBJECT" != "发布 $VERSION 版本" ]; then
+            echo "::notice::No publication commit was created; release notes are unchanged."
+            exit 0
+          fi
+          gh release view "v$VERSION" --json body --jq .body > "$RUNNER_TEMP/release-notes-before.md"
+          python3 -B scripts/release-notes.py --existing-notes "$RUNNER_TEMP/release-notes-before.md" \
+            --publication-commit "$(git rev-parse HEAD)" --repository "$GITHUB_REPOSITORY" --version "$VERSION" \
+            --output "$RUNNER_TEMP/release-notes-final.md"
+          gh release edit "v$VERSION" --notes-file "$RUNNER_TEMP/release-notes-final.md"
       - name: 清理临时 GPG 密钥
         if: always()
         run: |

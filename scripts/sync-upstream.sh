@@ -79,7 +79,7 @@ else
     fi
     # Keep the fork's automation and release metadata while allowing all
     # non-conflicting upstream source changes into the synchronized commit.
-    git restore --source="refs/remotes/origin/$TARGET_BRANCH" -- "${fork_owned[@]}"
+    git restore --source="refs/remotes/origin/$TARGET_BRANCH" --staged --worktree -- "${fork_owned[@]}"
     git commit -S -m "同步上游 $version 版本"
     git verify-commit HEAD
     # A concurrent push fails normally; never force-update the user's branch.

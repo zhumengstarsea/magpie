@@ -7,6 +7,16 @@ with no binding generator and no bundler. `magpie web` serves the same page
 to a browser for a machine with no desktop. Package `internal/gui` hosts all
 three.
 
+This fork's release notes come from its GitHub Releases. The release
+workflow excludes version-publication and synchronization subjects before
+translation. `scripts/release-notes.py` validates Chinese text and protected
+literals, retries only missing translations through the remaining providers,
+and fails before publication when any subject remains untranslated.
+`scripts/test_release_notes.py` covers these failure cases. The publication
+commit updates Homebrew after the release; after that commit is pushed, the
+workflow adds its link to that version's English and Chinese notes. Older
+publication commits are excluded from the product changes.
+
 ## Responsibilities and sources of truth
 
 | Part | Responsibility | Source |

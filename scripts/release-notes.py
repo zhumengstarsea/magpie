@@ -21,6 +21,60 @@ LITERALS = re.compile(
     r"\([^()\n]*[\u3400-\u9fff][^()\n]*\)"
 )
 
+RELEASE_SUBJECT = re.compile(
+    r"^(?:(?:发布|同步上游(?:并发布)?|更新\s+Homebrew\s+发布至)\s*"
+    r"v?\d+\.\d+\.\d+(?:\s*版本)?|"
+    r"(?:release|chore\(release\)):?\s*v?\d+\.\d+\.\d+)\s*$",
+    re.I,
+)
+
+
+def change_subjects(subjects):
+    """Exclude release bookkeeping, including an amended old release commit."""
+    return [text for text in subjects if not RELEASE_SUBJECT.fullmatch(text)]
+
+
+def publication_notes(body, repository, version, commit):
+    """Add the actual publication commit after Homebrew has been pushed."""
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
+        raise ValueError("invalid publication repository")
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version) or not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise ValueError("invalid publication version or commit")
+    url = f"https://github.com/{repository}/commit/{commit}"
+    parts = body.split("<!-- lang:zh -->")
+    if len(parts) != 2:
+        raise ValueError("bilingual release notes are required")
+    for i, (heading, label) in enumerate((
+        ("### Changes", f"Release {version}"),
+        ("### 更新内容", f"发布 {version} 版本"),
+    )):
+        # Rerunning the post-publication step must not duplicate its entry.
+        lines = parts[i].splitlines()
+        lines = [
+            line for line in lines
+            if line not in (f"- {label}", f"- [{label}]({url})")
+            and not (line.startswith(f"- [{label}](https://github.com/{repository}/commit/")
+                     and line.endswith(")"))
+        ]
+        if heading not in lines:
+            raise ValueError("release changes heading is missing")
+        at = lines.index(heading) + 1
+        while at < len(lines) and not lines[at].strip():
+            at += 1
+        lines.insert(at, f"- [{label}]({url})")
+        parts[i] = "\n".join(lines)
+    return parts[0].rstrip() + "\n\n<!-- lang:zh -->\n\n" + parts[1].strip() + "\n"
+
+
+def translated_subject(value, source, literals):
+    """A valid JSON response may still echo English instead of translating."""
+    if not isinstance(value, str) or len(re.findall(r"[\u3400-\u9fff]", LITERALS.sub("", value))) < 2:
+        raise ValueError("translation contains no Chinese subject")
+    restored = restore(value, literals)
+    if restored == source:
+        raise ValueError("translation echoed its source")
+    return restored
+
 
 def mostly_chinese(text):
     """Return true only when Chinese is the subject's main language."""
@@ -173,7 +227,10 @@ def zhipu_once(texts, model):
         method="POST",
     )
     result = request_json(request, timeout=60)
-    text = result["choices"][0]["message"]["content"]
+    choice = result["choices"][0]
+    if choice.get("finish_reason") == "length":
+        raise ValueError("Zhipu translation output was truncated")
+    text = choice["message"]["content"]
     return parse_zhipu_content(text, len(texts))
 
 
@@ -366,8 +423,11 @@ def google_ai_once(texts, model):
         method="POST",
     )
     result = request_json(request, timeout=60)
-    parts = result["candidates"][0]["content"]["parts"]
-    text = "".join(part.get("text", "") for part in parts)
+    candidates = result.get("candidates", [])
+    if not candidates or candidates[0].get("finishReason", "STOP") != "STOP":
+        raise ValueError("Google AI translation did not complete")
+    parts = candidates[0].get("content", {}).get("parts", [])
+    text = "".join(part.get("text", "") for part in parts if not part.get("thought"))
     return parse_zhipu_content(text, len(texts))
 
 
@@ -452,76 +512,50 @@ def translate(subjects, providers=None):
         + [edge, google]
     )
     output = list(subjects)
-    # Already-Chinese subjects need no request. A mixed subject such as
-    # "gateway: ... (新成员 on Discord)" still needs translating. Bound each
-    # batch and preserve code, hashes, links and source attributions.
+    # Only unresolved subjects reach the next provider. Successful translations
+    # survive a later batch failure, and protected names cannot validate an echo.
     pending = [i for i, text in enumerate(subjects) if not mostly_chinese(text)]
-
-    def translate_one(subject):
-        protected, literals = protect(subject)
-        for provider in providers:
-            try:
-                values = provider([protected])
-                if len(values) != 1:
-                    raise ValueError("translation returned a different number of subjects")
-                return restore(values[0], literals)
-            except Exception as error:
-                detail = f"HTTP {error.code}" if isinstance(error, HTTPError) else type(error).__name__
-                print(f"Translation via {provider.__name__} failed for one subject ({detail}); trying fallback.", file=sys.stderr)
-        return subject
-
-    while pending:
-        if google_ai in providers or zhipu in providers:
-            # Let the AI provider pack the entire pending set using the
-            # selected model's context and output budgets.
-            batch = pending
-            pending = []
+    for provider in providers:
+        if not pending:
+            break
+        name = getattr(provider, "__name__", type(provider).__name__)
+        protected = [protect(subjects[i]) for i in pending]
+        if provider in (google_ai, zhipu):
+            # AI providers apply their own context and output token budgets.
+            ranges = [(0, len(pending))]
         else:
-            batch = [pending.pop(0)]
-            size = len(subjects[batch[0]])
-            while pending and len(batch) < 20 and size + len(subjects[pending[0]]) < 2000:
-                batch.append(pending.pop(0))
-                size += len(subjects[batch[-1]])
-        if len(batch) == 1 and len(subjects[batch[0]]) > 5000:
-            for i in batch:
-                output[i] = translate_one(subjects[i])
-            continue
-        protected = [protect(subjects[i]) for i in batch]
-        translated = False
-        for provider in providers:
+            ranges, start, size = [], 0, 0
+            for offset, (text, _) in enumerate(protected):
+                if offset > start and (offset - start >= 20 or size + len(text) >= 2000):
+                    ranges.append((start, offset))
+                    start, size = offset, 0
+                size += len(text)
+            ranges.append((start, len(pending)))
+        accepted = set()
+        for start, end in ranges:
             try:
-                if provider is google_ai or provider is zhipu:
-                    ranges = [(0, len(protected))]
-                else:
-                    ranges = []
-                    start = 0
-                    size = 0
-                    for offset, (text, _) in enumerate(protected):
-                        if offset > start and (offset - start >= 20 or size + len(text) >= 2000):
-                            ranges.append((start, offset))
-                            start = offset
-                            size = 0
-                        size += len(text)
-                    if start < len(protected):
-                        ranges.append((start, len(protected)))
-                values = []
-                for start, end in ranges:
-                    values.extend(provider([text for text, _ in protected[start:end]]))
-                if len(values) != len(batch):
+                values = provider([text for text, _ in protected[start:end]])
+                if not isinstance(values, list) or len(values) != end - start:
                     raise ValueError("translation returned a different number of subjects")
-                restored = [restore(value, literals) for value, (_, literals) in zip(values, protected)]
-                for i, value in zip(batch, restored):
-                    output[i] = value
-                translated = True
-                break
+                for offset, value in enumerate(values, start):
+                    i = pending[offset]
+                    try:
+                        output[i] = translated_subject(value, subjects[i], protected[offset][1])
+                    except ValueError:
+                        continue
+                    accepted.add(i)
             except Exception as error:
                 detail = f"HTTP {error.code}" if isinstance(error, HTTPError) else type(error).__name__
-                print(f"Translation via {provider.__name__} failed ({detail}); trying fallback.", file=sys.stderr)
-        if not translated:
-            # One malformed or unusually long subject must not discard the
-            # translations for the other subjects in its batch.
-            for i in batch:
-                output[i] = translate_one(subjects[i])
+                if isinstance(error, HTTPError) and provider is zhipu:
+                    detail += f", business {zhipu_business_code(error)}"
+                print(f"Translation via {name} failed ({detail}); trying fallback.", file=sys.stderr)
+                # A transport failure is not specific to one subject.
+                if isinstance(error, OSError):
+                    break
+        print(f"Translation via {name}: validated {len(accepted)}/{len(pending)} subjects.", file=sys.stderr)
+        pending = [i for i in pending if i not in accepted]
+    if pending:
+        raise RuntimeError(f"{len(pending)} subjects could not be translated; release notes were not written")
     return output
 
 
@@ -574,7 +608,9 @@ Download from [this fork's GitHub Releases]({url}). In-app updates use this repo
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--commits", type=Path, required=True)
+    parser.add_argument("--publication-commit", help="Append the completed publication commit to existing notes")
+    parser.add_argument("--existing-notes", type=Path)
+    parser.add_argument("--commits", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--repository", required=True)
     parser.add_argument("--version", required=True)
@@ -586,7 +622,20 @@ def main():
         parser.error("version must be X.Y.Z")
     if args.compare and not re.fullmatch(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/compare/[0-9a-f]{40}\.\.\.[0-9a-f]{40}", args.compare):
         parser.error("invalid compare link")
-    subjects = [line.strip() for line in args.commits.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if args.publication_commit:
+        if args.existing_notes is None:
+            parser.error("--existing-notes is required with --publication-commit")
+        body = publication_notes(
+            args.existing_notes.read_text(encoding="utf-8"),
+            args.repository, args.version, args.publication_commit,
+        )
+        args.output.write_text(body, encoding="utf-8", newline="\n")
+        return
+    if args.commits is None:
+        parser.error("--commits is required when generating release notes")
+    subjects = change_subjects([
+        line.strip() for line in args.commits.read_text(encoding="utf-8").splitlines() if line.strip()
+    ])
     recent = subjects[:100]
     body = render(recent, translate(recent), args.repository, args.version, args.compare, len(subjects))
     args.output.write_text(body, encoding="utf-8", newline="\n")
