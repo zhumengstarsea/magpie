@@ -523,10 +523,12 @@ type Rest struct {
 func renewed(agent, user string) {
 	restingUntil.Lock()
 	defer restingUntil.Unlock()
+	now := time.Now()
 	for k, r := range restingUntil.note {
 		if r.agent == agent && strings.EqualFold(r.user, user) && (r.Why == failQuota || r.By == "window") {
 			delete(restingUntil.m, k)
 			delete(restingUntil.note, k)
+			liftedLocked(k, now)
 		}
 	}
 }
@@ -590,14 +592,19 @@ var (
 func RestOf(key string) (Rest, bool) { return restOf(key) }
 
 // Unrest lifts the rest of what rests by key — an account just verified
-// with its vendor, say — so the next request asks it again. False when it
-// wasn't resting.
+// with its vendor, say — so the next request asks it again: rate limited
+// with Sink on, it is no longer sent to the back of the order either.
+// The lift is told to the Routing page (TraceState.Lifted), wherever it
+// was asked for. False when it wasn't resting.
 func (s *Server) Unrest(key string) bool {
 	restingUntil.Lock()
-	defer restingUntil.Unlock()
 	_, ok := restingUntil.m[key]
 	delete(restingUntil.m, key)
 	delete(restingUntil.note, key)
+	liftedLocked(key, time.Now())
+	restingUntil.Unlock()
+	unsink(key)
+	s.trace.lifted()
 	return ok
 }
 
@@ -606,15 +613,19 @@ func (s *Server) Unrest(key string) bool {
 // asked again for all of them. It returns how many it lifted.
 func (s *Server) UnrestAll(key string) int {
 	restingUntil.Lock()
-	defer restingUntil.Unlock()
-	n := 0
+	n, now := 0, time.Now()
 	for k := range restingUntil.m {
 		if k == key || strings.HasPrefix(k, key+"/") {
 			delete(restingUntil.m, k)
 			delete(restingUntil.note, k)
+			liftedLocked(k, now)
 			n++
 		}
 	}
+	liftedLocked(key, now)
+	restingUntil.Unlock()
+	unsink(key)
+	s.trace.lifted()
 	return n
 }
 
@@ -916,6 +927,16 @@ func (s *Server) restAfterMarked(c candidate, status int, header http.Header, bo
 	modelBackoff := false
 	if why == failProxy {
 		// the account is as good as it was; the proxy is the user's to start
+		return r
+	}
+	if c.p.LimitRestOff && (why == failQuota || why == failCredit || why == failRate || status == http.StatusTooManyRequests) {
+		// the user set it never to rest for a limit (provider.LimitRestOff;
+		// zoecats on Discord: a local aggregator says "quota exhausted"
+		// for the moment it switches upstreams, and the next request goes
+		// through): not set aside, sunk or counted, and asked as ever. A
+		// key refused, a model not served or a plain failure rests it as
+		// before
+		r.By, r.Until = "off", now
 		return r
 	}
 	if why == failCredit || why == failQuota {

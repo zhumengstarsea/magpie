@@ -1035,7 +1035,40 @@ var restingUntil = struct {
 	sync.Mutex
 	m    map[string]time.Time
 	note map[string]Rest // why each rests
-}{m: map[string]time.Time{}, note: map[string]Rest{}}
+	// lifted is when each rest was lifted before its time — by hand
+	// (Unrest), or its windows renewed — by the key it rested by: the
+	// kept routes still say it rested, and the Routing page reads this
+	// (TraceState.Lifted) to stop showing a rest lifted since it was
+	// found, from whichever page lifted it (zoecats on Discord: Try now
+	// in the provider's editor left Routing at 429 until a restart)
+	lifted map[string]time.Time
+}{m: map[string]time.Time{}, note: map[string]Rest{}, lifted: map[string]time.Time{}}
+
+// liftedLocked notes that the rest by key was lifted now, with
+// restingUntil held. A lift older than any rest can be is let go.
+func liftedLocked(key string, now time.Time) {
+	for k, at := range restingUntil.lifted {
+		if now.Sub(at) > longestMonthly {
+			delete(restingUntil.lifted, k)
+		}
+	}
+	restingUntil.lifted[key] = now
+}
+
+// liftedRests is when each rest lifted before its time was lifted, by
+// the key it rested by.
+func liftedRests() map[string]time.Time {
+	restingUntil.Lock()
+	defer restingUntil.Unlock()
+	if len(restingUntil.lifted) == 0 {
+		return nil
+	}
+	out := make(map[string]time.Time, len(restingUntil.lifted))
+	for k, at := range restingUntil.lifted {
+		out[k] = at
+	}
+	return out
+}
 
 func (s *Server) resting(id string) bool {
 	_, ok := restOf(id)
