@@ -1,6 +1,11 @@
 package gateway
 
-import "testing"
+import (
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+)
 
 // codexFollowSetup is Codex signed in to ChatGPT, its conversation put on
 // a relay's model (third/gpt-6-astra) through magpie, and Codex's config
@@ -97,5 +102,178 @@ func TestCodexSideCallsStayOnChatGPT(t *testing.T) {
 	}
 	if reqs := relay.requests(); len(reqs) != 1 {
 		t.Fatalf("the relay got %d requests", len(reqs))
+	}
+}
+
+// codexAppSide is one of the Codex app's hidden side turns of a thread
+// (source: thread_title, thread_description, composer_predictions), asked
+// on one of Codex's own models as the app asks for them.
+func codexAppSide(t *testing.T, s *Server, source, session string) {
+	t.Helper()
+	body := `{"model":"gpt-6-luna","stream":true,"input":[` + leadAsk + `]}`
+	req := httptest.NewRequest("POST", CodexPath+"/responses", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer chatgpt-token")
+	req.Header.Set("chatgpt-account-id", "acct-1")
+	req.Header.Set("session_id", session)
+	req.Header.Set("x-codex-turn-metadata", `{"thread_source":"`+source+`"}`)
+	s.Handler().ServeHTTP(httptest.NewRecorder(), req)
+}
+
+// cybercaius on Discord: with the conversation put on one of magpie's
+// models in the Codex app, and nothing in Codex's config, the app's thread
+// titles, descriptions and composer predictions still went to ChatGPT on
+// its own models. They follow the session now, as the subagents do.
+func TestCodexAppSideTurnsFollowTheSession(t *testing.T) {
+	up, relay, s := codexFollowSetup(t, false)
+	was := CodexSideModel
+	CodexSideModel = func() string { return "" }
+	t.Cleanup(func() { CodexSideModel = was })
+	for _, src := range []string{"composer_predictions", "thread_title", "thread_description"} {
+		codexAppSide(t, s, src, "lead-1")
+		if got := up.asked(); len(got) != 0 {
+			t.Fatalf("%s: ChatGPT was asked for %v", src, got)
+		}
+		reqs := relay.requests()
+		if m := modelOf([]byte(reqs[len(reqs)-1])); len(reqs) < 2 || m != "gpt-6-astra" {
+			t.Fatalf("%s: the relay got %d requests, the last on %q", src, len(reqs), m)
+		}
+	}
+	if reqs := relay.requests(); len(reqs) != 4 {
+		t.Fatalf("the relay got %d requests", len(reqs))
+	}
+}
+
+// cybercaius on Discord: after switching Codex to another model, the first
+// new conversation's title still came from the model before. Codex writes
+// it on a temporary thread with no link to the conversation, started as
+// the first message is sent, so it can reach magpie before that
+// conversation's first turn, when the key's last turn is still the old
+// conversation's. It waits for the turn now, and goes on its model.
+func TestCodexTitleBeforeTheFirstTurnFollowsTheSwitch(t *testing.T) {
+	up, old, s := codexFollowSetup(t, false)
+	switched := relayOn(t, "fourth")
+	wasModel, wasFresh, wasWait := CodexSideModel, codexSideFresh, codexSideWait
+	CodexSideModel = func() string { return "" }
+	// the old conversation's turn is long past; the title waits on the
+	// new one's, not on the clock
+	codexSideFresh, codexSideWait = 0, time.Minute
+	t.Cleanup(func() { CodexSideModel, codexSideFresh, codexSideWait = wasModel, wasFresh, wasWait })
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		codexAppSide(t, s, "thread_title", "title-thread")
+	}()
+	// the new conversation's first turn comes once the title is waiting
+	// (on the old code it never waits, and is answered first)
+	for waiting := false; !waiting; {
+		select {
+		case <-done:
+			waiting = true
+		default:
+			s.codexLeads.mu.Lock()
+			waiting = s.codexLeads.next != nil
+			s.codexLeads.mu.Unlock()
+			if !waiting {
+				time.Sleep(time.Millisecond)
+			}
+		}
+	}
+	if rec := codexSubTurn(s, "fourth/gpt-6-astra", "lead-2", "", leadAsk); rec.Code != 200 {
+		t.Fatalf("new conversation: %d %s", rec.Code, rec.Body.String())
+	}
+	<-done
+	if got := up.asked(); len(got) != 0 {
+		t.Fatalf("ChatGPT was asked for %v", got)
+	}
+	if reqs := old.requests(); len(reqs) != 1 {
+		t.Fatalf("the model switched from got %d requests, the title among them", len(reqs))
+	}
+	if reqs := switched.requests(); len(reqs) != 2 {
+		t.Fatalf("the model switched to got %d requests, want the turn and the title", len(reqs))
+	}
+}
+
+// A composer prediction runs on a fork of the conversation, a thread of
+// its own: it follows the conversation it was forked from, not whichever
+// one this key's Codex last had a turn in.
+func TestCodexPredictionFollowsTheThreadItForks(t *testing.T) {
+	_, lead, s := codexFollowSetup(t, false)
+	other := relayOn(t, "fourth")
+	was := CodexSideModel
+	CodexSideModel = func() string { return "" }
+	t.Cleanup(func() { CodexSideModel = was })
+	if rec := codexSubTurn(s, "fourth/gpt-6-astra", "lead-2", "", leadAsk); rec.Code != 200 {
+		t.Fatalf("other conversation: %d %s", rec.Code, rec.Body.String())
+	}
+	body := `{"model":"gpt-6-luna","stream":true,"input":[` + leadAsk + `]}`
+	req := httptest.NewRequest("POST", CodexPath+"/responses", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer chatgpt-token")
+	req.Header.Set("chatgpt-account-id", "acct-1")
+	req.Header.Set("session_id", "fork-of-lead-1")
+	req.Header.Set("x-codex-turn-metadata", `{"thread_source":"composer_predictions","forked_from_thread_id":"lead-1"}`)
+	s.Handler().ServeHTTP(httptest.NewRecorder(), req)
+	if reqs := lead.requests(); len(reqs) != 2 {
+		t.Fatalf("the forked conversation's model got %d requests", len(reqs))
+	}
+	if reqs := other.requests(); len(reqs) != 1 {
+		t.Fatalf("the other conversation's model got %d requests", len(reqs))
+	}
+}
+
+// A title for a conversation magpie has seen a turn of goes on its model
+// at once, however long ago that turn was, with no wait.
+func TestCodexTitleOfAKnownThreadDoesNotWait(t *testing.T) {
+	_, relay, s := codexFollowSetup(t, false)
+	wasModel, wasFresh, wasWait := CodexSideModel, codexSideFresh, codexSideWait
+	CodexSideModel = func() string { return "" }
+	codexSideFresh, codexSideWait = 0, time.Minute
+	t.Cleanup(func() { CodexSideModel, codexSideFresh, codexSideWait = wasModel, wasFresh, wasWait })
+	start := time.Now()
+	codexAppSide(t, s, "thread_title", "lead-1")
+	if d := time.Since(start); d > 30*time.Second {
+		t.Fatalf("the title waited %v", d)
+	}
+	if reqs := relay.requests(); len(reqs) != 2 {
+		t.Fatalf("the relay got %d requests", len(reqs))
+	}
+}
+
+// A conversation on Codex's own model keeps its side turns on ChatGPT,
+// even with one of magpie's models in Codex's config: they follow the
+// session, not the config.
+func TestCodexAppSideTurnsStayWithAnOwnModelSession(t *testing.T) {
+	up := codexSubagentSetup(t)
+	relay := relayOn(t, "third")
+	was := CodexSideModel
+	CodexSideModel = func() string { return "third/gpt-6-astra" }
+	t.Cleanup(func() { CodexSideModel = was })
+	s := New()
+	codexSide(t, s, "", leadAsk)
+	codexAppSide(t, s, "thread_title", "worker-1")
+	if got := up.asked(); len(got) != 2 || got[1] != "gpt-6-luna" {
+		t.Fatalf("ChatGPT was asked for %v", got)
+	}
+	if reqs := relay.requests(); len(reqs) != 0 {
+		t.Fatalf("the relay got %d requests", len(reqs))
+	}
+}
+
+// Codex consolidates its memories as it starts, before any turn of its
+// has come through magpie: with one of magpie's models in its config,
+// they go on that model, not to ChatGPT.
+func TestCodexMemoriesBeforeAnyTurnFollowTheConfig(t *testing.T) {
+	up := codexSubagentSetup(t)
+	relay := relayOn(t, "third")
+	wasSet, wasModel := CodexSideSet, CodexSideModel
+	CodexSideSet = func(string) bool { return false }
+	CodexSideModel = func() string { return "third/gpt-6-astra" }
+	t.Cleanup(func() { CodexSideSet, CodexSideModel = wasSet, wasModel })
+	s := New()
+	codexSide(t, s, "memgen", leadAsk)
+	if got := up.asked(); len(got) != 0 {
+		t.Fatalf("ChatGPT was asked for %v", got)
+	}
+	if reqs := relay.requests(); len(reqs) != 1 || modelOf([]byte(reqs[0])) != "gpt-6-astra" {
+		t.Fatalf("the relay got %v", reqs)
 	}
 }

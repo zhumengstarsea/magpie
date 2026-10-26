@@ -18,4 +18,5 @@ export const SPONSORS = [
   { id: "kimi-cn", readme: "https://www.kimi.com/code?aff=magpie" },
   { id: "apikeyfan", readme: "https://apikey.fan/?aff=mg_readme" },
   { id: "wandapi", readme: "https://wandapi.ai/r/magpierepo" },
+  { id: "fastai", home: "https://www.fastaitoken.com/register?aff=MAGPIE&utm=official" },
 ];

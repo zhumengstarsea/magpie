@@ -84,7 +84,10 @@ plugins' scripts and `app.js`, all classic scripts sharing one scope. It is
 The Gateway page is `plugins/gateway` with `Client: keys.js, client.js`
 (`internal/gui/assets/plugins/gateway/`): `keys.js` is the gateway-key
 manager that was `caller-keys.js`, and `client.js` is the page's code that
-was in app.js, ending in its `magpie.plugin("gateway", …)`. Still in
+was in app.js, ending in its `magpie.plugin("gateway", …)`, and after it
+the viewer of a recorded call's bodies (`callBodyPanel`: a JSON tree, a
+stream's events or its reply), which Usage's ledger and Routing's trace
+call too; every plugin's scripts load whether it is on or off. Still in
 app.js and app.css: its styles, its sidebar and header buttons
 (`data-feature="gateway"` in index.html), and `decideEntry`, which the model
 info card shares. `TestBuiltinClientsLoaded` holds index.html to load every

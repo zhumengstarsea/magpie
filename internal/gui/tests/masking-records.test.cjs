@@ -22,6 +22,9 @@ const { chromium, webkit } = require("playwright");
 const assets = path.resolve(__dirname, "../assets");
 const KEY = "{{API_KEY_aaaa1111}}", NAME = "{{PERSON_bbbb2222}}", MAIL = "{{EMAIL_cccc3333}}", PK = "{{PRIVATE_KEY_dddd4444}}";
 const SECRET = "sk-proj-abcdEFGH1234ijkl", ADDR = "ann@example.com";
+// a record's key is its time in nanoseconds, past what a JS number holds
+// exactly, so the API gives it as a string
+const K1 = "1792987654321000001", K2 = "1792987654321000002", K3 = "1792987654321000003", K5 = "1792987654321000005";
 
 function day(back) {
   const d = new Date();
@@ -47,26 +50,27 @@ function summary(days) {
   };
 }
 const filler = "x".repeat(900);
-// the body 1002 went out with: a long system prompt nothing was masked in,
+// the body K2 went out with: a long system prompt nothing was masked in,
 // and a user message with two values
 const SENT = JSON.stringify({ model: "claude-opus-4-1", system: "You are Claude Code. " + filler, messages: [
   { role: "user", content: [{ type: "text", text: "earlier, unchanged" }] },
   { role: "user", content: [{ type: "text", text: `export OPENAI_API_KEY=${KEY} # mail ${MAIL}, again ${KEY}` }] },
 ] });
 const records = [
-  { key: 1003, t: ago(60e3), route: "messages", what: "chat", agent: "claude", provider: "anthropic", model: "claude-opus-4-1", n: 1, blocked: true,
+  { key: K3, t: ago(60e3), route: "messages", what: "chat", agent: "claude", provider: "anthropic", model: "claude-opus-4-1", n: 1, blocked: true,
     values: [{ p: PK, k: "PRIVATE_KEY", b: "rule", h: "b3Bl", l: 400, n: 1, a: "block" }],
     snips: { [PK]: `-----BEGIN OPENSSH PRIVATE KEY----- ${PK}` } },
-  { key: 1002, t: ago(120e3), route: "messages", what: "chat", agent: "claude", provider: "anthropic", model: "claude-opus-4-1", n: 3, took: 1800, back: { [KEY]: 1 },
+  { key: K2, t: ago(120e3), route: "messages", what: "chat", agent: "claude", provider: "anthropic", model: "claude-opus-4-1", n: 3, took: 1800, back: { [KEY]: 1 },
     values: [{ p: KEY, k: "API_KEY", b: "rule", h: "sk-p", l: 24, n: 2, known: true }, { p: MAIL, k: "EMAIL", b: "rule", h: "a", l: 15, n: 1, known: true }],
     snips: { [KEY]: `export OPENAI_API_KEY=${KEY} # mail ${MAIL}`, [MAIL]: `…_KEY=${KEY} # mail ${MAIL}` } },
   // from before a restart: no body, no values in memory
-  { key: 1001, t: ago(300e3), route: "search", what: "search", agent: "codex", provider: "openai", model: "gpt-5", n: 1,
+  { key: K1, t: ago(300e3), route: "search", what: "search", agent: "codex", provider: "openai", model: "gpt-5", n: 1,
     values: [{ p: NAME, k: "PERSON", b: "model", h: "", l: 3, n: 1 }], snips: { [NAME]: `ask ${NAME} about it` } },
 ];
 
 function serve(lang, sum, asked, opts = {}) {
   const settings = { theme: "light", lang, tray: "panel", currency: "usd", redact: !opts.off, redactPersonal: !opts.off, redactActions: { PRIVATE_KEY: "block" }, ...opts.settings };
+  let cleared = false;
   return async (route) => {
     const req = route.request(), url = new URL(req.url());
     const json = (data) => route.fulfill({ json: data });
@@ -84,26 +88,35 @@ function serve(lang, sum, asked, opts = {}) {
     }
     if (url.pathname === "/api/providers") return json({ providers: [{ id: "anthropic", name: "Anthropic", icon: "anthropic", agents: [], models: [] }, { id: "openai", name: "OpenAI", icon: "openai", agents: [], models: [] }], presets: [], excluded: [],
       gateway: { running: true, window: true, mine: true, url: "http://127.0.0.1:3999", models: 0, groups: [],
-        calls: [{ id: 7, time: ago(120e3), agent: "claude", model: "claude-opus-4-1", from: "anthropic", to: "anthropic", status: 200, ms: 900, masked: { n: 3, distinct: 2, kinds: { API_KEY: 2, EMAIL: 1 }, by: { rule: 2 }, key: 1002 } },
-          { id: 8, time: ago(60e3), agent: "claude", model: "claude-opus-4-1", from: "anthropic", to: "anthropic", status: 200, ms: 700, masked: { n: 0, distinct: 0, warned: 2, key: 1003 } }] } });
+        calls: [{ id: 7, time: ago(120e3), agent: "claude", model: "claude-opus-4-1", from: "anthropic", to: "anthropic", status: 200, ms: 900, masked: { n: 3, distinct: 2, kinds: { API_KEY: 2, EMAIL: 1 }, by: { rule: 2 }, key: K2 } },
+          { id: 8, time: ago(60e3), agent: "claude", model: "claude-opus-4-1", from: "anthropic", to: "anthropic", status: 200, ms: 700, masked: { n: 0, distinct: 0, warned: 2, key: K3 } }] } });
     if (url.pathname === "/api/groups") return json({ groups: [], models: [] });
     if (url.pathname === "/api/plugins") return json({ plugins: [] });
     if (url.pathname === "/api/privacy-model") return json({ supported: true, installed: false, size: 1.6e9 });
-    if (url.pathname === "/api/masking/summary") return json(sum(+url.searchParams.get("days")));
+    if (url.pathname === "/api/masking/clear") {
+      asked.push("clear " + req.method());
+      if (opts.clearFails) return route.fulfill({ status: 500, body: "remove 2026-10-26.jsonl: permission denied" });
+      cleared = true;
+      return json({ cleared: true });
+    }
+    if (url.pathname === "/api/masking/summary") {
+      const s = sum(+url.searchParams.get("days"));
+      return json(cleared ? { ...s, days: s.days.map((d) => ({ ...d, requests: 0, n: 0, distinct: 0 })), requests: 0, n: 0, distinct: 0, blocked: 0, kinds: [], by: {}, agents: [], providers: [], values: [] } : s);
+    }
     if (url.pathname === "/api/masking/records") {
       asked.push(url.search);
       const q = url.searchParams, kinds = q.get("kind")?.split(",");
-      const rs = (opts.none ? [] : opts.records || records).filter((r) => (!kinds || r.values.some((v) => kinds.includes(v.k))) && (!q.get("by") || r.values.some((v) => v.b === q.get("by")))
+      const rs = (opts.none || cleared ? [] : opts.records || records).filter((r) => (!kinds || r.values.some((v) => kinds.includes(v.k))) && (!q.get("by") || r.values.some((v) => v.b === q.get("by")))
         && (!q.get("agent") || r.agent === q.get("agent")) && (!q.get("provider") || r.provider === q.get("provider")) && (!q.get("blocked") || r.blocked));
       return json({ records: rs, more: false });
     }
     if (url.pathname === "/api/masking/record") {
-      const r = (opts.records || records).find((r) => r.key === +url.searchParams.get("key"));
+      const r = (opts.records || records).find((r) => r.key === url.searchParams.get("key"));
       return r ? json(r) : route.fulfill({ status: 404, body: "404 page not found" });
     }
     if (url.pathname === "/api/masking/sent") {
       asked.push("sent " + url.searchParams.get("key"));
-      const body = opts.sent ? opts.sent[url.searchParams.get("key")] : url.searchParams.get("key") === "1002" && SENT;
+      const body = opts.sent ? opts.sent[url.searchParams.get("key")] : url.searchParams.get("key") === K2 && SENT;
       return body ? json({ body }) : route.fulfill({ status: 404, body: "404 page not found" });
     }
     if (url.pathname === "/api/masking/values") {
@@ -286,6 +299,15 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await one.locator(".msk-msg").first().waitFor();
         assert.equal(await card.isHidden(), true);
         assert.equal(await one.locator(".msk-steps li").count(), 5);
+        // each step's line runs from the number before it to its own, not a dash in the gap
+        const lines = await one.locator(".msk-steps li").evaluateAll((lis) => lis.slice(1).map((li, i) => {
+          const b = getComputedStyle(li, "::before");
+          if (b.display === "none") return null;
+          const x = li.getBoundingClientRect().left + parseFloat(b.left);
+          const from = lis[i].querySelector(".msk-sdot").getBoundingClientRect(), to = li.querySelector(".msk-sdot").getBoundingClientRect();
+          return [Math.round(x - from.right), Math.round(to.left - (x + parseFloat(b.width)))];
+        }));
+        for (const l of lines) if (l) assert.deepEqual(l, [6, 6], "a line from number to number");
         assert.equal(await one.locator(".msk-msg").count(), 1, "one piece of text had values");
         assert.equal(await one.locator(".msk-fold").count(), 1, "the system prompt and the earlier message, folded as one");
         assert.deepEqual(await one.locator(".msk-msg .msk-text").last().locator("mark").allTextContents(), [KEY, MAIL, KEY], "as the vendor got it");
@@ -404,7 +426,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     assert.equal(await page.locator("#activity .call-item.open").count(), 0, "the click wasn't the row's");
     assert.match(await page.locator("#maskOne .msk-when").textContent(), /\d/);
     // the tray panel's badge opens the window on key=
-    await page.goto("http://magpie.test/?view=masking&key=1001");
+    await page.goto("http://magpie.test/?view=masking&key=" + K1);
     await page.locator("#maskOne .msk-gone").waitFor();
     assert.equal(new URL(page.url()).searchParams.get("key"), null, "read once");
     // and Settings › Privacy links to the page
@@ -420,10 +442,10 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
 // real key against it, as it does a placeholder (#3599)
 const MADE = "sk_hYQWRBFmdHNIo5XVT2VnIIGh4mmMiJNm", REAL = "sk_w3axCByTQgK1PxqPhfKTrJOLBqz6sbZv";
 const made = {
-  records: [{ key: 1005, t: ago(60e3), route: "chat", what: "chat", agent: "codex", provider: "openai", model: "gpt-5", n: 2, back: { [MADE]: 1 },
+  records: [{ key: K5, t: ago(60e3), route: "chat", what: "chat", agent: "codex", provider: "openai", model: "gpt-5", n: 2, back: { [MADE]: 1 },
     values: [{ p: MADE, k: "API_KEY", b: "rule", h: "sk_w", l: 35, n: 2, known: true }],
     snips: { [MADE]: `OPENAI_API_KEY=${MADE}` } }],
-  sent: { 1005: JSON.stringify({ model: "gpt-5", messages: [{ role: "user", content: `OPENAI_API_KEY=${MADE} sk_live_other\nonce more: ${MADE}` }] }) },
+  sent: { [K5]: JSON.stringify({ model: "gpt-5", messages: [{ role: "user", content: `OPENAI_API_KEY=${MADE} sk_live_other\nonce more: ${MADE}` }] }) },
   known: { [MADE]: REAL },
 };
 for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
@@ -442,4 +464,59 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       assert.deepEqual(errors, []);
     });
   }
+}
+
+// Clear records… deletes what masking kept, after a confirm (maxyou2090:
+// strict masking had kept many records): Cancel sends nothing, Clear posts
+// once and the page reads again to nothing; a failed clear says why and
+// lists what is still there
+for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
+  for (const lang of ["en", "zh", "zh-TW", "ja", "de"]) {
+    for (const width of [1100, 640]) {
+      test(`${engine} ${lang} ${width}px: Clear records asks first, then empties the page`, async (t) => {
+        const { browser, page, errors, asked } = await open(engine, lang, width, summary);
+        t.after(() => browser.close());
+        const list = page.locator("#maskList"), clear = list.locator(".msk-foot .msk-clear");
+        await list.locator(".msk-row").first().waitFor();
+        await clear.waitFor();
+        assert.deepEqual(await wide(page), { page: false, over: [] });
+        await shot(page, `clear-${engine}-${lang}-${width}`);
+        await stillClick(page, clear);
+        const dialog = page.locator("dialog.action-confirm");
+        await dialog.waitFor();
+        await shot(page, `confirm-${engine}-${lang}-${width}`);
+        if (lang !== "en") {
+          const said = await dialog.innerText();
+          for (const w of ["Clear masking records", "is deleted from this computer", "Cancel"]) assert(!said.includes(w), `${w} left in English: ${said}`);
+        }
+        await dialog.locator("button:not(.primary)").click();
+        await dialog.waitFor({ state: "detached" });
+        await page.waitForTimeout(100);
+        assert(!asked.some((a) => a.startsWith("clear")), "Cancel sends nothing");
+        assert(await list.locator(".msk-row").count() > 0, "Cancel keeps the list");
+        await clear.click();
+        await dialog.locator("button.primary").click();
+        await list.locator(".msk-none").waitFor();
+        assert.deepEqual(asked.filter((a) => a.startsWith("clear")), ["clear POST"]);
+        assert.equal(await list.locator(".msk-row").count(), 0);
+        await clear.waitFor({ state: "detached" });
+        await untranslated(page, lang);
+        assert.deepEqual(await wide(page), { page: false, over: [] });
+        assert.deepEqual(errors, []);
+      });
+    }
+  }
+  test(`${engine}: a clear that fails says why and keeps the list`, async (t) => {
+    const { browser, page, errors, asked } = await open(engine, "en", 1100, summary, "", { clearFails: true });
+    t.after(() => browser.close());
+    const list = page.locator("#maskList");
+    await list.locator(".msk-row").first().waitFor();
+    await list.locator(".msk-foot .msk-clear").click();
+    await page.locator("dialog.action-confirm button.primary").click();
+    await until(() => asked.includes("clear POST"));
+    await page.locator("#status", { hasText: "permission denied" }).waitFor();
+    await list.locator(".msk-row").first().waitFor();
+    assert.equal(await list.locator(".msk-row").count(), 3, "every record still listed");
+    assert.deepEqual(errors, []);
+  });
 }

@@ -63,6 +63,7 @@ magpie group add "Opus anywhere" models=claude/claude-opus-5-5,copilot/claude-op
 magpie claude group/opus-anywhere               # 在多个订阅间自动切换
 magpie save work && magpie use work             # 方案
 magpie quota                                    # 每个套餐还剩多少
+magpie tool generate_image "一只喜鹊，水彩" -o hero.png   # 直接调用 magpie 的生图、识图、搜索工具
 magpie tui                                      # 全部功能，在终端里
 ```
 

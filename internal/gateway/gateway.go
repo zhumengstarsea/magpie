@@ -1540,19 +1540,19 @@ func (s *Server) handle(from provider.Protocol) http.HandlerFunc {
 		// Codex with magpie as its provider asks for a thread's title
 		// here (#743)
 		if from == provider.Responses {
-			if to := codexTitlesTo(r.Header, body, true); to != "" {
+			if to := codexTitlesTo(r.Header, body, true, nil); to != "" {
 				s.codexTitle(w, r, body, to)
 				return
 			}
-			if to := codexDescriptionsTo(r.Header, body, true); to != "" {
+			if to := codexDescriptionsTo(r.Header, body, true, nil); to != "" {
 				s.codexDescription(w, r, body, to)
 				return
 			}
-			if to := codexSummariesTo(r.Header, body, true); to != "" {
+			if to := codexSummariesTo(r.Header, body, true, nil); to != "" {
 				s.codexSummary(w, r, body, to)
 				return
 			}
-			if to := codexPredictionsTo(r.Header, body, true); to != "" {
+			if to := codexPredictionsTo(r.Header, body, true, nil); to != "" {
 				s.codexPrediction(w, r, body, to)
 				return
 			}
@@ -2003,6 +2003,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	ask := s.askClassifier
 	if r.Header.Get("User-Agent") == RouterAgent {
 		ask = nil
+	} else {
+		// a wait magpie knows of, before a route is begun (unrouted.go)
+		ask = askWaited(r.Context(), ask)
 	}
 	if isGroup && slices.ContainsFunc(ms, func(m provider.Member) bool {
 		return g.Ruled() || slices.ContainsFunc(m.Via, provider.Group.Ruled)
@@ -4571,6 +4574,10 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 		// a turn the client cut off before it said anything, which
 		// DeepSeek and Kimi turn every later request away for (#2599)
 		body = silentAssistantsOut(body)
+		// a call no tool message answers, or an answer to no call, which
+		// Kimi and OpenAI turn the whole request away for: what a fork
+		// at an earlier turn or a stopped reply leaves (Paidaixinbao on X)
+		body = toolPairsOut(body)
 		if mistral := p.Preset == "mistral" || p.Host() == "api.mistral.ai"; !mistral && (chatReplaysReasoning(buildHost(p), model) || chatReplaysReasoning(buildHost(p), upstream)) {
 			// a tool call the client kept no thinking for, which DeepSeek
 			// turns the whole request away for (#1462)
@@ -4911,6 +4918,7 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 			s.markUnfit(p.ID, f, proto)
 		}
 	}
+	offRetried := false
 	if e := bodyEffort(proto, body); res.StatusCode == http.StatusBadRequest && (e == "none" || e == "minimal" || proto == provider.Chat && hasReasoningDisabled(body)) {
 		// A model can refuse reasoning turned off. If it names its levels,
 		// or Gemini the level it hasn't, try its lowest, and from then on;
@@ -4927,14 +4935,34 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 				refused = levelRefused(model, e)
 			}
 			s.markUnfit(p.ID, refused, proto)
+			offRetried = true
 			if res, err = s.forward(r.Context(), p, proto, path, p.Prepare(withBodyEffort(proto, body, onEffort(p, model))), r.Header); err != nil {
 				return writeError(w, proto, 502, p.Name+": "+err.Error()), err.Error(), true
 			}
 		} else if proto == provider.Chat && mandatoryReasoning.Match(b) {
 			if nb, ok := withoutReasoningOff(body); ok {
+				offRetried = true
 				if res, err = s.forward(r.Context(), p, proto, path, p.Prepare(nb), r.Header); err != nil {
 					return writeError(w, proto, 502, p.Name+": "+err.Error()), err.Error(), true
 				}
+			}
+		}
+	}
+	if e := bodyEffort(proto, body); res.StatusCode == http.StatusBadRequest && proto != provider.Anthropic && !offRetried && (e == "" || offEffort(e)) {
+		// no reasoning effort, or none, turned away by a model that needs
+		// one (a Codex title on a model other than its own asks none,
+		// cybercaius on Discord): asked again once at its lowest, low
+		// where its levels aren't known. Only that refusal: any other 400
+		// goes back as it came
+		b, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+		res.Body.Close()
+		res.Body = io.NopCloser(bytes.NewReader(b))
+		if effortRequired.Match(b) {
+			if offEffort(e) {
+				s.markUnfit(p.ID, offRefused(model), proto)
+			}
+			if res, err = s.forward(r.Context(), p, proto, path, p.Prepare(withFixedEffort(proto, body, onEffort(p, model))), r.Header); err != nil {
+				return writeError(w, proto, 502, p.Name+": "+err.Error()), err.Error(), true
 			}
 		}
 	}
@@ -5722,6 +5750,18 @@ func (s *Server) forwardTranslated(ctx context.Context, p provider.Provider, to 
 				continue
 			}
 		}
+		if (req.Effort == "" || offEffort(req.Effort)) && beforeOff == nil && res.StatusCode == http.StatusBadRequest && effortRequired.Match(b) {
+			// no reasoning effort, or none, turned away by a model that
+			// needs one (a Codex title on a model other than its own
+			// asks none, cybercaius on Discord): asked again once at its
+			// lowest, low where its levels aren't known
+			if offEffort(req.Effort) {
+				s.markUnfit(p.ID, offRefused(model), to)
+			}
+			r := *req
+			r.Effort, req = onEffort(p, model), &r
+			continue
+		}
 		if req.OwnEffort {
 			if refused, value := ownEffortRefused(res.StatusCode, b, req.Effort); refused {
 				// the effort magpie added for auto mode's classifier
@@ -5826,6 +5866,14 @@ func (s *Server) forwardTranslated(ctx context.Context, p provider.Provider, to 
 // /v1/chat/completions. To use function tools, use /v1/responses or set
 // reasoning_effort to 'none'.").
 var toolsWithoutEffort = regexp.MustCompile(`(?is)tools with reasoning_effort are not supported.*reasoning_effort to .?none`)
+
+// effortRequired is an upstream turning a request away for asking no
+// reasoning effort, or none, from a model that needs one: "reasoning
+// effort is required", "missing required parameter: reasoning.effort",
+// "this model requires a reasoning effort", "reasoning cannot be
+// disabled". A refusal of a level the model hasn't, or of the field
+// itself, is not one.
+var effortRequired = regexp.MustCompile(`(?i)reasoning[ _.]?effort\W+(?:is\s+)?(?:required|mandatory|missing)\b|(?:missing|requires?|needs?)\s+(?:a\s+|the\s+)?(?:required\s+)?(?:parameter\W+)?reasoning(?:[ _.]?effort)?\b|reasoning\s+is\s+(?:required|mandatory)\b|reasoning\W+(?:cannot|can't|can not)\s+be\s+(?:disabled|turned off)`)
 
 // OpenRouter rejects an explicit reasoning-off request for some endpoints.
 var mandatoryReasoning = regexp.MustCompile(`(?i)reasoning is mandatory for this endpoint and cannot be disabled`)
@@ -6456,19 +6504,20 @@ func parse(proto provider.Protocol, body []byte) (*Request, error) {
 	return parseIn(proto, body, false)
 }
 
-// parseIn is parse, for facts only as readResponses says.
+// parseIn is parse, for facts only as readResponses, readChat and
+// readAnthropic say.
 func parseIn(proto provider.Protocol, body []byte, facts bool) (*Request, error) {
 	var req *Request
 	var err error
 	switch proto {
 	case provider.Chat:
-		req, err = parseChat(body)
+		req, err = readChat(body, facts)
 	case provider.Responses:
 		req, err = readResponses(body, facts)
 	case provider.Gemini:
 		req, err = parseGemini(body)
 	default:
-		req, err = parseAnthropic(body)
+		req, err = readAnthropic(body, false, facts)
 	}
 	if err != nil {
 		return nil, err

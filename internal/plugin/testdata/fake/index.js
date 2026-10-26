@@ -268,7 +268,7 @@ export const FakePlugin = async ({ client }) => ({
               case "ck-throw":
                 throw new Error("FakeCo's check-in is down")
               case "ck-odd":
-                return { outcome: "yes" }
+                return { outcome: "yes", message: "the daily credits were refreshed" }
             }
             return { outcome: "inactive" }
           },

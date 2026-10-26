@@ -64,6 +64,10 @@ function routingPage(part) {
   const wires = document.createElementNS(NS, "svg");
   wires.setAttribute("class", "rt-wires");
   wires.setAttribute("aria-hidden", "true");
+  // the wires flowing, drawn over the rest in an svg of their own (flowNear)
+  const flows = document.createElementNS(NS, "svg");
+  flows.setAttribute("class", "rt-flows");
+  flows.setAttribute("aria-hidden", "true");
   const srcs = el("div", "rt-srcs"); // an agent's node each
   const hub = el("div", "rt-node rt-hub");
   const logo = document.createElementNS(NS, "svg");
@@ -77,7 +81,7 @@ function routingPage(part) {
   const sky = document.createElementNS(NS, "svg");
   sky.setAttribute("class", "rt-sky");
   sky.setAttribute("aria-hidden", "true");
-  stage.append(wires, srcs, hub, list, sky);
+  stage.append(wires, flows, srcs, hub, list, sky);
   const foot = el("div", "rt-foot");
   const cap = el("p", "rt-cap");
   cap.setAttribute("aria-live", "polite");
@@ -303,6 +307,9 @@ function routingPage(part) {
 
   const path = () => { const p = document.createElementNS(NS, "path"); wires.appendChild(p); return p; };
   const setText = (e, s) => { if (e.textContent !== s) e.textContent = s; };
+  // setAttr: an attribute written only when it changes, as setText: the
+  // list's head is told again on every trace answer (#3731)
+  const setAttr = (e, k, v) => { if (e.getAttribute(k) !== v) e.setAttribute(k, v); };
   const tick = (e) => { e.classList.remove("tick"); void e.offsetWidth; e.classList.add("tick"); };
 
   // ---------- words ----------
@@ -1500,13 +1507,16 @@ function routingPage(part) {
   // sight (dashFor). Nothing is laid out for it: where the
   // stage and what is in sight were is kept by layout, which reads them
   // anyway (sight), and the view's scroll since by its scroll events.
-  // Reading them here laid the stage out again after each update
+  // Reading them here laid the stage out again after each update.
+  // Each is drawn by a copy in flows, a layer of its own, and itself hidden:
+  // in the svg of every wire, Chromium (WebView2) drew all 800 again on the
+  // GPU each frame one flowed, 31 fps with both groups open (#3164)
   const flowing = new Map();
   let flowAsked = 0, sight = null, scrolled = 0;
   const flowSoon = () => { if (!flowAsked) flowAsked = requestAnimationFrame(() => { flowAsked = 0; flowNear(); }); };
   function flowNear() {
     const live = new Set([...wires.querySelectorAll("path.live[d]")].filter((p) => !p.classList.contains("rest")));
-    for (const p of flowing.keys()) if (!live.has(p)) { p.style.removeProperty("stroke-dasharray"); flowing.delete(p); }
+    for (const [p, f] of flowing) if (!live.has(p)) { f.copy.remove(); p.classList.remove("flown"); flowing.delete(p); }
     if (!live.size || !sight) return;
     // in the stage's own terms, a screen more each way, in steps of 200px
     // so a scroll redashes a wire only now and then
@@ -1515,14 +1525,18 @@ function routingPage(part) {
     for (const p of live) {
       // the same wire with the same in sight is dashed as it was: this is
       // asked after every update
-      const d = p.getAttribute("d"), key = `${d}|${top}|${bottom}`;
-      if (flowing.get(p)?.key === key) continue;
+      const d = p.getAttribute("d"), hue = p.style.getPropertyValue("--agent"), key = `${d}|${hue}|${top}|${bottom}`;
+      let f = flowing.get(p);
+      if (f?.key === key) continue;
+      if (!f) { f = { copy: document.createElementNS(NS, "path"), dash: "" }; flows.appendChild(f.copy); flowing.set(p, f); p.classList.add("flown"); }
+      f.key = key;
+      if (f.copy.getAttribute("d") !== d) f.copy.setAttribute("d", d);
+      if (hue) f.copy.style.setProperty("--agent", hue); else f.copy.style.removeProperty("--agent");
       const dash = dashFor(d, top, bottom);
-      const was = flowing.get(p)?.dash;
-      flowing.set(p, { key, dash });
-      if (was === dash) continue;
-      if (dash) p.style.setProperty("stroke-dasharray", dash);
-      else p.style.removeProperty("stroke-dasharray");
+      if (f.dash === dash) continue;
+      f.dash = dash;
+      if (dash) f.copy.style.setProperty("stroke-dasharray", dash);
+      else f.copy.style.removeProperty("stroke-dasharray");
     }
   }
   // dashFor is a wire's dashes from top to bottom, measured from its d,
@@ -1716,8 +1730,8 @@ function routingPage(part) {
       if (isKey(e) && e.firstElementChild?.checkVisibility?.({ contentVisibilityAuto: true })) usual.set(nobar, x.b - x.t);
     }
     sight = { at: r.top, scroll: scrolled, lo: Math.max(0, v.top), hi: Math.min(innerHeight, v.bottom) };
-    wires.setAttribute("viewBox", `0 0 ${r.width} ${r.height}`);
-    sky.setAttribute("viewBox", `0 0 ${r.width} ${r.height}`);
+    const box = `0 0 ${r.width} ${r.height}`;
+    for (const svg of [wires, flows, sky]) if (svg.getAttribute("viewBox") !== box) svg.setAttribute("viewBox", box);
     for (const [p, d] of sets) {
       if (d === null) { if (p.hasAttribute("d")) p.removeAttribute("d"); }
       else if (p.getAttribute("d") !== d) p.setAttribute("d", d);
@@ -2035,14 +2049,16 @@ function routingPage(part) {
     for (const id of ags) {
       const a = agents.get(id), r = rs.filter((x) => x.agent === id).pop(), ag = agentOf(id);
       if (a.icon !== (ag?.icon || "generic")) { a.icon = ag?.icon || "generic"; a.ic.replaceChildren(icon(a.icon)); }
-      a.name.textContent = agentName(id);
+      setText(a.name, agentName(id));
       // one agent working in more than one folder at once: which, by
       // their last level (#1068). The stage holds an agent's latest
       // request alone, so its others still going, or just done, count too.
       const n = now(), going = pinned ? [] : [...src().values()].filter((x) => x.agent === id && (!x.done || at(x.time) + (x.ms || 0) > n - LINGER));
       const fs = foldersOf([...new Set([...going, ...rs.filter((x) => x.agent === id)])].sort((x, y) => x.id - y.id));
-      a.sub.textContent = fs.length > 1 ? fs.map(lastLevel).join(", ") : r.model;
-      a.node.title = [agentName(id), r.model, ...fs.map((f) => t("Folder") + ": " + f)].join("\n");
+      // told again every second (countdown): only what changed is written
+      setText(a.sub, fs.length > 1 ? fs.map(lastLevel).join(", ") : r.model);
+      const tip = [agentName(id), r.model, ...fs.map((f) => t("Folder") + ": " + f)].join("\n");
+      if (a.node.title !== tip) a.node.title = tip;
     }
     // the account sets, the latest of each
     const latest = new Map();
@@ -2176,11 +2192,11 @@ function routingPage(part) {
     chip.hidden = lone;
     goTo(chip, g ? "group:" + g.id : pool ? "pool:" + f.provider : "", g ? g.name : f?.name || r.provider);
     hubText();
-    what.replaceChildren(el("b", "", g ? g.name : f?.name || r.provider),
-      el("span", "", (g ? " · " + t("routing group") : "") + " · " + t(on === 1 ? "one on" : "{n} on", { n: on })
-        + (many > 1 ? " · " + t("{n} agents at once", { n: many }) : "")));
+    const name = g ? g.name : f?.name || r.provider, tail = (g ? " · " + t("routing group") : "") + " · " + t(on === 1 ? "one on" : "{n} on", { n: on })
+      + (many > 1 ? " · " + t("{n} agents at once", { n: many }) : "");
+    if (what.childElementCount !== 2 || what.firstChild.textContent !== name || what.lastChild.textContent !== tail) what.replaceChildren(el("b", "", name), el("span", "", tail));
     // keys that read their own windows are weighed as accounts are
-    mode.textContent = lone ? t(LONE) : g && routing === "order" ? t(GROUP_ORDER) : g && routing === "weight" ? t(GROUP_WEIGHT) : t(!routing && f?.kind === "key" && !r.order.some((x) => x.known) && !g ? KEYS_SMART : m[1]);
+    setText(mode, lone ? t(LONE) : g && routing === "order" ? t(GROUP_ORDER) : g && routing === "weight" ? t(GROUP_WEIGHT) : t(!routing && f?.kind === "key" && !r.order.some((x) => x.known) && !g ? KEYS_SMART : m[1]));
   }
   // goTo makes what names a routing a way to where it is set: a provider's
   // own under Several accounts or keys, a group's its card
@@ -2872,10 +2888,10 @@ function routingPage(part) {
       errors: done.filter(failedRoute).length,
     } : traceTotals;
     [counts.requests, counts.rerouted, counts.errors].forEach((n, i) => setText(statB[i], String(n)));
-    stats.title = t(scoped ? "Counts for the requests in this list" : "Counts since the gateway started");
+    setAttr(stats, "title", t(scoped ? "Counts for the requests in this list" : "Counts since the gateway started"));
     const failed = rs.some(failedRoute), btn = statB[2].parentElement;
-    btn.setAttribute("aria-disabled", String(!failed));
-    btn.title = t(failed ? "Show the latest request that failed" : "No failed request in this list");
+    setAttr(btn, "aria-disabled", String(!failed));
+    setAttr(btn, "title", t(failed ? "Show the latest request that failed" : "No failed request in this list"));
   }
   // Follow the newest matching request unless the reader picked one still in
   // this list. Stop old flights before the scope changes, including replays.
@@ -3111,14 +3127,14 @@ function routingPage(part) {
     purposeTools.hidden = opts.length < 2 && !purpose.length;
     purposeTools.classList.toggle("set", !!purpose.length);
     purposeClear.hidden = !purpose.length;
-    purposeClear.title = t("Clear filter");
-    purposeClear.setAttribute("aria-label", t("Clear filter"));
+    setAttr(purposeClear, "title", t("Clear filter"));
+    setAttr(purposeClear, "aria-label", t("Clear filter"));
     const label = purpose.length ? t("Purpose: {name}", { name: selected.map((o) => o.name).join(", ") }) : t("Purpose filter");
     setText(purposeLabel, label);
-    purposePick.setAttribute("aria-label", label);
-    purposePick.title = t("Filter routing by purpose") + (purpose.length ? "\n" + label : "");
+    setAttr(purposePick, "aria-label", label);
+    setAttr(purposePick, "title", t("Filter routing by purpose") + (purpose.length ? "\n" + label : ""));
     setText(metricLabel, t("Metrics"));
-    metricPick.title = t("Metrics to show");
+    setAttr(metricPick, "title", t("Metrics to show"));
     purposePick.onclick = (e) => {
       e.stopPropagation();
       if (purposePick.classList.contains("open")) return closeProtoMenu();
@@ -3140,7 +3156,7 @@ function routingPage(part) {
     groupButtons.forEach((b, i) => {
       setText(b, t(b.dataset.label));
       b.classList.toggle("on", bySession === !!i);
-      b.setAttribute("aria-pressed", String(bySession === !!i));
+      setAttr(b, "aria-pressed", String(bySession === !!i));
     });
     groupBar.hidden = !rs.length;
     if (!reqs.style.maxHeight) requestAnimationFrame(fitReqs); // first shown
@@ -3211,10 +3227,21 @@ function routingPage(part) {
     const sel = String(pinned ? pinned.id === r.id : cur?.id === r.id);
     const { said, how, tr, ag, meta, metrics, title, sig } = rowSays(r);
     let x = reqRows.get(r.id);
-    if (!x || x.sig !== sig) {
+    if (!x) {
       const row = x = { sig, b: reqRow(r, said, how, tr, ag, meta, metrics, title) };
       row.b.onclick = () => pick(row.r); // the request as it is when clicked
       reqRows.set(r.id, x);
+      rowsMoved = true;
+    } else if (x.sig !== sig) {
+      // a request still going says something new on each trace answer,
+      // 4 to 8 a second under traffic: its row made again each time put
+      // its pulse in afresh, so the list flashed and jumped as long as
+      // requests came (#3731, gpboyer2). Patched in place, as Context's
+      // card is, only what it says changes.
+      x.sig = sig;
+      const neu = reqRow(r, said, how, tr, ag, meta, metrics, title);
+      neu.setAttribute("aria-pressed", sel);
+      morphRow(x.b, neu);
       rowsMoved = true;
     }
     x.r = r;
@@ -3376,6 +3403,18 @@ function routingPage(part) {
   };
   reqs.addEventListener("scroll", redrawList, { passive: true });
   new ResizeObserver(redrawList).observe(reqs);
+  // morphRow makes old what neu is, keeping old's nodes wherever they are
+  // of the same kind (context.js's morph); a row's handler is its own,
+  // set once on old
+  function morphRow(old, neu) {
+    if (old.nodeName !== neu.nodeName || (old.nodeType !== 1 && old.nodeType !== 3)) { old.replaceWith(neu); return; }
+    if (old.nodeType === 3) { if (old.data !== neu.data) old.data = neu.data; return; }
+    for (const a of [...old.attributes]) if (!neu.hasAttribute(a.name)) old.removeAttribute(a.name);
+    for (const a of neu.attributes) if (old.getAttribute(a.name) !== a.value) old.setAttribute(a.name, a.value);
+    const was = [...old.childNodes], kids = [...neu.childNodes];
+    kids.forEach((k, i) => { if (i < was.length) morphRow(was[i], k); else old.append(k); });
+    for (let i = kids.length; i < was.length; i++) was[i].remove();
+  }
   function reqRow(r, said, how, tr, ag, meta, metrics, title) {
     const b = el("button", "rt-req " + how);
     const when = el("span", "at", rowClock(r.time));
@@ -4051,8 +4090,8 @@ function routingPage(part) {
     };
     if (!total) return;
     const d = e * total, pt = point(d);
-    tr.dot.setAttribute("cx", pt.x);
-    tr.dot.setAttribute("cy", pt.y);
+    setAttr(tr.dot, "cx", String(pt.x));
+    setAttr(tr.dot, "cy", String(pt.y));
     tr.dot.removeAttribute("visibility");
     const b = tr.bird;
     if (!b) return;
@@ -4314,7 +4353,7 @@ function routingPage(part) {
       ? t("{serves} (pid {pid}) is routing", { serves: by.serves, pid: by.pid }) + " · "
       : "";
     setText(hubSub, who + ((g?.url || "").replace(/^https?:\/\//, "") || t("gateway")));
-    hubSub.title = who ? hubSub.textContent : ""; // whole, where the node cuts it short
+    setAttr(hubSub, "title", who ? hubSub.textContent : ""); // whole, where the node cuts it short
   }
 
   // labels in the page's language, and again when it changes
