@@ -8,7 +8,7 @@
 
 **Claude Code 跑 Kimi，Codex 跑 DeepSeek，Gemini CLI 跑 GLM，OpenCode 用你的 ChatGPT 订阅。**<br>
 在菜单栏一点就能切换。所有 Agent 共用一个本地网关，<br>
-额度用完时，它会悄悄切到下一个账号。
+额度用完时，它会悄悄切到你的下一个账号。
 
 [![Release](https://img.shields.io/github/v/release/zhumengstarsea/magpie?label=release&color=111111)](https://github.com/zhumengstarsea/magpie/releases/latest) [![Stars](https://img.shields.io/github/stars/yetone/magpie?style=flat&color=111111)](https://github.com/yetone/magpie/stargazers) [![License](https://img.shields.io/badge/license-MIT-111111)](LICENSE)<br>
 ![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white) ![Windows](https://img.shields.io/badge/Windows-0078D4?logo=windows&logoColor=white) ![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black) ![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white) ![Termux](https://img.shields.io/badge/Termux-000000?logo=android&logoColor=white)
@@ -36,8 +36,8 @@
 
 - **任意 Agent 用任意模型**，在一张表里选。magpie 只改 Agent 配置里该改的那一个键。
 - **一个 provider 处处能用**：API key、本地模型，或者你登录着的 Claude、ChatGPT、Copilot、Gemini、Grok 订阅。
-- **额度用完也不断**：路由组自动切到下一个账号或模型，Agent 看不到报错。
-- **密钥不出你的电脑**：提示词里的密钥、密码、邮箱，在请求离开电脑前就在本地脱敏，回复里再换回原值。
+- **额度用完也不断**：同一个服务商的下一个账号自动接上，路由组还能换到别的模型或服务商，Agent 看不到报错。只有一个账号又没建路由组时，没有可换的，报错会原样回给 Agent。
+- **密钥不出你的电脑**：在 **设置 → 隐私** 打开脱敏后（默认关闭），提示词里的密钥、密码、邮箱，在请求离开电脑前就在本地脱敏，回复里再换回原值。
 
 如果你用不止一个 Agent、不止一个 provider 或不止一个账号，它就适合你。如果你只用一个 Agent、只用它自家的订阅，而且够用，那就不需要 magpie。
 
@@ -137,7 +137,7 @@ Agent 会把读到的东西放进提示词：一个 `.env`、一份配置、一�
 | **看得见** | **观测 › 脱敏** 列出它改过的每个请求，厂商实际收到了什么，左右对照；设置里的 **试一试** 能看一段文字会变成什么 |
 | **你说了算** | 机密和个人信息各自开关，更细的类型（护照、IBAN、MAC、公网 IP…），自己的词和规则，以及找到值后是 **脱敏**、只 **提醒**，还是 **拦截** |
 
-代价：模型看到的是 `{{API_KEY_…}}` 而不是 key，所以针对值本身的任务（比如这个 token 为什么被拒）没法做，这类值可以加进 **从不脱敏**。规则偶尔会判错，在脱敏页一眼就能看到。在 **设置 → 隐私** 里打开。
+代价：模型看到的是 `{{API_KEY_…}}` 而不是 key，所以针对值本身的任务（比如这个 token 为什么被拒）没法做，这类值可以加进 **从不脱敏**。规则偶尔会判错，在脱敏页一眼就能看到。默认关闭，在 **设置 → 隐私** 里打开。专门留作示例的域名（`example.com`、`.test`、`.invalid`）下的邮箱不会脱敏。
 
 ### Provider
 

@@ -180,7 +180,7 @@ func TestKeepFreshFollowsPluginsYml(t *testing.T) {
 	keep := func(every time.Duration) (stop func()) {
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
-		go func() { KeepFresh(ctx, every); close(done) }()
+		go func() { KeepFresh(ctx, func() time.Duration { return every }); close(done) }()
 		return func() { cancel(); <-done }
 	}
 	stop := keep(10 * time.Millisecond)

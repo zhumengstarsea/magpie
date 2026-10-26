@@ -63,7 +63,7 @@ func readFacts(proto provider.Protocol, body []byte) bodyFacts {
 	if f := factsParsed.Load(); f != nil {
 		(*f)(body)
 	}
-	req, err := parse(proto, body)
+	req, err := parseIn(proto, body, true)
 	if err != nil {
 		return bodyFacts{}
 	}

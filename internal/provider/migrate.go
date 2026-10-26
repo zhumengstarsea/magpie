@@ -339,7 +339,14 @@ type MoveCandidate struct {
 }
 
 // MoveCandidates are the built-ins not on their plugins that have accounts
-// to move, by name.
+// to move, by name. One whose plugin the user removed (MoveRemoved) is
+// none: its accounts moved already and are kept with the plugin's sign-ins,
+// and installing the plugin again gives it back (HandOver), as MoveRetiring
+// and HandOver leave it too. A login row of the built-in's left behind kept
+// it here, so the Providers page's line said its accounts "haven't moved
+// yet" for good, with a Move that would install the plugin the user had
+// just removed (plugins#404: Grok, after the plugin, the provider and its
+// sign-ins were removed; #3542: ZCode).
 func MoveCandidates() []MoveCandidate {
 	if settings.AccountDiscoveryOff() {
 		return nil
@@ -347,6 +354,9 @@ func MoveCandidates() []MoveCandidate {
 	out := []MoveCandidate{}
 	for id, mv := range movers {
 		if Moved(id) {
+			continue
+		}
+		if m, ok := MigrationOf(id); ok && m.State == MoveRemoved {
 			continue
 		}
 		if accts, err := mv.out(); err == nil && len(accts) > 0 {

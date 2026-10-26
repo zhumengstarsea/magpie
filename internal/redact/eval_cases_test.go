@@ -246,6 +246,53 @@ var evalCases = []evalCase{
 		Mask: []evalValue{{V: "王小明", Kind: "PERSON"}, {V: "李华", Kind: "PERSON"}},
 		Keep: []evalValue{{V: "先生", Kind: "PERSON"}, {V: "老师", Kind: "PERSON"}},
 	},
+	// from Claude Code sessions, after a reporter found most of the
+	// model's finds wrong (10-26); the shapes are theirs, the values made up
+	{
+		ID: "metric-decimals", From: "x-tearicerice",
+		Text: "2026-10-21T08:10:00Z 2984.517203648091\n2026-10-21T08:20:00Z 1.0833333333333333\n2026-10-21T08:30:00Z 101.47368421052631",
+		Keep: []evalValue{{V: "2984.517203648091", Kind: "PHONE"}, {V: "1.0833333333333333", Kind: "PHONE"}, {V: "101.47368421052631", Kind: "PHONE"}},
+	},
+	{
+		ID: "run-ids", From: "x-tearicerice",
+		Text: "Someone ran Deploy by hand ([run 48213097715](https://github.com/acme/web/actions/runs/48213097715)).\n$ env -u GH_TOKEN -u GITHUB_TOKEN gh run view 48213097716 --log | tail\n15:17:29Z fleet run 48213097716",
+		Keep: []evalValue{{V: "run 48213097715", Kind: "PHONE"}, {V: "48213097716", Kind: "SECRET"}},
+	},
+	{
+		ID: "background-tasks", From: "x-tearicerice",
+		Text: "Command running in background with ID: kq3m8zx2t. Output is being written to: /private/tmp/claude-501/tasks/kq3m8zx2t.output\nThe command ran past its timeout and was moved to the background (ID: bv7n2wq5p).\n<task-notification>\n<task-id>kq3m8zx2t</task-id>",
+		Keep: []evalValue{{V: "kq3m8zx2t", Kind: "SECRET"}, {V: "bv7n2wq5p", Kind: "SECRET"}},
+	},
+	{
+		ID: "model-names", From: "x-tearicerice",
+		Text: "{'api_provider': 'openai', 'status': '404', 'litellm_model_name': 'qwen/qwen3-30b-a3b-instruct-2507'} 2.1\n{'api_provider': 'None', 'litellm_model_name': 'qwen/qwen3-vl-32b-instruct'} 1.0\n$ grep -n 'qwen3-max\\b\\|qwen/qwen3-14b' usage.log",
+		Keep: []evalValue{{V: "qwen/qwen3-30b-a3b-instruct-2507", Kind: "SECRET"}, {V: "qwen/qwen3-vl-32b-instruct", Kind: "SECRET"}, {V: `qwen3-max\b\|qwen/qwen3-14b`, Kind: "SECRET"}},
+	},
+	{
+		ID: "ls-files", From: "x-tearicerice",
+		Text: "-rwxr-xr-x@  1 sam  staff   690 Aug 20 19:58 make-icons.sh\n-rw-r--r--@  1 sam  staff  1204 Aug 21 09:02 notes-old.md",
+		Keep: []evalValue{{V: "make-icons.sh", Kind: "SECRET"}, {V: "notes-old.md", Kind: "SECRET"}},
+	},
+	{
+		ID: "gateway-ids", From: "x-tearicerice",
+		Text: `{"stream":true,"gatewayRequestId":"req_gateway_7c41e09a5bd2f3687e1a90c4","ledgerId":"gl_Wq7rTb2xNe5YpLaZ"}` + "\n- tb_Ra4Kp9Lm-ZqT2wXy_8Hs, $1.61: release about 17:05Z",
+		Keep: []evalValue{{V: "req_gateway_7c41e09a5bd2f3687e1a90c4", Kind: "SECRET"}, {V: "gl_Wq7rTb2xNe5YpLaZ", Kind: "SECRET"}, {V: "tb_Ra4Kp9Lm-ZqT2wXy_8Hs", Kind: "SECRET"}, {V: "release about 17:05Z", Kind: "SECRET"}},
+	},
+	{
+		ID: "transcript-path", From: "x-tearicerice",
+		Text: "read the full transcript at: /Users/sam/.claude/projects/-Users-sam-work-acme-web/5c0d2e1f-7a4b-4c3d-9e8f-0a1b2c3d4e5f.jsonl\nContinue the conversation",
+		Keep: []evalValue{{V: "Users-sam-work-acme-web/5c0d2e1f-7a4b-4c3d-9e8f-0a1b2c3d4e5f.jsonl", Kind: "ADDRESS"}},
+	},
+	{
+		ID: "pr-checks", From: "x-tearicerice",
+		Text: "CodeRabbit\tpending\t0\t\tReview in progress\nGreptile Review\tpending\t0\thttps://app.greptile.com/review/3860\nCI\tpass\t4m12s\n" + `{"region":"us-east-1","edge":"eu.stg.acme.io","monitored":false}`,
+		Keep: []evalValue{{V: "CodeRabbit", Kind: "PERSON"}, {V: "Greptile", Kind: "PERSON"}, {V: "CI", Kind: "PERSON"}, {V: "eu.stg.acme.io", Kind: "EMAIL"}},
+	},
+	{
+		ID: "team-notes", From: "x-tearicerice",
+		Text: "The 14:55Z errors came from our own org; Dana Whitfield is the lead if this turns out to be a settlement failure, and Priya wants it fixed first.",
+		Mask: []evalValue{{V: "Dana Whitfield", Kind: "PERSON"}, {V: "Priya", Kind: "PERSON"}},
+	},
 
 	// ---- what masking is for --------------------------------------------
 	{

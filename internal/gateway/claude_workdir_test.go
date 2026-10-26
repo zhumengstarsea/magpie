@@ -20,14 +20,14 @@ import (
 // folder they should share.
 func claudeWorkDirs(t *testing.T, prepare func(work string)) (dirs []string, work string) {
 	t.Helper()
-	dirs, work, _, _ = claudeWorkDirsTold(t, prepare, func(string) string { return "rules" })
+	dirs, work, _, _, _ = claudeWorkDirsTold(t, prepare, func(string) string { return "rules" })
 	return dirs, work
 }
 
 // claudeWorkDirsTold is claudeWorkDirs with the caller's instructions
 // system gives, from the test's home; it gives the gateway too, and the
 // environment the runs had.
-func claudeWorkDirsTold(t *testing.T, prepare func(work string), system func(home string) string) (dirs []string, work string, s *Server, env string) {
+func claudeWorkDirsTold(t *testing.T, prepare func(work string), system func(home string) string) (dirs []string, work string, s *Server, env, told string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("a shell script stands in for Claude Code")
@@ -48,6 +48,7 @@ func claudeWorkDirsTold(t *testing.T, prepare func(work string), system func(hom
 pwd -P >> ` + dir + `/dirs
 env >> ` + dir + `/env
 while read -r line; do
+  echo "$line" >> ` + dir + `/told
   echo '{"type":"stream_event","event":{"type":"message_start","message":{"id":"m","model":"claude-sonnet-5","usage":{"input_tokens":1}}}}'
   echo '{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}}'
   echo '{"type":"stream_event","event":{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}}'
@@ -71,7 +72,8 @@ done
 	}
 	b, _ := os.ReadFile(filepath.Join(dir, "dirs"))
 	e, _ := os.ReadFile(filepath.Join(dir, "env"))
-	return strings.Fields(string(b)), evalSymlinks(work), s, string(e)
+	m, _ := os.ReadFile(filepath.Join(dir, "told"))
+	return strings.Fields(string(b)), evalSymlinks(work), s, string(e), string(m)
 }
 
 // Every run works in the same folder: Claude Code puts its working
@@ -142,7 +144,7 @@ func TestClaudeRunsInTheCallersWorkDir(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			var proj, old string
-			dirs, work, s, env := claudeWorkDirsTold(t, nil, func(home string) string {
+			dirs, work, s, env, told := claudeWorkDirsTold(t, nil, func(home string) string {
 				proj = filepath.Join(home, "proj")
 				if err := os.MkdirAll(proj, 0o755); err != nil {
 					t.Fatal(err)
@@ -176,22 +178,46 @@ func TestClaudeRunsInTheCallersWorkDir(t *testing.T) {
 			if !strings.Contains(env, "CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS=1") {
 				t.Fatal("Claude Code would add the repository's status to the prompt")
 			}
+			if strings.Contains(told, "every tool runs in") {
+				t.Fatalf("a run in the caller's own folder was told its environment is elsewhere: %s", told)
+			}
 		})
 	}
 }
 
 // A folder the caller names that isn't one here (a caller on another
 // computer), or isn't absolute, leaves the runs in magpie's own folder.
+// Claude Code's prompt then gives this computer's platform and folder, and
+// the caller's another's, so the run is told after the caller's
+// instructions that theirs is where the tools run (vv_nil on X: a Mac
+// client of a Linux gateway spent tool calls finding out which is real).
+// A caller that names no folder is told nothing more.
 func TestClaudeCallersWorkDirElsewhereIsNotUsed(t *testing.T) {
-	for _, said := range []string{
-		" - Primary working directory: /no/such/folder/here",
-		" - Primary working directory: relative/proj",
-		"<cwd>C:\\Users\\someone\\proj</cwd>",
-		"no folder named",
+	for _, c := range []struct {
+		said      string
+		elsewhere bool
+	}{
+		{" - Primary working directory: /no/such/folder/here", true},
+		{" - Primary working directory: relative/proj", true},
+		{"<cwd>C:\\Users\\someone\\proj</cwd>", true},
+		{"no folder named", false},
 	} {
-		dirs, work, _, _ := claudeWorkDirsTold(t, nil, func(string) string { return said })
+		dirs, work, _, _, told := claudeWorkDirsTold(t, nil, func(string) string { return c.said })
 		if len(dirs) != 2 || dirs[0] != work || dirs[1] != work {
-			t.Fatalf("%q: working directories %q, want %s", said, dirs, work)
+			t.Fatalf("%q: working directories %q, want %s", c.said, dirs, work)
+		}
+		if got := strings.Count(told, "every tool runs in"); got != 2*btoi(c.elsewhere) {
+			t.Fatalf("%q: told the environment is elsewhere in %d of 2 runs, want elsewhere=%v: %s", c.said, got, c.elsewhere, told)
+		}
+		if c.elsewhere && strings.Index(told, "every tool runs in") > strings.Index(told, "/external_system_instructions") {
+			t.Fatalf("%q: the note is not with the caller's instructions: %s", c.said, told)
 		}
 	}
+}
+
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }

@@ -139,7 +139,7 @@ func upgrade() {
 	if err := ensureServe(ctx); err != nil {
 		return
 	}
-	Stop()
+	stopWhenFree()
 	removeOld()
 }
 

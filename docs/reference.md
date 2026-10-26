@@ -141,7 +141,7 @@ line; agents connected to magpie lose it when it quits.
 | WorkBuddy AI | `~/.workbuddy-ai/models.json` (the international build) | provider (magpie's models in WorkBuddy AI's picker) |
 | CodeBuddy Code | `~/.codebuddy/models.json` (`$CODEBUDDY_CONFIG_DIR`), `settings.json` | model (magpie's models in its list; the session model) |
 | Raycast      | `~/.config/raycast/ai/providers.yaml` in the user's folder, on Mac and Windows | provider (a `magpie` entry in Raycast AI's Custom Providers, magpie's models in its model picker; Raycast Pro; the user's providers, `tools` and comments kept) |
-| Kiro Crew    | `~/.kiro/crew/config.json` (`$KIROCREW_HOME`; `config.local.json` over it is left alone) | provider, harness (`agent.acp_backend`, and `agent.member_acp_backend` for a harness that can dispatch: an agent already connected to magpie, so its models are magpie's; the user's value is put back on Disconnect) |
+| Kiro Crew    | `~/.kiro/crew/config.json` (`$KIROCREW_HOME`; `config.local.json` over it is left alone) | provider, harness (`agent.acp_backend`, and `agent.member_acp_backend` for a harness that can dispatch: an agent connected to magpie, so its models are magpie's: the one Crew is set to is connected along with it when it isn't yet, and disconnected with it again; the user's value is put back on Disconnect) |
 | OpenPencil   | `openpencil/settings.json` in the config folder: `~/Library/Application Support` (macOS), `$XDG_CONFIG_HOME` or `~/.config` (Linux), `%APPDATA%` (Windows) | provider (a `magpie` entry in its `builtin_agents`, magpie's models in its chat's model picker; the user's entries and settings kept; refused while OpenPencil runs, as it writes the file back when it quits) |
 | T3 Code      | `~/.t3/userdata/settings.json` (`$T3CODE_HOME/userdata`) | provider (a `magpie` provider instance on Claude Code, magpie's models as its custom models) |
 | OpenHanako   | `~/.hanako/provider-catalog.json` + `agents/<id>/config.yaml` (`$HANA_HOME`; its local API while it runs) | model (the primary agent's; magpie's models as a provider) |
@@ -2824,10 +2824,23 @@ MAGPIE_OTEL_ENABLED=true MAGPIE_OTEL_ENDPOINT=http://localhost:4318 magpie serve
   keeps them entire rather than cut at 256 KB. A long reply is written to a
   temporary file; a body too large for the collector is still refused.
 
-For Langfuse, use `https://<your-langfuse-host>/api/public/otel` as the base
-URL and `Authorization=Basic%20<base64(public-key:secret-key)>` as the header.
-Leave metrics off. This uses Langfuse's OTLP ingestion endpoint. For Langfuse
-v4, add the header `x-langfuse-ingestion-version=4` for real-time ingestion.
+For Langfuse, pick **Collector › Langfuse**, then the host (Cloud EU
+`https://cloud.langfuse.com`, Cloud US `https://us.cloud.langfuse.com`, or
+**Self-hosted** with your own address, which also takes another Langfuse
+Cloud region such as `https://jp.cloud.langfuse.com`) and the project's public
+and secret keys (Langfuse › Settings › API Keys). magpie saves them as the
+endpoint `<host>/api/public/otel` and the header
+`Authorization: Basic <base64(public-key:secret-key)>`, kept with the other
+OTLP headers (left out of a backup without keys). Nothing is saved until both
+keys are there. A first setup also adds `x-langfuse-ingestion-version: 4`
+(Langfuse's docs: without it, OTLP data can show up to 10 minutes late), turns
+metrics off, since Langfuse takes traces only, and turns export on. A Langfuse
+endpoint set up by hand opens in this view with its keys filled in, and
+changing a key or the host keeps every other header and the metrics and
+export choices as they were. Switching from another collector leaves that
+collector's headers behind. For `magpie serve`, the same values go in the
+environment: `MAGPIE_OTEL_ENDPOINT=https://cloud.langfuse.com/api/public/otel`
+and `MAGPIE_OTEL_HEADERS=Authorization=Basic%20<base64(public-key:secret-key)>,x-langfuse-ingestion-version=4`.
 
 Traces include agent, provider, model, token counts (including cache and
 reasoning), HTTP status, timing, and route ID. Attempts with the same route ID

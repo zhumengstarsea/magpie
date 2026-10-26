@@ -59,6 +59,8 @@
    layout). A row a 429 hit keeps its tag up over its top edge, which this
    would cut, so it is drawn whole */
 .rt-accts li:not(.hit) { content-visibility: auto; contain-intrinsic-size: auto var(--rt-row, 38px); }
+/* a run of keys far from sight, out of the list (client.js place, #3164) */
+.rt-accts li.rt-gap { display: block; padding: 0; border: 0; background: none; content-visibility: visible; contain: strict; pointer-events: none; }
 /* a group in the group: a heading its models hang from, set in under it */
 .rt-accts li.rt-sub { display: flex; align-items: center; gap: 7px; padding: 5px 10px; font-size: 12px; color: var(--muted); background: var(--card-2); border-style: dashed; }
 .rt-accts li.rt-sub.on { border-style: solid; border-color: var(--fg-2); color: var(--fg); }

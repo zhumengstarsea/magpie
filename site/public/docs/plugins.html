@@ -80,6 +80,7 @@
     <a href="#requests">Requests</a>
     <a href="#signin-state">Sign-in state</a>
     <a href="#usage">Usage</a>
+    <a href="#checkin">Check-in</a>
     <a href="#input">What a plugin is given</a>
     <a href="#ids">Provider ids</a>
     <a href="#test">Testing</a>
@@ -106,6 +107,7 @@
         <li><code>provider.models</code> lists the models one account has.</li>
         <li><code>auth.usage</code> says how much of the plan is used. It is magpie’s own hook, and OpenCode ignores it.</li>
         <li><code>auth.refresh</code> renews an account’s token before it runs out, once at a time. It is magpie’s own hook too.</li>
+        <li><code>auth.checkin</code> presses the vendor’s daily check-in for an account. It is magpie’s own hook too.</li>
       </ul>
       An agent can send in any API. The gateway translates the request into the API the model speaks (chat completions, Responses, Anthropic Messages or Gemini), hands it to the plugin’s <code>fetch</code>, and streams the answer back.</div>
 
@@ -363,7 +365,7 @@ magpie quota                             <span class="c"># acme · Pro · 5h 37%
     <p>If what failed was the sign-in, throw an error with <code>signIn: "expired"</code> on it. The account is then marked as needing a new sign-in (see <a href="#signin-state">Sign-in state</a>).</p>
 
     <h2 id="signin"><a class="anchor" href="#signin">Signing in</a></h2>
-    <p>The <code>auth</code> hook is <code>{ provider, methods, loader, usage?, refresh?, refreshLead?, icon?, maxConcurrency? }</code>. Each method is a way to sign in that the user can pick. In the app the methods are buttons; in a terminal, <code>magpie plugin login &lt;id&gt; [&lt;method&gt;]</code> asks which one.</p>
+    <p>The <code>auth</code> hook is <code>{ provider, methods, loader, usage?, refresh?, refreshLead?, checkin?, icon?, maxConcurrency? }</code>. Each method is a way to sign in that the user can pick. In the app the methods are buttons; in a terminal, <code>magpie plugin login &lt;id&gt; [&lt;method&gt;]</code> asks which one.</p>
     <h3>An API key</h3>
     <div class="code">
       <span class="lang">api method</span>
@@ -539,6 +541,32 @@ magpie quota                             <span class="c"># acme · Pro · 5h 37%
     </div>
     <p>Times are ISO strings or epoch numbers, in seconds or in milliseconds. Without <code>signIn</code>, an <code>error</code> that says to sign in again marks the account, and a clean read clears the mark.</p>
 
+    <h2 id="checkin"><a class="anchor" href="#checkin">Check-in</a></h2>
+    <p>A vendor that gives credits for a daily check-in can have the plugin press it with <code>auth.checkin</code>, magpie’s own hook (OpenCode ignores it). magpie runs it for each signed-in account once a Beijing day while the user has check-in on for the provider, and shows what came of it on the account’s Usage card and in Settings.</p>
+    <div class="code">
+      <span class="lang">auth hook</span>
+      <pre>auth: {
+  provider: <span class="s">"acme"</span>,
+  <span class="k">async</span> checkin(getAuth, provider) {
+    <span class="k">const</span> auth = <span class="k">await</span> getAuth()
+    <span class="k">const</span> r = <span class="k">await</span> claim(auth.access)
+    <span class="k">if</span> (r.already) <span class="k">return</span> { outcome: <span class="s">"done"</span> }
+    <span class="k">return</span> { outcome: <span class="s">"claimed"</span>, credit: r.points, streak: r.days, message: r.text }
+  },
+}</pre>
+    </div>
+    <p>It answers <code>{ outcome, credit?, streak?, message? }</code>:</p>
+    <div class="table-wrap"><table>
+      <tr><th><code>outcome</code></th><th>Meaning</th></tr>
+      <tr><td><code>claimed</code></td><td>Checked in now. <code>credit</code> is what it gave.</td></tr>
+      <tr><td><code>done</code></td><td>Checked in already today. A vendor that answers 2xx with nothing left to claim is <code>done</code>, not <code>failed</code>.</td></tr>
+      <tr><td><code>ineligible</code></td><td>The account can’t take part.</td></tr>
+      <tr><td><code>inactive</code></td><td>No check-in is running.</td></tr>
+      <tr><td><code>captcha</code></td><td>The vendor asks for a captcha. Never solve it: the user checks in in the vendor’s own app.</td></tr>
+      <tr><td><code>failed</code></td><td>It didn’t work. magpie asks again later that day.</td></tr>
+    </table></div>
+    <p><code>streak</code> is the days in a row, and <code>message</code> is shown as it is. A hook that throws, or answers no outcome above, is <code>failed</code>. It runs in the account’s scope, so a token it renews with <code>client.auth.set</code> is saved to that account.</p>
+
     <h2 id="input"><a class="anchor" href="#input">What a plugin is given</a></h2>
     <p>magpie hands a plugin what OpenCode’s <code>PluginInput</code> has, as far as it has meaning without an OpenCode server:</p>
     <div class="table-wrap"><table>
@@ -553,7 +581,7 @@ magpie quota                             <span class="c"># acme · Pro · 5h 37%
       <tr><td><code>$</code></td><td>Bun’s shell.</td></tr>
       <tr><td><code>serverUrl</code></td><td>A placeholder; no OpenCode server is behind it.</td></tr>
     </table></div>
-    <p>The hooks magpie calls are <code>config</code>, <code>auth</code> (its methods, <code>loader</code> and <code>usage</code>), <code>provider.models</code> and <code>chat.headers</code>. A plugin’s other hooks (<code>tool</code>, <code>event</code>, <code>chat.params</code>, …) are not called. The agent runs its own tools.</p>
+    <p>The hooks magpie calls are <code>config</code>, <code>auth</code> (its methods, <code>loader</code>, <code>usage</code>, <code>refresh</code> and <code>checkin</code>), <code>provider.models</code> and <code>chat.headers</code>. A plugin’s other hooks (<code>tool</code>, <code>event</code>, <code>chat.params</code>, …) are not called. The agent runs its own tools.</p>
 
     <h2 id="ids"><a class="anchor" href="#ids">Provider ids</a></h2>
     <ul>

@@ -547,6 +547,18 @@ computer. Otherwise, as for a caller elsewhere, a Windows path on a Mac,
 or no folder named, the run starts in the shared folder as before. A
 Claude Code in WSL always takes the shared folder.
 
+A run in the shared folder for a caller that names a folder
+(`Request.envElsewhere`) has Claude Code's prompt give this computer's
+platform, OS and the shared folder, and the caller's give another's. A
+model told both spent tool calls finding out which is real (vv_nil on X:
+a Mac client of a Linux gateway). Since every tool is the caller's,
+`renderClaudePrompt` ends the caller's instructions with
+`envElsewhereNote`: the environment they describe is where every tool
+runs, and goes before one given earlier. It names no app or vendor, since
+it goes upstream. A lean run (`claudeLeanPrompt`) and a caller that names
+no folder are not told it. Not measured: how many tool calls it saves on
+a real run.
+
 Nothing else of the folder reaches the run. `--setting-sources ""` loads
 no CLAUDE.md, settings or skills from it. Auto memory is off, and
 `CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS=1` keeps the repository's status out

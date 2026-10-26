@@ -408,6 +408,20 @@ func claudeWorkDir() (string, error) {
 // absolute path to a folder on this computer (a caller elsewhere). The
 // model's own words are not read: what it says is no caller's.
 func clientWorkDir(req *Request) string {
+	dir := clientNamedWorkDir(req)
+	if dir == "" || !filepath.IsAbs(dir) {
+		return ""
+	}
+	dir = filepath.Clean(dir)
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		return ""
+	}
+	return dir
+}
+
+// clientNamedWorkDir is the working directory the caller's instructions
+// name, as they write it, wherever it is; "" when they name none.
+func clientNamedWorkDir(req *Request) string {
 	texts := []string{req.System}
 	for _, m := range req.Messages {
 		if m.Role == "assistant" {
@@ -428,13 +442,6 @@ func clientWorkDir(req *Request) string {
 				}
 			}
 		}
-	}
-	if dir == "" || !filepath.IsAbs(dir) {
-		return ""
-	}
-	dir = filepath.Clean(dir)
-	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
-		return ""
 	}
 	return dir
 }
@@ -732,6 +739,7 @@ func (b *subscriptionBridge) startRun(ctx context.Context, req *Request, model, 
 	client := work != ""
 	if !client {
 		work, err = claudeWorkDir()
+		req.envElsewhere = clientNamedWorkDir(req) != ""
 	}
 	var sessions []string
 	switch {
@@ -2735,6 +2743,9 @@ func renderClaudePrompt(req *Request) ([]map[string]any, error) {
 			}
 		}
 		text.WriteString(system[pos:])
+		if req.envElsewhere {
+			text.WriteString(envElsewhereNote)
+		}
 		text.WriteString(toolChoiceAsk(req))
 		text.WriteString("\n</external_system_instructions>\n\n")
 		// The caller's instructions are a block of their own, marked for the
@@ -2827,6 +2838,15 @@ func renderClaudePrompt(req *Request) ([]map[string]any, error) {
 
 // toolChoiceAsk is the client's tool choice in words, which Claude Code
 // takes no flag for.
+// envElsewhereNote follows the caller's instructions when they name a
+// working directory the run is not in: Claude Code's own prompt then gives
+// the gateway's computer (its platform, OS and a temp folder), the caller's
+// gives the computer its tools run on, and a model told both spent tool
+// calls finding out which is real (vv_nil on X, a Mac client of a Linux
+// gateway). Every tool is the caller's, so the caller's is. It names no
+// app and no vendor: it goes to the vendor with the prompt.
+const envElsewhereNote = "\n\nThe environment these instructions describe (working directory, platform, OS, shell, git status) is the one every tool runs in. Where an environment given before them differs, go by these instructions; nothing has changed and there is no need to check."
+
 func toolChoiceAsk(req *Request) string {
 	switch {
 	case req.ToolChoice == "required":

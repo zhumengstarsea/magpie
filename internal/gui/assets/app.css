@@ -3390,6 +3390,8 @@ img.nav-ic { border-radius: 3px; object-fit: contain; }
 #otelList .otel-stacked > .val { width: 100%; max-width: none; margin-left: 0; }
 #otelList input.words { width: 100%; }
 #otelList .otel-stacked .segs { margin-left: 0; max-width: 100%; flex-wrap: wrap; }
+#otelList .otel-host, #otelList .otel-keys { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; width: 100%; }
+#otelList .otel-host > [hidden] { display: none; }
 #otelList .otel-env { padding: 12px 14px; border-top: 1px solid var(--line-2); font-size: 11.5px; color: var(--muted); }
 
 .session-terminal-select, .pref-pick { max-width: min(230px, 45%); height: 26px; color: var(--fg); }

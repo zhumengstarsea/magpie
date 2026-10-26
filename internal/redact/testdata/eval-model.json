@@ -32,6 +32,26 @@
 			}
 		]
 	},
+	"background-tasks": {
+		"text": "1a8c290d9137f372",
+		"found": [
+			{
+				"Start": 39,
+				"End": 48,
+				"Label": "secret"
+			},
+			{
+				"Start": 195,
+				"End": 204,
+				"Label": "private_person"
+			},
+			{
+				"Start": 236,
+				"End": 245,
+				"Label": "secret"
+			}
+		]
+	},
 	"base64-image": {
 		"text": "88418a5daf6d9b9a",
 		"found": []
@@ -199,6 +219,31 @@
 			}
 		]
 	},
+	"gateway-ids": {
+		"text": "e911ab18a1116ef5",
+		"found": [
+			{
+				"Start": 35,
+				"End": 82,
+				"Label": "secret"
+			},
+			{
+				"Start": 85,
+				"End": 104,
+				"Label": "secret"
+			},
+			{
+				"Start": 109,
+				"End": 132,
+				"Label": "secret"
+			},
+			{
+				"Start": 141,
+				"End": 161,
+				"Label": "secret"
+			}
+		]
+	},
 	"git-author": {
 		"text": "94a966005e2adee1",
 		"found": [
@@ -319,6 +364,91 @@
 			}
 		]
 	},
+	"ls-files": {
+		"text": "df52e0f6fb986b33",
+		"found": [
+			{
+				"Start": 0,
+				"End": 10,
+				"Label": "private_email"
+			},
+			{
+				"Start": 15,
+				"End": 18,
+				"Label": "private_person"
+			},
+			{
+				"Start": 59,
+				"End": 70,
+				"Label": "private_email"
+			},
+			{
+				"Start": 86,
+				"End": 90,
+				"Label": "private_address"
+			},
+			{
+				"Start": 91,
+				"End": 97,
+				"Label": "private_date"
+			}
+		]
+	},
+	"metric-decimals": {
+		"text": "36c335311d2812ab",
+		"found": [
+			{
+				"Start": 0,
+				"End": 19,
+				"Label": "private_date"
+			},
+			{
+				"Start": 21,
+				"End": 38,
+				"Label": "private_phone"
+			},
+			{
+				"Start": 39,
+				"End": 58,
+				"Label": "private_date"
+			},
+			{
+				"Start": 60,
+				"End": 78,
+				"Label": "private_phone"
+			},
+			{
+				"Start": 79,
+				"End": 98,
+				"Label": "private_date"
+			},
+			{
+				"Start": 100,
+				"End": 118,
+				"Label": "private_phone"
+			}
+		]
+	},
+	"model-names": {
+		"text": "1ddc9e9ff3476549",
+		"found": [
+			{
+				"Start": 67,
+				"End": 99,
+				"Label": "private_person"
+			},
+			{
+				"Start": 154,
+				"End": 180,
+				"Label": "private_person"
+			},
+			{
+				"Start": 198,
+				"End": 225,
+				"Label": "secret"
+			}
+		]
+	},
 	"noreply": {
 		"text": "271c7650b6474a19",
 		"found": []
@@ -357,6 +487,21 @@
 		"text": "96d207f1a0461a94",
 		"found": []
 	},
+	"pr-checks": {
+		"text": "e95e64e5f1c74ae9",
+		"found": [
+			{
+				"Start": 67,
+				"End": 103,
+				"Label": "private_url"
+			},
+			{
+				"Start": 148,
+				"End": 162,
+				"Label": "private_email"
+			}
+		]
+	},
 	"prose-password": {
 		"text": "b45e2539ee55a672",
 		"found": [
@@ -380,6 +525,26 @@
 	"retina-file": {
 		"text": "6210ece83f6b71ab",
 		"found": []
+	},
+	"run-ids": {
+		"text": "eb2807913ed4300b",
+		"found": [
+			{
+				"Start": 29,
+				"End": 44,
+				"Label": "private_person"
+			},
+			{
+				"Start": 46,
+				"End": 98,
+				"Label": "private_url"
+			},
+			{
+				"Start": 193,
+				"End": 204,
+				"Label": "private_phone"
+			}
+		]
 	},
 	"session-tokens": {
 		"text": "6170ea7af28ec9e2",
@@ -445,6 +610,21 @@
 				"Start": 43,
 				"End": 85,
 				"Label": "account_number"
+			}
+		]
+	},
+	"team-notes": {
+		"text": "6141f843b721d582",
+		"found": [
+			{
+				"Start": 41,
+				"End": 55,
+				"Label": "private_person"
+			},
+			{
+				"Start": 118,
+				"End": 123,
+				"Label": "private_person"
 			}
 		]
 	},
@@ -528,6 +708,16 @@
 			{
 				"Start": 105,
 				"End": 126,
+				"Label": "secret"
+			}
+		]
+	},
+	"transcript-path": {
+		"text": "28861a2d1fee2589",
+		"found": [
+			{
+				"Start": 82,
+				"End": 108,
 				"Label": "secret"
 			}
 		]

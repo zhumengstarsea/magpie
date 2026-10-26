@@ -124,6 +124,10 @@ How the store handles picks and names:
 - Re-adding a plugin under a new version or spec keeps its picks.
 - Remove, off, options and prefer find a plugin by its exact spec first, then by package name (`indexOf` in `store.go`). This way, acting on one plugin never reaches another plugin that has the same package name.
 
+## A plugin that is slow or stuck
+
+The host loads every plugin side by side (`loadPlugins` in [`host.js`](../../internal/plugin/host.js)) and gives each one `pluginLoadWait` (20s, [`host.go`](../../internal/plugin/host.go)) for its import and its plugin function, and each config hook as long. A plugin still loading then is told as not loaded ("the plugin's load didn't finish in 20s") and the host answers `init` with the rest; what it returns later is dropped until the host starts again. Hooks are still kept in the list's order. A listing (`providers`) asks every provider side by side too, and gives each models hook `pluginListWait` (20s, inside `refreshDeadline`'s 30s): one that hasn't answered is listed as fallen back with that as its `listError`, so magpie keeps the list it had, and that answer isn't kept for requests (`keepInfo`). Before, one plugin whose sign-in kept failing held every plugin after it until `init`'s two-minute deadline failed the whole host, and one stuck models hook failed the whole list (shualaitianduai on Discord). `TestStuckPluginLoadHoldsNoOther` and `TestStuckModelListHoldsNoOther` hold both.
+
 ## How ownership changes
 
 Migration records use five states:

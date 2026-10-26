@@ -1137,10 +1137,14 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 		writeJSON(rw, map[string]string{"icon": icon})
 	})
 	mux.HandleFunc("GET /api/icons/{name}", func(rw http.ResponseWriter, r *http.Request) {
-		f := provider.IconFile(r.PathValue("name"))
+		// a big picture comes scaled to what the window draws (#909)
+		f, ctype := provider.IconServed(r.PathValue("name"))
 		if f == "" {
 			http.NotFound(rw, r)
 			return
+		}
+		if ctype != "" {
+			rw.Header().Set("Content-Type", ctype)
 		}
 		// an SVG is only ever drawn as an image, never run
 		rw.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")

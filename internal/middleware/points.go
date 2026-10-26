@@ -35,6 +35,7 @@ import (
 
 	"github.com/Calcium-Ion/moejs"
 
+	"github.com/yetone/magpie/internal/beat"
 	"github.com/yetone/magpie/internal/filememo"
 	"github.com/yetone/magpie/internal/plugin"
 	"github.com/yetone/magpie/internal/routes"
@@ -413,14 +414,12 @@ func (o *observer) Serve() (stop func()) {
 		// a plugin turned on here is seen once saved (Written); every
 		// OthersEvery only catches one the CLI or a second magpie turned on
 		// (#3185: a 1s tick woke an idle magpie every second)
-		t := time.NewTicker(filememo.OthersEvery)
-		defer t.Stop()
 		for {
 			select {
 			case <-done:
 				return
 			case <-written:
-			case <-t.C:
+			case <-beat.Next(filememo.OthersEvery()):
 			}
 			written = filememo.Written()
 			o.refresh()

@@ -16,6 +16,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/yetone/magpie/internal/appdir"
+	"github.com/yetone/magpie/internal/beat"
 	"github.com/yetone/magpie/internal/filelock"
 	"github.com/yetone/magpie/internal/filememo"
 )
@@ -359,7 +360,7 @@ func Refresh() ([]Composed, error) {
 // `magpie plugin builtin` in another process may turn a plugin on or off,
 // and what a plugin registers with the gateway (an observer) follows
 // without a restart.
-func KeepFresh(ctx context.Context, every time.Duration, also ...string) {
+func KeepFresh(ctx context.Context, every func() time.Duration, also ...string) {
 	files := append([]string{Path()}, also...)
 	stamp := func() string {
 		var b strings.Builder
@@ -373,8 +374,6 @@ func KeepFresh(ctx context.Context, every time.Duration, also ...string) {
 		return b.String()
 	}
 	last := ""
-	tick := time.NewTicker(every)
-	defer tick.Stop()
 	for {
 		// taken before the look, so a write made during it isn't missed
 		written := filememo.Written()
@@ -389,7 +388,7 @@ func KeepFresh(ctx context.Context, every time.Duration, also ...string) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-tick.C:
+		case <-beat.Next(every()):
 		case <-written:
 		}
 	}

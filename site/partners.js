@@ -95,4 +95,19 @@ export const PARTNERS = [
     from: "2026-10-25T00:00:00+08:00",
     until: "2026-11-25T00:00:00+08:00",
   },
+  {
+    id: "corecode",
+    name: "CoreCode",
+    anthropic: "https://corecode.live",
+    keysUrl: "https://corecode.live/keys",
+    website: "https://corecode.live/",
+    iconUrl: "https://usemagpie.ai/img/partner-corecode.png",
+    notes: {
+      en: "Full-strength Claude, undiluted",
+      zh: "纯血 Claude，一滴不掺",
+      "zh-TW": "純血 Claude，一滴不摻",
+    },
+    from: "2026-10-26T00:00:00+08:00",
+    until: "2026-11-26T00:00:00+08:00",
+  },
 ];

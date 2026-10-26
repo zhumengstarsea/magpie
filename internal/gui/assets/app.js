@@ -3811,8 +3811,10 @@ const EXTRA_GLYPH = {
   [MEMORIES]: "M4.25 2.75h7.5v10.5h-7.5zM6.25 2.75v10.5M8.25 5.75h1.75M8.25 8h1.75",
 };
 // what Codex writes its memories with when none is set (codex-rs
-// model-provider: memory_consolidation_preferred_model, _extraction_)
-const MEMORIES_DEFAULT = "Codex's own: gpt-5.6-terra, threads summed up with gpt-5.6-luna";
+// model-provider: memory_consolidation_preferred_model, _extraction_), or
+// the session's when it is on magpie's (gateway codexFollowTo)
+const MEMORIES_DEFAULT = "Codex's own: gpt-5.6-terra/luna, or the session's magpie model";
+const SAME_SESSION = "Same as the session";
 function extraField(a, f) {
   if (f.key === "ultracode") return ultracodeToggle(a, f);
   const said = f.label === SUB_MODEL && codexSub(a) ? codexSubSaid(a, f) : null;
@@ -13938,12 +13940,11 @@ function accountCapPill(p, user, cap, direct) {
 }
 
 // An account's or key's limit on requests at once (#892): its own, else
-// the provider's Concurrency. The pill says it, and while requests are out
-// under it how many run and wait — the gateway's lanes, read again every
-// two seconds while a pill is shown (refreshLanes) — and opens the app's
-// menu: the provider's, none, a number, or one of the user's own.
+// the provider's Concurrency. The pill says it, and how many run and wait
+// (the lanes, read every 2s while one is in sight: refreshLanes), and opens
+// the app's menu: the provider's, none, a number, or the user's own.
 const LANE_LIMITS = [1, 2, 3, 5, 10];
-let lanesNow = {}, lanesRead = false;
+let lanesNow = {}, lanesRead = false, lanesTick;
 function laneOwnOf(p, ref) {
   const m = p?.accountConcurrency || {};
   const k = String(ref).toLowerCase();
@@ -13964,6 +13965,7 @@ function laneText(pill) {
   else if (limit) text = t("{n} at once", { n: limit });
   else text = t("No limit at once");
   if (pill.textContent !== text) pill.textContent = text;
+  lanesTick ||= setInterval(refreshLanes, 2e3);
   pill.classList.toggle("set", own != null || limit > 0);
   pill.classList.toggle("busy-lane", !!(limit && busy >= limit));
   pill.classList.toggle("queued", !!waiting);
@@ -14020,17 +14022,16 @@ function laneLimitPill(p, ref, who, name) {
   };
   return pill;
 }
-// refreshLanes reads the gateway's lanes again and rewrites the pills in
-// place: nothing is redrawn, so nothing moves under the reader.
+// refreshLanes rewrites the pills in place, so nothing moves; with none
+// in sight its tick stops (#3185) until one is drawn
 async function refreshLanes() {
-  if (document.hidden || view !== "providers" || !document.querySelector(".alane")) return;
+  if (document.hidden || view !== "providers" || !document.querySelector(".alane")) return lanesTick = clearInterval(lanesTick);
   let lanes;
   try { lanes = await api("lanes"); } catch { return; }
   lanesNow = lanes || {};
   lanesRead = true;
   for (const pill of document.querySelectorAll(".alane")) laneText(pill);
 }
-setInterval(refreshLanes, 2000);
 
 // A window reads as how much of it is used, or — as the vendors' own apps
 // show it — how much is left, the bar filling with that; one choice for
@@ -17401,7 +17402,7 @@ function panelQuotaCard(q) {
       return at <= Date.now() ? (i || w.members ? ringName(w) + " " : "") + resetText(at)
         : i || w.members ? ringName(w) + " " + resetClock(at) : resetText(at);
     }).join(" · ")
-    : t("Not used yet"));
+    : ws.some((w) => w.used > 0) ? "" : t("Not used yet"));
   // The first window's own pace as well, in the line already about its
   // deadline: the thin line under it has no room for what it only hints at,
   // and a card with no readings of that window has nothing to say (#2079).
@@ -19219,6 +19220,8 @@ async function loadSettings() {
 // went back to the old one when the read came in, the picker showing the
 // new).
 let prefsWrites = 0, prefsBusy = 0;
+// prefWrite: a Settings write of its own, the page drawn again either way
+function prefWrite(p) { return writingPrefs(p).then((ns) => { prefs = ns; renderSettings(); }).catch((e) => { status(t(e.message), "err"); renderSettings(); }); }
 async function writingPrefs(p) {
   prefsWrites++;
   prefsBusy++;
@@ -19602,7 +19605,7 @@ function renderSettings() {
   ]) $(row + " .who").title = t(en);
   // the system's record, set on its own, not with the other choices
   $("#loginSegs").replaceChildren(segs([["off", t("Off")], ["on", t("On")]], s.login ? "on" : "off", (v) =>
-    writingPrefs(api("settings/login", { on: v === "on" })).then((ns) => { prefs = ns; renderSettings(); }).catch((e) => { status(t(e.message), "err"); renderSettings(); })));
+    prefWrite(api("settings/login", { on: v === "on" }))));
   renderLoginAllow(s);
   // Codex's and Claude Code's warm-ups and WorkBuddy's check-in, one tab
   // each over one card, the rows' names not saying the service again.
@@ -21092,6 +21095,12 @@ function renderAgentPrefLinks() {
   }
 }
 
+// modelOpt is a Settings model picker's row: a routing group (no provider
+// of its own) goes with the others, as in an agent's picker.
+function modelOpt(x) {
+  return { value: x.id, label: x.name || x.id, note: x.providerName, icon: x.icon, group: x.provider ? x.providerName : ROUTING_GROUPS, ref: x.id };
+}
+
 // renderCodexDescriptions picks the model for descriptions independently
 // of titles; an empty setting preserves Codex's requested model.
 function renderCodexDescriptions(s) {
@@ -21106,13 +21115,12 @@ function renderCodexDescriptions(s) {
   b.setAttribute("aria-label", t("Codex thread descriptions"));
   if (v) b.append(icon(models.find((x) => x.id === v)?.icon || "generic"), el("span", "", named(v)));
   else b.append(icon("openai"), el("span", "", t("Codex’s own (ChatGPT)")));
-  const opt = (x) => ({ value: x.id, label: x.name || x.id, note: x.providerName, icon: x.icon, group: x.provider ? x.providerName : ROUTING_GROUPS, ref: x.id });
   b.onclick = (ev) => openPicker({ id: "", name: "", fields: [] }, { key: "codexDescriptions", label: "model", value: v, options: [
     { value: "", label: t("Codex’s own (ChatGPT)"), note: t("as Codex sends them"), icon: "openai", reset: true },
-    ...models.map(opt)],
+    ...models.map(modelOpt)],
   onPick: (id) => {
     if (id === v) return;
-    writingPrefs(api("settings/codex-descriptions", { model: id })).then((ns) => { prefs = ns; renderSettings(); }).catch((e) => { status(t(e.message), "err"); renderSettings(); });
+    prefWrite(api("settings/codex-descriptions", { model: id }));
   } }, b, ev);
   $("#codexDescriptionsPick").replaceChildren(b);
 }
@@ -21133,14 +21141,13 @@ function renderCodexPredictions(s) {
   if (v === "off") b.append(el("span", "", t("Off")));
   else if (v) b.append(icon(models.find((x) => x.id === v)?.icon || "generic"), el("span", "", named(v)));
   else b.append(icon("openai"), el("span", "", t("Codex’s own (ChatGPT)")));
-  const opt = (x) => ({ value: x.id, label: x.name || x.id, note: x.providerName, icon: x.icon, group: x.provider ? x.providerName : ROUTING_GROUPS, ref: x.id });
   b.onclick = (ev) => openPicker({ id: "", name: "", fields: [] }, { key: "codexPredictions", label: "model", value: v, options: [
     { value: "", label: t("Codex’s own (ChatGPT)"), note: t("as Codex sends them"), icon: "openai", reset: true },
     { value: "off", label: t("Off"), note: t("no prediction, nothing sent"), reset: true },
-    ...models.map(opt)],
+    ...models.map(modelOpt)],
   onPick: (id) => {
     if (id === v) return;
-    writingPrefs(api("settings/codex-predictions", { model: id })).then((ns) => { prefs = ns; renderSettings(); }).catch((e) => { status(t(e.message), "err"); renderSettings(); });
+    prefWrite(api("settings/codex-predictions", { model: id }));
   } }, b, ev);
   $("#codexPredictionsPick").replaceChildren(b);
 }
@@ -21162,14 +21169,13 @@ function renderCodexTitles(s) {
   if (v === "off") b.append(el("span", "", t("Off")));
   else if (v) b.append(icon(models.find((x) => x.id === v)?.icon || "generic"), el("span", "", named(v)));
   else b.append(icon("openai"), el("span", "", t("Codex’s own (ChatGPT)")));
-  const opt = (x) => ({ value: x.id, label: x.name || x.id, note: x.providerName, icon: x.icon, group: x.provider ? x.providerName : ROUTING_GROUPS, ref: x.id });
   b.onclick = (ev) => openPicker({ id: "", name: "", fields: [] }, { key: "codexTitles", label: "model", value: v, options: [
     { value: "", label: t("Codex’s own (ChatGPT)"), note: t("as Codex sends them"), icon: "openai", reset: true },
     { value: "off", label: t("Off"), note: t("no title, nothing sent"), reset: true },
-    ...models.map(opt)],
+    ...models.map(modelOpt)],
   onPick: (id) => {
     if (id === v) return;
-    writingPrefs(api("settings/codex-titles", { model: id })).then((ns) => { prefs = ns; renderSettings(); }).catch((e) => { status(t(e.message), "err"); renderSettings(); });
+    prefWrite(api("settings/codex-titles", { model: id }));
   } }, b, ev);
   $("#codexTitlesPick").replaceChildren(b);
 }
@@ -21177,7 +21183,8 @@ function renderCodexTitles(s) {
 // renderCodexAutoReview: the model Codex's auto-review — the reviewer that
 // decides an approval in the user's place — runs on (#938): Codex's own pick
 // (its codex-auto-review, else the conversation's model), or a model of
-// magpie's named in every entry of the list magpie hands Codex.
+// magpie's named in every entry of the list magpie hands Codex, or the
+// session's own ("session": each of magpie's entries names itself).
 function renderCodexAutoReview(s) {
   const models = s.titleModels || [];
   const v = s.codexAutoReview || "";
@@ -21185,15 +21192,15 @@ function renderCodexAutoReview(s) {
   const b = el("button", "rt-cond on");
   b.type = "button";
   b.setAttribute("aria-label", t("Codex auto-review model"));
-  if (v) b.append(icon(m?.icon || "generic"), el("span", "", m ? `${m.name || m.id} · ${m.providerName}` : v));
+  if (v) b.append(icon(m?.icon || "generic"), el("span", "", m ? `${m.name || m.id} · ${m.providerName}` : v == "session" ? t(SAME_SESSION) : v));
   else b.append(icon("openai"), el("span", "", t("Codex’s own pick")));
-  const opt = (x) => ({ value: x.id, label: x.name || x.id, note: x.providerName, icon: x.icon, group: x.provider ? x.providerName : ROUTING_GROUPS, ref: x.id });
   b.onclick = (ev) => openPicker({ id: "", name: "", fields: [] }, { key: "codexAutoReview", label: "model", value: v, options: [
     { value: "", label: t("Codex’s own pick"), note: t("as Codex picks it"), icon: "openai", reset: true },
-    ...models.map(opt)],
+    { value: "session", label: t(SAME_SESSION), icon: "generic" },
+    ...models.map(modelOpt)],
   onPick: (id) => {
     if (id === v) return;
-    writingPrefs(api("settings/codex-auto-review", { model: id })).then((ns) => { prefs = ns; renderSettings(); }).catch((e) => { status(t(e.message), "err"); renderSettings(); });
+    prefWrite(api("settings/codex-auto-review", { model: id }));
   } }, b, ev);
   $("#codexAutoReviewPick").replaceChildren(b);
 }
@@ -21285,13 +21292,10 @@ function renderImages(s, keep) {
   const notMarked = s.visionNotMarked || [];
   if (notMarked.length && v !== "off") who.append(el("div", "sub vision-not-marked", t("Models of {providers} aren’t listed until marked in their provider’s {names} › {images}",
     { providers: notMarked.join(", "), names: t("Names & levels"), images: t("Accepts images") })));
-  // a routing group (no provider of its own) goes with the others, as in
-  // an agent's picker, not in a group of its own with its own rail button
-  const opt = (x) => ({ value: x.id, label: x.name || x.id, note: x.providerName, icon: x.icon, group: x.provider ? x.providerName : ROUTING_GROUPS, ref: x.id });
   b.onclick = (ev) => openPicker({ id: "", name: "", fields: [] }, { key: "vision", label: "model", value: v, options: [
     { value: "", label: t("Automatic"), note: s.visionAuto ? named(s.visionAuto) : t("no model that sees"), reset: true },
     { value: "off", label: t("Off"), note: t("images turned away"), reset: true },
-    ...models.map(opt)],
+    ...models.map(modelOpt)],
   onPick: (id) => { if (id !== v) savePrefs({ ...keep, vision: id }); } }, b, ev);
   const val = el("div", "val");
   val.append(b);
@@ -21887,7 +21891,7 @@ function renderDisabledModels(s) {
   b.id = "disabledAdd";
   const models = (s.titleModels || []).filter((x) => x.provider);
   b.onclick = (ev) => openPicker({ id: "", name: "", fields: [] }, { key: "disabledModels", label: "model", value: "",
-    options: models.map((x) => ({ value: x.id, label: x.name || x.id, note: x.providerName, icon: x.icon, group: x.providerName, ref: x.id })),
+    options: models.map(modelOpt),
     onPick: (id) => {
       id = String(id || "").trim();
       if (!id || list.some((p) => p.toLowerCase() === id.toLowerCase())) return;
@@ -22254,85 +22258,6 @@ function maskedBadge(m) {
 function openMaskRecord(key) {
   if (mode !== "window") return void api("window/main?view=masking" + (key ? "&key=" + key : ""), {}).catch(() => {});
   show("masking").then((went) => { if (went !== false && key && view === "masking") magpie.call("masking", "focus", key); });
-}
-
-function renderOTel(s, keep) {
-  const page = $("#otelList");
-  page.replaceChildren();
-  let config = { ...(s.otel || {}) };
-  // a heading over a card of its own, as on every other Settings tab
-  let box;
-  const section = (name) => {
-    const head = el("div", "row-head");
-    head.append(el("span", "label", t(name)));
-    box = el("div", "list prefs");
-    page.append(head, box);
-  };
-  const row = (id, name, sub, control) => {
-    const r = el("div", "row pref");
-    r.id = id;
-    const who = el("div", "who");
-    who.append(el("div", "name", t(name)), el("div", "sub", t(sub)));
-    const val = el("div", "val");
-    val.append(control);
-    r.append(who, val);
-    if (id === "otelEndpointRow" || id === "otelHeadersRow" || id === "otelBodiesRow") r.classList.add("otel-stacked");
-    box.append(r);
-  };
-  const save = (change) => {
-    config = { ...config, ...change };
-    savePrefs({ ...keep, otel: { ...config } });
-  };
-  section("Collector connection");
-  row("otelExportRow", "OTLP export", "Send traces to your collector. Choose what to include below; account credentials stay local",
-    segs([["off", t("Off")], ["on", t("On")]], config.enabled ? "on" : "off", (v) => save({ enabled: v === "on" })));
-  const endpoint = input(config.endpoint || "", "http://localhost:4318", "url");
-  endpoint.className = "words";
-  endpoint.setAttribute("aria-label", t("OTLP endpoint"));
-  endpoint.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") endpoint.blur(); };
-  endpoint.onchange = () => save({ endpoint: endpoint.value.trim().replace(/\/+$/, "") });
-  row("otelEndpointRow", "OTLP endpoint", "Base URL of your collector, or Langfuse's /api/public/otel endpoint", endpoint);
-  const headers = input(Object.entries(config.headers || {}).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join(","), "Authorization=Bearer%20token", "password");
-  headers.className = "words";
-  headers.setAttribute("aria-label", t("OTLP headers"));
-  headers.autocomplete = "off";
-  headers.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") headers.blur(); };
-  headers.onchange = () => {
-    const values = {};
-    try {
-      for (const part of headers.value.split(",").filter((p) => p.trim())) {
-        const i = part.indexOf("=");
-        if (i < 1) throw new Error(t("Use comma-separated name=value headers"));
-        values[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
-      }
-      save({ headers: values });
-    } catch (e) { toast(e.message, true); }
-  };
-  row("otelHeadersRow", "OTLP headers", "Comma-separated name=value pairs; percent-encode spaces and commas in values", headers);
-  section("Export scope");
-  row("otelMetricsRow", "Export metrics", "Also send duration and token histograms. Leave off for a traces-only service such as Langfuse",
-    segs([["off", t("Off")], ["on", t("On")]], config.metrics ? "on" : "off", (v) => save({ metrics: v === "on" })));
-  row("otelSessionsRow", "Trace agent conversations", "Reads all local sessions from Codex, Pi, Oh My Pi, Claude Code, Cowork, OpenCode and Gemini CLI, including calls not routed through Magpie. When content is included below, exports prompts, replies, tool arguments and tool output (including file contents and command output), with secrets masked",
-    segs([["off", t("Off")], ["on", t("On")]], config.sessions ? "on" : "off", (v) => save({ sessions: v === "on" })));
-  section("Trace content");
-  const mode = !config.bodies ? "metadata" : config.bodiesWhole ? "full" : "limited";
-  const content = segs([["metadata", t("Metadata only")], ["limited", t("Up to 256 KB")], ["full", t("Full content")]], mode,
-    (v) => {
-      for (const button of content.querySelectorAll("button")) button.setAttribute("aria-pressed", String(button.classList.contains("on")));
-      save({ bodies: v !== "metadata", bodiesWhole: v === "full" });
-    });
-  content.setAttribute("role", "group");
-  content.setAttribute("aria-label", t("Request and response content"));
-  for (const [i, button] of [...content.querySelectorAll("button")].entries()) {
-    button.setAttribute("aria-pressed", String(["metadata", "limited", "full"][i] === mode));
-  }
-  const descriptions = {
-    metadata: "Send model, token, status and timing metadata only. Prompts, replies and tool content stay local",
-    limited: "Include requests and replies as trace input and output, with secrets masked. Each body is limited to 256 KB",
-    full: "Include complete requests and replies, with secrets masked. Large content may be refused by your collector",
-  };
-  row("otelBodiesRow", "Request and response content", descriptions[mode], content);
-  if (s.otelEnv) box.append(el("div", "sub otel-env", t("Environment variables override these saved OTLP preferences")));
 }
 
 // renderRedactRules: the user's own rules for secrets magpie's don't know, a
@@ -24583,7 +24508,7 @@ function loadBack() {
   loadBack.flight = flight;
   return flight.done;
 }
-document.addEventListener("visibilitychange", () => { if (!document.hidden) { loadBack(); wag(); } });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { loadBack(); wag(); refreshLanes(); } });
 // an agent's config can be rewritten, or the agent run round magpie, while the
 // window is up: ask what drifted now and then, and redraw only on a change —
 // never under an open menu

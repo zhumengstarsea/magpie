@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/yetone/magpie/internal/access"
+	"github.com/yetone/magpie/internal/masking"
 	"github.com/yetone/magpie/internal/provider"
 )
 
@@ -174,6 +175,9 @@ type unroutedHold struct {
 	shown  *Route       // under f.mu
 	ended  bool         // under f.mu: answered by magpie
 	over   bool         // under f.mu: its handler returned
+	// masking counts the maskings under way for it: one held there waits
+	// for Settings → Privacy's local model, and its error says so
+	masking atomic.Int32
 }
 
 type unroutedKey struct{}
@@ -184,6 +188,17 @@ func noteAsked(ctx context.Context, model string) {
 	if u, _ := ctx.Value(unroutedKey{}).(*unroutedHold); u != nil {
 		u.asked.Store(model)
 	}
+}
+
+// noteMasking tells ctx's watch its request is being masked, until the
+// func it answers is called.
+func noteMasking(ctx context.Context) func() {
+	u, _ := ctx.Value(unroutedKey{}).(*unroutedHold)
+	if u == nil {
+		return func() {}
+	}
+	u.masking.Add(1)
+	return func() { u.masking.Add(-1) }
 }
 
 // watchUnrouted watches r, counted as f, until the func it answers is
@@ -264,7 +279,10 @@ func (u *unroutedHold) giveUp() {
 		return
 	}
 	held := time.Since(f.start).Round(time.Second)
-	msg := fmt.Sprintf("magpie held this request for %s without routing it to any provider, so it was stopped rather than left waiting. Send it again; if it keeps happening, restart magpie and report it with magpie's log, which says where it was held.", held)
+	msg, where := unroutedMsg(held, u.masking.Load() > 0), ""
+	if u.masking.Load() > 0 {
+		where = " masking it"
+	}
 	if !u.w.answer(unroutedProto(u.r.URL.Path), http.StatusGatewayTimeout, msg) {
 		f.mu.Unlock()
 		return // the handler is answering
@@ -280,8 +298,30 @@ func (u *unroutedHold) giveUp() {
 	})
 	u.cancel(errUnrouted)
 	asked, _ := u.asked.Load().(string)
-	log.Printf("gateway: %s %s for %s from %s held %s before routing; stopped with 504%s", u.r.Method, u.r.URL.Path, cmpOr(asked, "?"), cmpOr(f.agent, "?"), held, unroutedStacks())
+	log.Printf("gateway: %s %s for %s from %s held %s before routing,%s; stopped with 504%s", u.r.Method, u.r.URL.Path, cmpOr(asked, "?"), cmpOr(f.agent, "?"), held, cmpOr(where, " not masking it"), unroutedStacks())
 }
+
+// unroutedMsg is the error of a request held for held before routing:
+// one held while it was masked, with Settings → Privacy's local model on,
+// waited for that model (#3682), and is told so, and how to send without
+// waiting for it.
+func unroutedMsg(held time.Duration, masking bool) string {
+	if masking && modelOn() {
+		why := ""
+		if b := modelBusy(); b != "" {
+			why = " (" + b + ")"
+		}
+		return fmt.Sprintf("magpie held this request for %s waiting for the local masking model (Settings → Privacy) to mask it%s, so it was stopped rather than sent masked by the rules alone. Send it again: what the model has already read is kept, so it goes quicker. To send requests without waiting for the model, turn it off in Settings → Privacy.", held, why)
+	}
+	if masking {
+		return fmt.Sprintf("magpie held this request for %s while masking it (Settings → Privacy), before routing it to any provider, so it was stopped rather than left waiting. Send it again; if it keeps happening, restart magpie and report it with magpie's log, which says where it was held.", held)
+	}
+	return fmt.Sprintf("magpie held this request for %s without routing it to any provider, so it was stopped rather than left waiting. Send it again; if it keeps happening, restart magpie and report it with magpie's log, which says where it was held.", held)
+}
+
+// modelOn and modelBusy are internal/masking's, a test's
+// to stand in for.
+var modelOn, modelBusy = masking.ModelOn, masking.ModelBusy
 
 func cmpOr(a, b string) string {
 	if a != "" {
