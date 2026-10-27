@@ -339,6 +339,7 @@ func TestIsCodexClient(t *testing.T) {
 		"/Users/me/.vscode/extensions/openai.chatgpt-1.0/bin/darwin-aarch64/codex app-server":                                                 false,
 		"codex mcp-server": false,
 		`"C:\Program Files\WindowsApps\OpenAI.Codex_1.0\app\resources\codex.exe" app-server`: false,
+		codexWindowsAppServer: false,
 		// other programs
 		"/Users/me/.codex/plugins/cache/chrome/extension-host ChatGPT for Chrome": false,
 		// a path with a space, as the user's own ps showed it
@@ -493,8 +494,9 @@ func TestFindCodexApp(t *testing.T) {
 	// (ChatGPT 26.1007), beside a terminal codex and the managed daemon
 	app := "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex -c features.code_mode_host=true app-server --analytics-default-enabled -c plugins.codex-app-tools@openai-bundled.mcp_servers.codex_app.enabled=true"
 	for want, ps := range map[int][]proc.Process{
-		9: {{PID: 3, Args: "codex"}, {PID: 4, Args: "/Users/me/.codex/packages/app-server-daemon/releases/0.162.0-aarch64-apple-darwin/bin/codex app-server --listen unix:///x --managed-daemon"}, {PID: 9, Args: app}},
-		8: {{PID: 8, Args: `"C:\Program Files\WindowsApps\OpenAI.Codex_1.0\app\resources\codex.exe" app-server`}},
+		9:     {{PID: 3, Args: "codex"}, {PID: 4, Args: "/Users/me/.codex/packages/app-server-daemon/releases/0.162.0-aarch64-apple-darwin/bin/codex app-server --listen unix:///x --managed-daemon"}, {PID: 9, Args: app}},
+		8:     {{PID: 8, Args: `"C:\Program Files\WindowsApps\OpenAI.Codex_1.0\app\resources\codex.exe" app-server`}},
+		61552: {{PID: 3, Args: `C:\Users\yeton\AppData\Local\Microsoft\WinGet\Links\codex.exe`}, {PID: 61552, Args: codexWindowsAppServer}},
 		0: {
 			{PID: 3, Args: "codex app-server proxy"},
 			{PID: 5, Args: "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex exec-server --remote x"},

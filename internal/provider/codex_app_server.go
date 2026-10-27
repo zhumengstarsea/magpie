@@ -156,6 +156,26 @@ func CodexAppStuck() bool {
 	return c.stuck
 }
 
+// codexAppAccountLeft has the Codex app's app-server pid, left on the
+// ChatGPT account Codex was switched away from (noteCodexSwitch), ended
+// as a route change's are, once no Codex turn runs: the app starts
+// another, which reads auth.json and the new account afresh, so the app
+// shows that account's limits and sends on it with no quit and reopen
+// (zhibukaixinyao on Discord: Windows has no Restart button). One
+// switched away and back before then is restarted all the same, which
+// costs the app nothing it shows.
+func codexAppAccountLeft(pid int) {
+	c := &codexApp
+	c.Lock()
+	defer c.Unlock()
+	if c.stale == nil {
+		c.stale = map[int]int{}
+	}
+	if _, ok := c.stale[pid]; !ok {
+		c.stale[pid] = 0
+	}
+}
+
 // KeepCodexAppOnItsProvider runs codexAppStep every codexAppEvery till
 // ctx ends. busy says how many of Codex's requests are in flight through
 // magpie and when the last ended.

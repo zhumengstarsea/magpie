@@ -201,10 +201,12 @@ func TestHermesProfiles(t *testing.T) {
 	if has(bot) || has(later) || m["default"] != "kimi-k3" || m["provider"] != "moonshot" || c["providers"].(map[string]any)["mine"] == nil {
 		t.Fatalf("coder after disconnect:\n%s", raw)
 	}
-	// the clone isn't left naming a provider that is gone
+	// the clone isn't left naming a provider that is gone: it goes onto
+	// the model the user had in the main config, as Hermes would have
+	// seeded it from there
 	c, raw = read(clone)
 	m, _ = c["model"].(map[string]any)
-	if has(clone) || m["provider"] != nil || m["default"] != nil {
+	if has(clone) || m["provider"] != "openrouter" || m["default"] != "anthropic/claude-opus-5" {
 		t.Fatalf("writer after disconnect:\n%s", raw)
 	}
 	// disconnected: a sync doesn't put it back
@@ -640,4 +642,199 @@ func TestHermesProfilesFollowMagpieModel(t *testing.T) {
 	}
 	check("pro", seeded, "deepseek/flash", "magpie")
 	check("pro", old, "deepseek/pro", "magpie")
+}
+
+// Switching magpie off and on again leaves every bot on a model `hermes`
+// starts with (tjhhhh on Discord: after Off and On the bot's default model
+// was gone and the hermes CLI failed at start). Off puts a bot on magpie
+// onto the model the user had in the main config, with that provider's
+// entry, or onto its own from when magpie connected it; On puts it back on
+// the model it was on. A bot the user changed in between keeps their pick,
+// and a bot an older magpie left with no model gets magpie's.
+func TestHermesOffAndOnKeepsEveryBotsModel(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("HERMES_HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	if err := provider.Save(provider.Provider{ID: "deepseek", Name: "DeepSeek", Chat: "https://api.deepseek.com/v1", Key: "k", Models: []string{"pro", "flash", "lite"}}); err != nil {
+		t.Fatal(err)
+	}
+	root := appdir.HermesHomeIn(home)
+	write := func(rel, s string) string {
+		p := filepath.Join(root, rel)
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte(s), 0o644)
+		return p
+	}
+	main := write("config.yaml", "model:\n  default: kimi-k3\n  provider: mine\nproviders:\n  mine:\n    base_url: https://x/v1\n    api_key: sk-mine\n")
+	a := hermes(home)
+	if c, err := a.ConnectHow(); err != nil || !a.Wired() {
+		t.Fatalf("connect: %+v %v", c, err)
+	}
+	ref := hermesModelOf(main).Default
+	// seeded from the connected config, picked in the bot, the bot's own
+	seeded := write("profiles/writer/config.yaml", "model:\n  default: "+ref+"\n  provider: magpie\n")
+	picked := write("profiles/coder/config.yaml", "model:\n  model: deepseek/lite\n  provider: magpie\n")
+	own := write("profiles/chat/config.yaml", "model:\n  default: gpt-9\n  provider: openai\n")
+	// emptied by an older magpie's Off
+	empty := write("profiles/empty/config.yaml", "agent:\n  max_turns: 9\n")
+	if err := a.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	check := func(when, p string, want hermesModel) {
+		t.Helper()
+		if got := hermesModelOf(p); got.Provider != want.Provider || got.Default != want.Default {
+			b, _ := os.ReadFile(p)
+			t.Fatalf("%s: %s is on %+v, want %+v:\n%s", when, filepath.Base(filepath.Dir(p)), got, want, b)
+		}
+	}
+
+	if err := a.Disconnect(); err != nil {
+		t.Fatal(err)
+	}
+	check("off", main, hermesModel{Provider: "mine", Default: "kimi-k3"})
+	check("off", seeded, hermesModel{Provider: "mine", Default: "kimi-k3"})
+	check("off", picked, hermesModel{Provider: "mine", Default: "kimi-k3"})
+	check("off", own, hermesModel{Provider: "openai", Default: "gpt-9"})
+	// the provider the bot is put on is there for it, as Hermes seeds it
+	if v, _ := edit.GetYAML(seeded, "providers.mine.base_url"); v != "https://x/v1" {
+		t.Fatalf("writer has no entry for its provider:\n%s", func() []byte { b, _ := os.ReadFile(seeded); return b }())
+	}
+	if v, _ := edit.GetYAML(picked, "model.model"); v != "" {
+		t.Fatalf("coder keeps magpie's model.model %q", v)
+	}
+
+	// the user moves the coder bot to a model of their own while off
+	edit.SetYAML(picked, edit.KV{Path: "model.default", Value: "gpt-9"}, edit.KV{Path: "model.provider", Value: "openai"})
+
+	if c, err := a.ConnectHow(); err != nil || !a.Wired() {
+		t.Fatalf("connect again: %+v %v", c, err)
+	}
+	check("on", main, hermesModel{Provider: "magpie", Default: ref})
+	check("on", seeded, hermesModel{Provider: "magpie", Default: ref})
+	check("on", picked, hermesModel{Provider: "openai", Default: "gpt-9"})
+	check("on", own, hermesModel{Provider: "openai", Default: "gpt-9"})
+	check("on", empty, hermesModel{Provider: "magpie", Default: ref})
+	if v, _ := edit.GetYAML(empty, "agent.max_turns"); v != "9" {
+		t.Fatal("the empty bot lost its other settings")
+	}
+
+	// the bots put back still follow the next model magpie sets
+	next := "deepseek/flash"
+	if ref == next {
+		next = "deepseek/pro"
+	}
+	if err := a.Apply("model", "magpie/"+next); err != nil {
+		t.Fatal(err)
+	}
+	check("next", seeded, hermesModel{Provider: "magpie", Default: next})
+}
+
+// A model changed in Hermes itself (`hermes model` in the main config)
+// onto another of magpie's is what a bot made after holds: such a bot
+// follows the next model magpie sets too, not only one on the model magpie
+// had recorded (tjhhhh on Discord: switching for the other bots didn't
+// take).
+func TestHermesBotsFollowTheModelHermesPicked(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("HERMES_HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	if err := provider.Save(provider.Provider{ID: "deepseek", Name: "DeepSeek", Chat: "https://api.deepseek.com/v1", Key: "k", Models: []string{"pro", "flash", "max"}}); err != nil {
+		t.Fatal(err)
+	}
+	root := appdir.HermesHomeIn(home)
+	os.MkdirAll(root, 0o755)
+	main := filepath.Join(root, "config.yaml")
+	os.WriteFile(main, []byte("model:\n  default: x\n  provider: openrouter\n"), 0o644)
+	a := hermes(home)
+	if err := a.Apply("model", "magpie/deepseek/pro"); err != nil {
+		t.Fatal(err)
+	}
+	// `hermes model` in the main config, then a bot made from it
+	edit.SetYAML(main, edit.KV{Path: "model.default", Value: "deepseek/flash"})
+	bot := filepath.Join(root, "profiles", "writer", "config.yaml")
+	os.MkdirAll(filepath.Dir(bot), 0o755)
+	os.WriteFile(bot, []byte("model:\n  default: deepseek/flash\n  provider: magpie\n"), 0o644)
+	if err := a.Apply("model", "magpie/deepseek/max"); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := edit.GetYAML(bot, "model.default"); v != "deepseek/max" {
+		b, _ := os.ReadFile(bot)
+		t.Fatalf("writer stayed:\n%s", b)
+	}
+}
+
+// `hermes profile use coder` makes coder the bot `hermes` starts in
+// (<root>/active_profile), and `hermes model` writes its config: magpie
+// connects that one, so a model picked in magpie reaches the bot the user
+// runs (tjhhhh on Discord), and the main config, another bot now, keeps the
+// model the user picked there. A sticky name that is gone, deleted or not
+// Hermes's, and a HERMES_HOME naming a profile, leave it as before.
+func TestHermesStickyProfile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("HERMES_HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	if err := provider.Save(provider.Provider{ID: "deepseek", Name: "DeepSeek", Chat: "https://api.deepseek.com/v1", Key: "k", Models: []string{"pro", "flash"}}); err != nil {
+		t.Fatal(err)
+	}
+	root := appdir.HermesHomeIn(home)
+	write := func(rel, s string) string {
+		p := filepath.Join(root, rel)
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte(s), 0o644)
+		return p
+	}
+	main := write("config.yaml", "model:\n  default: kimi-k3\n  provider: moonshot\n")
+	coder := write("profiles/coder/config.yaml", "model:\n  default: gpt-9\n  provider: openai\n")
+	write("profiles/old/config.yaml", "model:\n  default: x\n")
+	write("profiles/.deleted/old", "")
+
+	for _, c := range []struct{ sticky, want string }{
+		{"coder\n", filepath.Join(root, "profiles", "coder")},
+		{"\ufeffcoder", filepath.Join(root, "profiles", "coder")},
+		{"default\n", root},
+		{"", root},
+		{"gone\n", root},
+		{"old\n", root},
+		{"../x\n", root},
+	} {
+		write("active_profile", c.sticky)
+		if got := hermes(home).Dir; got != c.want {
+			t.Errorf("active_profile %q: connects %s, want %s", c.sticky, got, c.want)
+		}
+	}
+	t.Setenv("HERMES_HOME", filepath.Join(root, "profiles", "old"))
+	write("active_profile", "coder\n")
+	if got := hermes(home).Dir; got != filepath.Join(root, "profiles", "old") {
+		t.Errorf("HERMES_HOME naming a profile: connects %s", got)
+	}
+	t.Setenv("HERMES_HOME", "")
+
+	a := hermes(home)
+	if err := a.Apply("model", "magpie/deepseek/pro"); err != nil {
+		t.Fatal(err)
+	}
+	if m := hermesModelOf(coder); m.Provider != "magpie" || m.Default != "deepseek/pro" {
+		t.Fatalf("the bot hermes starts in: %+v", m)
+	}
+	if m := hermesModelOf(main); m.Provider != "moonshot" || m.Default != "kimi-k3" {
+		t.Fatalf("main: %+v", m)
+	}
+	if v, _ := edit.GetYAML(main, "providers.magpie.base_url"); v == "" {
+		t.Fatal("main has no magpie in its picker")
+	}
+	if err := a.Disconnect(); err != nil {
+		t.Fatal(err)
+	}
+	if m := hermesModelOf(coder); m.Provider != "openai" || m.Default != "gpt-9" {
+		t.Fatalf("coder after Off: %+v", m)
+	}
 }

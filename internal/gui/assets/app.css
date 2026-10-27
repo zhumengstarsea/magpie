@@ -3530,6 +3530,17 @@ input.words.search-key, input.words.search-url { flex: 1 1 120px; width: auto; m
 .row.pref.lan-address-row { position: relative; height: 50px; transition: height .28s var(--ease); }
 .row.pref.lan-address-row .who { position: absolute; top: 16px; left: 14px; }
 .prefs .lan-address-row .val { max-width: 64%; }
+/* Browser access: a link per address, each with its copy button */
+.prefs .web-page-link-row .val { max-width: 64%; gap: 6px; }
+.web-page-links { display: flex; flex-direction: column; align-items: flex-end; min-width: 0; }
+.web-page-link { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; }
+.row.pref.web-page-warn .name { color: var(--amber); }
+/* three choices leave the words no room in a narrow window: they go under */
+@media (max-width: 600px) {
+  .row.pref.web-page-mode { flex-wrap: wrap; row-gap: 8px; }
+  .row.pref.web-page-mode .who { flex: 1 1 100%; }
+  .prefs .web-page-mode .val { max-width: 100%; }
+}
 .lan-address-controls { position: absolute; inset: 0; pointer-events: none; }
 .lan-address-controls > * { position: absolute; pointer-events: auto; }
 .row.pref .proto.pick.lan-interface { top: 13px; right: 40px; width: 240px; max-width: calc(100% - 40px); margin-left: 0; font: var(--code-style, normal) var(--code-weight, 400) 12px var(--code-font, var(--code)); font-stretch: var(--code-stretch, 100%); transition: top .28s var(--ease), background .12s, color .12s; }

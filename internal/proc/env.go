@@ -11,9 +11,10 @@ import (
 // SIGTERM where there are signals, on Windows TerminateProcess with exit
 // code 0. The Codex app starts its app-server again after an exit 0 and
 // shows an error for any other (its AppServerConnection: code === 0 is
-// classifiedAsExpected). ErrDenied when this user may not; nil when pid
-// is gone already.
-func End(pid int) error { return end(pid) }
+// classifiedAsExpected). On Windows what pid started is ended with it,
+// as a program ending on SIGTERM ends its own children (endTree).
+// ErrDenied when this user may not; nil when pid is gone already.
+func End(pid int) error { return endTree(pid) }
 
 // ErrNoEnv is a system that doesn't tell another process's environment
 // (Windows here).

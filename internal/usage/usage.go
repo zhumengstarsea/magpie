@@ -245,6 +245,7 @@ func Append(r Record) {
 	if !r.IsProbe() { // magpie's own test is no call to export
 		observeLedger(r)
 	}
+	defer codexUsedNew(r)
 	b, err := json.Marshal(r)
 	if err != nil {
 		return

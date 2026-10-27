@@ -72,6 +72,15 @@ func codexAppRoute() (route string, out, known bool) {
 	}
 	t, _ := edit.GetTOMLTable(a.Path, "model_providers."+magpieID)
 	b.WriteString("magpie.base_url=" + t["base_url"] + "\n")
+	// and the list in that catalog, which the app-server also reads only
+	// as it starts: a provider or group renamed, or a model added, left
+	// the app on the names and models it started with (lucis0116 on X)
+	if c, _ := edit.GetTOMLTop(a.Path, "model_catalog_json"); c != "" {
+		if !filepath.IsAbs(c) {
+			c = filepath.Join(filepath.Dir(a.Path), c)
+		}
+		b.WriteString("catalog=" + codexCatalogTag(c) + "\n")
+	}
 	if out {
 		b.WriteString("out\n")
 	}

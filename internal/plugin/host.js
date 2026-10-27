@@ -1834,8 +1834,8 @@ const shown = (v, n) => (typeof v === "string" ? v.trim().slice(0, n) : "")
 // own field (#2038, Vocllum): auth.options, each {key, label, description?,
 // default?, confirm?}. magpie shows each as an Off/On switch in the
 // provider's editor and keeps what the user sets; the plugin reads it with
-// input.magpie.option(provider, key). A switch is only kept and handed
-// over, nothing is run when it changes. Keys are [a-z0-9_-], 1–40 long,
+// input.magpie.option(provider, key). A switch is kept and handed over,
+// and the models listed again (one may go by it); nothing else is run. Keys are [a-z0-9_-], 1–40 long,
 // the first of a key kept; at most MAX_OPTIONS; one without a key or a
 // label is left out.
 const MAX_OPTIONS = 16

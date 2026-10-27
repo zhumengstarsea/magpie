@@ -400,8 +400,18 @@ func compressible(ct string) bool {
 		strings.HasSuffix(ct, "json") || ct == "image/svg+xml"
 }
 
-// isWeb: the page is served to a browser by `magpie web`.
-func isWeb(w Windows) bool { _, ok := w.(webHost); return ok }
+// browserTab is a Windows that stands for a browser tab: magpie web's
+// (webHost) or one on the page the app serves (appWebHost).
+type browserTab interface{ browserTab() }
+
+func (webHost) browserTab() {}
+
+// isWeb: the page is served to a browser, by `magpie web` or by the app.
+func isWeb(w Windows) bool { _, ok := w.(browserTab); return ok }
+
+// ownWeb: the page is `magpie web`'s own (its gateway mode, its restart
+// to update), not the app's served to a browser.
+func ownWeb(w Windows) bool { _, ok := w.(webHost); return ok }
 
 // onePort hands the gateway's client routes (gateway.ClientPath: /v1/…,
 // /v1beta/…, /mcp/…) on the page's port to the gateway, so the page and the

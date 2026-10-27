@@ -658,7 +658,7 @@ func updateRoutes(mux *http.ServeMux, w Windows) {
 		if updates.json().State == "ready" {
 			if in.When != "now" && !updates.idle() {
 				updates.waitIdle(func() bool {
-					if restartToUpdate(isWeb(w), in.View != "" || mainShown(w), in.View) {
+					if restartFrom(w, in.View) {
 						go leave(w.Quit)
 						return true
 					}
@@ -672,7 +672,7 @@ func updateRoutes(mux *http.ServeMux, w Windows) {
 		}
 		switch j := updates.json(); {
 		case j.State == "ready":
-			if restartToUpdate(isWeb(w), in.View != "" || mainShown(w), in.View) {
+			if restartFrom(w, in.View) {
 				rw.WriteHeader(http.StatusNoContent)
 				go leave(w.Quit)
 				return
@@ -690,6 +690,16 @@ func updateRoutes(mux *http.ServeMux, w Windows) {
 
 // relaunchBinary is update.RelaunchBinary; tests stand in for it.
 var relaunchBinary = update.RelaunchBinary
+
+// restartFrom is restartToUpdate asked from w's page, on view: a browser
+// on the app's page restarts the app, with its window up as it was, not
+// opened on the tab the browser was on.
+func restartFrom(w Windows, view string) bool {
+	if a, ok := w.(appWebHost); ok {
+		return restartToUpdate(false, mainShown(a.app), "")
+	}
+	return restartToUpdate(ownWeb(w), view != "" || mainShown(w), view)
+}
 
 // restartToUpdate installs the staged version and arranges for it to open
 // once this process is gone; the caller then quits. magpie web runs on as

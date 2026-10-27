@@ -338,6 +338,11 @@ func run(args []string) error {
 	// its ChatGPT sign-in rather than on that account (atom_Ray on X)
 	gateway.CodexSideModel = agent.CodexSideModel
 	gateway.CodexSideSet = agent.CodexSideSet
+	// the list the Codex app reads from a file beside the ChatGPT sign-in,
+	// its picker showing magpie's models only so (laddieyao on Discord),
+	// written again when the backend's list changes
+	agent.CodexDesktopList = gateway.CodexDesktopCatalog
+	gateway.CodexDesktopChanged = agent.SyncCatalogSoon
 	// the setup kept the same on every computer, by whichever serves
 	gateway.WhileServing = append(gateway.WhileServing, davsync.Run)
 	// and dsh's patch lists, which dsh reads live: a route left behind by

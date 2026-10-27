@@ -823,7 +823,9 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 	if gw != nil {
 		served.Store(gw)
 	}
-	if isWeb(w) {
+	// magpie web's own page, not the app's served to a browser, which the
+	// app's windows share their settings state with
+	if ownWeb(w) {
 		webPage.Store(true)
 	}
 	mux := http.NewServeMux()
@@ -845,7 +847,7 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		}
 		// and whether it is a gateway's page alone (gatewaymode.go), so the
 		// pages left out never show
-		if on, _ := gatewayMode(isWeb(w)); on {
+		if on, _ := gatewayMode(ownWeb(w)); on {
 			boot["gateway"] = true
 		}
 		// and the built-in plugins it leaves out (builtins.go), gone
@@ -1190,6 +1192,9 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 	cliBehindRoutes(mux)
 	gatewayFixRoutes(mux)
 	gatewayModeRoutes(mux)
+	if !isWeb(w) {
+		appPageRoutes(mux)
+	}
 	privacyModelRoutes(mux)
 	maskingRoutes(mux)
 	builtinRoutes(mux)

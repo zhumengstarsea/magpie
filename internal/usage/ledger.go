@@ -441,7 +441,7 @@ func ledgerMatched(since, until time.Time, f Filter, recs []Record, logs []sessi
 		if source == "" {
 			sent = provider.SentNameIn(wires, r.Provider, r.Model, r.Effort)
 		}
-		row := codexIdentityRow(Row{Record: r, Swapped: r.Served != "" && Swapped(sent, r.Served), Routed: GroupRouted(sent, r.Served), Source: source}, actor, codexIdentities)
+		row := codexIdentityRow(Row{Record: r, Swapped: r.Served != "" && Swapped(sent, r.Served) && !ListedAs(r.Provider, r.Model, r.Served), Routed: GroupRouted(sent, r.Served), Source: source}, actor, codexIdentities)
 		if !f.keepsRow(&row) {
 			return
 		}

@@ -119,3 +119,48 @@ func TestProbesOfAProviderBeingAddedListItOnce(t *testing.T) {
 		t.Fatalf("%s's rows: total %d, sum %+v", id, p.Total, p.Sum)
 	}
 }
+
+// cybercaius on Discord: a provider tested while it was being added was
+// listed on the Requests page under its id and its host, and after it
+// was deleted the host stayed beside the id. Its probes are listed under
+// the id its calls to that host were made under, deleted or not; a host
+// two deleted providers were on stays as it was recorded.
+func TestProbesOfADeletedProviderStayWithIt(t *testing.T) {
+	reportedHome(t)
+	then := time.Now().Add(-time.Hour)
+	adding := probelog.With(context.Background(), probelog.KindDetect, "", "")
+	probelog.Note(adding, "https://api.example.me/v1/models", http.MethodGet, then, 200, nil)
+	probelog.Note(adding, "https://API.example.me/v1/chat/completions", http.MethodPost, then, 200, nil)
+	probelog.Note(adding, "https://twice.example/v1/models", http.MethodGet, then, 200, nil)
+	probelog.Note(adding, "https://Twice.Example/v1/models", http.MethodGet, then, 200, nil)
+	id, err := provider.Add(provider.Provider{Name: "Example", Key: "k", Chat: "https://api.example.me/v1", Models: []string{"m"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := provider.Find(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tested := probelog.With(context.Background(), probelog.KindTest, id, "")
+	probelog.Note(tested, "https://api.example.me/v1/chat/completions", http.MethodPost, then.Add(time.Minute), 200, nil)
+	Append(Record{Time: then.Add(2 * time.Minute), Agent: "codex", Session: "s1", Provider: id, Host: saved.Where(), Model: "m", Input: 100, Output: 10, Status: 200})
+	for _, other := range []string{"one", "two"} {
+		Append(Record{Time: then.Add(2 * time.Minute), Agent: "codex", Session: "s2", Provider: other, Host: "twice.example", Model: "m", Input: 1, Output: 1, Status: 200})
+	}
+	list := func() []string { return QueryPage(All, Filter{}, 0, 50).Providers }
+	if want := []string{id, "one", "twice.example", "two"}; !slices.Equal(list(), want) {
+		t.Fatalf("saved: providers %v, want %v", list(), want)
+	}
+	if err := provider.Delete(id); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{id, "one", "twice.example", "two"}; !slices.Equal(list(), want) {
+		t.Fatalf("deleted: providers %v, want %v", list(), want)
+	}
+	if p := QueryPage(All, Filter{Provider: id}, 0, 50); p.Total != 4 || p.Sum.Calls != 1 {
+		t.Fatalf("deleted %s's rows: total %d, sum %+v", id, p.Total, p.Sum)
+	}
+	if p := QueryPage(All, Filter{Provider: "twice.example"}, 0, 50); p.Total != 2 {
+		t.Fatalf("twice.example's rows: total %d", p.Total)
+	}
+}

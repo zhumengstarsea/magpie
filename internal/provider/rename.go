@@ -207,6 +207,12 @@ func (r Renames) ProbeOf(id string, at time.Time) string {
 	return r.Of(id, at)
 }
 
+// OnHost is whether a provider saved now is on host, one or more.
+func (r Renames) OnHost(host string) bool {
+	_, ok := r.hosts[strings.ToLower(host)]
+	return ok
+}
+
 // Timed is whether the id's calls go to more than one provider by when
 // they were made, so Of needs each call's time.
 func (r Renames) Timed(id string) bool { return len(r.gave[id]) > 0 }

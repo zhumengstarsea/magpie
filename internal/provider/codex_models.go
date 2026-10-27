@@ -60,6 +60,52 @@ func codexModels(ctx context.Context, sign func(context.Context, *http.Request, 
 	return ms, nil
 }
 
+// CodexLiveList is the ChatGPT backend's model list for the account Codex
+// is signed in to now, as the backend sends it: its entries, their
+// base_instructions among them, untouched. magpie writes it for the Codex
+// app beside the sign-in (agent.CodexDesktopList), whose picker shows only
+// the models a flag of OpenAI's names unless Codex reads its list from a
+// file. An error when Codex is not signed in to ChatGPT, the backend
+// doesn't answer 200, or its answer lists no model: never an empty list.
+func CodexLiveList(ctx context.Context) ([]byte, error) {
+	home, _ := os.UserHomeDir()
+	p, ok := codexAccount(home)
+	if !ok || p.Account == nil || p.Account.sign == nil {
+		return nil, errors.New("Codex is not signed in to ChatGPT")
+	}
+	ctx = ViaSignedIn(ctx, "codex")
+	u := CodexBase + "/models?client_version=" + url.QueryEscape(codexVersion())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.Account.sign(ctx, req, nil); err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ChatGPT models: %s", resp.Status)
+	}
+	var list struct {
+		Models []json.RawMessage `json:"models"`
+	}
+	if err := json.Unmarshal(b, &list); err != nil {
+		return nil, fmt.Errorf("ChatGPT models: %w", err)
+	}
+	if len(list.Models) == 0 {
+		return nil, errors.New("ChatGPT listed no Codex models")
+	}
+	return b, nil
+}
+
 var codexVersionCache struct {
 	sync.Mutex
 	v  string

@@ -418,7 +418,8 @@ func groupRoutes(mux *http.ServeMux) {
 			}
 			in.ID = body.From
 			if err = provider.SaveGroup(in); err == nil {
-				err = provider.RenameGroup(body.From, to)
+				// the agents on group/<from> move to group/<to>
+				_, err = agent.RenameGroup(body.From, to)
 			}
 		case "delete":
 			if len(body.IDs) > 0 {

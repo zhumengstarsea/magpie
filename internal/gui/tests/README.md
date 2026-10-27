@@ -2522,3 +2522,14 @@ does. Both engines, at 440px. The reckoning itself is covered by
 `TestHistoricalWindowHoldsUsesEachWindowsOwnReading`,
 `TestWindowHoldsResetBeforeRefillReading` and
 `TestWindowHoldsDryAgainAfterReset`.
+
+## Browser access
+
+`browser-access.test.cjs` checks Settings › Network and sharing › Browser
+access, the app's own page served to a browser: Off, This computer and
+Local network posted to `/api/web-page`, the link shown with its key as
+"…" and copied whole, New key, the port with Apply and a taken port's
+reason, the "Not encrypted" row on the local network, no native select or
+left border, nothing wider or cut off at 360px, and no such section (nor a
+read of it) in a browser on the page. Every language, Chromium and WebKit,
+with the API faked.

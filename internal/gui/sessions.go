@@ -535,10 +535,18 @@ func combinedSessionStats(days int) sessions.Stats {
 // page opens on the kept index and not on a first read of them all. Usage ›
 // Requests' whole history is read after it, not beside it on the disk: a
 // first All parsing 12k sessions kept that page a skeleton for 40 s.
+// Once a process: the app's page served to a browser (apppage.go) is a
+// second Handler beside the window's.
 func warmSessions() {
 	if testing.Testing() {
 		return
 	}
+	warmOnce.Do(warmStart)
+}
+
+var warmOnce sync.Once
+
+func warmStart() {
 	go func() {
 		time.Sleep(3 * time.Second)
 		// with few readers, as nobody waits on it yet: after an update

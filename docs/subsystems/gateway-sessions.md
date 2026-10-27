@@ -537,6 +537,14 @@ for: `provider_test`, `api_detect` or `model_list`
   request page lists them as a chunk of their own (`probeChunk`) and adds
   them to no total, cell, group, chart or filter count; `?via=` other than
   all leaves them out.
+- **Whose:** a row recorded under its host, sent before its provider had
+  an id, is listed under the provider saved on that host now
+  (`Renames.ProbeOf`), and with none on it, a deleted one's, under the id
+  the log's calls to that host were made under (`logSnapshot.hosts`,
+  `probeProvider`). A host two providers are or were on stays the host,
+  lowercased (yyddbds and cybercaius on Discord).
+  `TestProbesOfAProviderBeingAddedListItOnce` and
+  `TestProbesOfADeletedProviderStayWithIt` cover it.
 - **Showing:** the row's badge is the kind's name ("Test", "Detect APIs",
   "Model list", from `purposeKinds`), and its tooltip and the "magpie's
   own" badge's say it counts in no total (`probeWhy` in

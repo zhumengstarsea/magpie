@@ -106,6 +106,12 @@ func WriteAtomic(path string, data []byte) error {
 		data = (*f)(path, data)
 	}
 	data = keepBOM(path, data)
+	// A file that already holds these bytes is left alone: a new mtime
+	// wakes every watcher of it, and a rename swaps the file under an
+	// agent reading it, for nothing (#3870).
+	if cur, err := os.ReadFile(path); err == nil && bytes.Equal(cur, data) {
+		return nil
+	}
 	if hardLinked(path) {
 		f, err := os.OpenFile(path, os.O_WRONLY, 0)
 		if err == nil {

@@ -742,6 +742,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/magpie/trace", s.gatewayTrace)
 	mux.HandleFunc("GET /v1/magpie/concurrency", s.concurrency)
 	mux.HandleFunc("GET /v1/magpie/limit", s.keyLimit)
+	// the Claude Code processes the Claude subscription runs, for magpie
+	// claude-code runs (loopback only)
+	mux.HandleFunc("GET "+ClaudeRunsPath, s.claudeRuns)
 	// a heap profile of this process, for magpie heap (loopback only)
 	mux.HandleFunc("GET "+HeapPath, s.heapProfile)
 	// a CPU profile of this process over some seconds, for magpie cpu
@@ -3030,7 +3033,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			try.Reset, resetFirst = resetFirst, nil
 		}
 		asName := provider.SentNameOnIn(wiresOf(r.Context()), c.p.ID, accountAgent(c.p), c.model, sent)
-		try.Swapped, try.Routed = swapped(asName, call.Usage.Served), usage.GroupRouted(asName, call.Usage.Served)
+		try.Swapped, try.Routed = swapped(asName, call.Usage.Served) && !usage.ListedAs(c.p.ID, c.model, call.Usage.Served), usage.GroupRouted(asName, call.Usage.Served)
 		try.TTFT, try.FirstText = hw.first.ms()
 		try.FirstReasoning = hw.first.reasoningMs(call.To)
 		try.ReasoningHidden = hw.first.hidesReasoning(call.To)

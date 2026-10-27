@@ -6,6 +6,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -536,15 +537,24 @@ func (p Provider) ownRequests(ctx context.Context, kind string) context.Context 
 	return probelog.With(ctx, kind, p.ID, account)
 }
 
-func probe(ctx context.Context, p Provider, proto Protocol, url string, body []byte, model string, wait time.Duration) Result {
-	r := Result{Protocol: proto, Model: model}
+// The test is one row of the request log, written here with what came of
+// it: the vendor's error, a stream's error after its 200 too. Do would
+// write the status alone, so a failed test's row said nothing of why
+// (ysm119 on Discord: "no answer", and no error to find anywhere).
+func probe(ctx context.Context, p Provider, proto Protocol, url string, body []byte, model string, wait time.Duration) (r Result) {
+	r = Result{Protocol: proto, Model: model}
 	if model == "" {
 		r.Error = "no model to try: expose one, or refresh the model list"
 		return r
 	}
 	ctx, cancel := context.WithTimeout(probelog.WithModel(ctx, model), wait)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	rctx := ctx
+	logged := probelog.Pending(ctx)
+	if logged {
+		rctx = probelog.Taken(ctx)
+	}
+	req, err := http.NewRequestWithContext(rctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		r.Error = err.Error()
 		return r
@@ -570,14 +580,47 @@ func probe(ctx context.Context, p Provider, proto Protocol, url string, body []b
 		return r
 	}
 	start := time.Now()
-	res, err := p.Do(http.DefaultClient, req)
+	// each request sent, a retry's too, is a row; the last one carries
+	// what the test came to
+	type try struct {
+		url    string
+		start  time.Time
+		status int
+		err    error
+	}
+	var tries []try
+	send := func(q *http.Request) (*http.Response, error) {
+		t := try{url: q.URL.String(), start: time.Now()}
+		res, err := p.Do(http.DefaultClient, q)
+		if t.err = err; err == nil {
+			t.status = res.StatusCode
+		}
+		tries = append(tries, t)
+		return res, err
+	}
+	if logged {
+		defer func() {
+			for i, t := range tries {
+				if i == len(tries)-1 {
+					if r.Status != 0 {
+						t.status = r.Status
+					}
+					if r.Error != "" {
+						t.err = errors.New(r.Error)
+					}
+				}
+				probelog.Note(ctx, t.url, http.MethodPost, t.start, t.status, t.err)
+			}
+		}()
+	}
+	res, err := send(req)
 	if err == nil && proto == Anthropic {
 		// a vendor that takes one of the two key headers alone
-		res, err = RetryOneAuth(p, req, res, func(r *http.Request) (*http.Response, error) { return p.Do(http.DefaultClient, r) })
+		res, err = RetryOneAuth(p, req, res, send)
 	}
 	if err == nil && proto == Chat {
 		// a GLM Coding Plan's key at Zhipu's pay-as-you-go endpoint
-		res, err = RetryZhipuCoding(p, req, res, func(r *http.Request) (*http.Response, error) { return p.Do(http.DefaultClient, r) })
+		res, err = RetryZhipuCoding(p, req, res, send)
 	}
 	if err == nil {
 		// Zhipu's Responses API refuses a key 200, in an envelope: the

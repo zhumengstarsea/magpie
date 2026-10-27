@@ -96,10 +96,16 @@ func Catalog(ms []catalog.Model) []byte { return CatalogAt(ms, NewSessionEffort(
 // CatalogAt renders models as a whole models.json for a Codex that starts
 // new sessions at effort ("" for its models' own defaults): each model's
 // default_reasoning_level is ModelDefault's.
-func CatalogAt(ms []catalog.Model, effort string) []byte {
+func CatalogAt(ms []catalog.Model, effort string) []byte { return CatalogUsed(ms, effort, nil) }
+
+// CatalogUsed is CatalogAt with the models Codex used, most recent first,
+// kept where the Codex app reads them (Fit).
+func CatalogUsed(ms []catalog.Model, effort string, used []string) []byte {
+	entries := entriesAt(ms, 0, effort)
+	Fit(entries, used)
 	out := struct {
 		Models []any `json:"models"`
-	}{Models: entriesAt(ms, 0, effort)}
+	}{Models: entries}
 	if out.Models == nil {
 		out.Models = []any{}
 	}
@@ -539,6 +545,108 @@ func Order(entries []any, at map[string]int) {
 	}
 }
 
+// AppList is how much of Codex's model list the Codex app and its VS Code
+// extension read: each asks its app-server for model/list with
+// includeHidden, cursor null and limit 100, and never for the next page
+// (ChatGPT.app 26.1013's and openai.chatgpt 26.51021's webview), so a
+// model past the 100th by priority is in no picker of theirs and can't be
+// chosen there. The CLI's /model lists every one.
+const AppList = 100
+
+// Fit ranks entries, Codex's own and magpie's, so the first AppList by
+// priority are ones the Codex app can show and the user wants: a hidden
+// entry, which no picker shows, goes after every listed one; and when more
+// than AppList are listed, the ones used (slugs, most recent first, as
+// usage.CodexUsed has them) are brought into the first AppList, in the
+// order they stood, in place of the last of the others there. The order
+// is otherwise kept, and the priorities numbered 1 to n in it. The slice
+// is put in that order too.
+func Fit(entries []any, used []string) {
+	type ranked struct {
+		e        any
+		slug     string
+		was      int
+		hidden   bool
+		promoted bool
+	}
+	rs := make([]ranked, len(entries))
+	for i, e := range entries {
+		r := ranked{e: e, was: i}
+		switch o := e.(type) {
+		case map[string]any:
+			r.slug, _ = o["slug"].(string)
+			v, _ := o["visibility"].(string)
+			r.hidden = v == "hide"
+			switch p := o["priority"].(type) {
+			case float64:
+				r.was = int(p)
+			case int:
+				r.was = p
+			}
+		case *model:
+			r.slug, r.was, r.hidden = o.Slug, o.Priority, o.Visibility == "hide"
+		}
+		rs[i] = r
+	}
+	slices.SortStableFunc(rs, func(a, b ranked) int {
+		if a.hidden != b.hidden {
+			if a.hidden {
+				return 1
+			}
+			return -1
+		}
+		return a.was - b.was
+	})
+	listed := 0
+	for _, r := range rs {
+		if !r.hidden {
+			listed++
+		}
+	}
+	if listed > AppList && len(used) > 0 {
+		at := map[string]int{}
+		for i, r := range rs[:listed] {
+			at[r.slug] = i
+			// a ChatGPT account's own model, which magpie's records name
+			// as codex/<slug>
+			if _, ok := at["codex/"+r.slug]; !ok {
+				at["codex/"+r.slug] = i
+			}
+		}
+		n := 0
+		for _, u := range used {
+			if i, ok := at[u]; ok && !rs[i].promoted && n < AppList {
+				rs[i].promoted = true
+				n++
+			}
+		}
+		// the first AppList: the used ones and as many others, from the top,
+		// as there is room for, in the order they stood
+		room := AppList - n
+		first, rest := make([]ranked, 0, AppList), make([]ranked, 0, listed)
+		for _, r := range rs[:listed] {
+			if r.promoted || room > 0 {
+				if !r.promoted {
+					room--
+				}
+				first = append(first, r)
+				continue
+			}
+			rest = append(rest, r)
+		}
+		copy(rs, append(first, rest...))
+	}
+	for n, r := range rs {
+		switch o := r.e.(type) {
+		case map[string]any:
+			o["priority"] = n + 1
+		case *model:
+			o.Priority = n + 1
+		}
+		entries[n] = r.e
+	}
+}
+
 // CacheEntries is Codex's own models, as models_cache.json describes them
 // for the ChatGPT account it last asked with, by slug.
 func CacheEntries() map[string]map[string]any {
@@ -840,6 +948,16 @@ func Window(e map[string]any, n, most int) {
 // Tag names a list of magpie's models: another list, another tag.
 func Tag(ms []catalog.Model) string {
 	b, _ := json.Marshal(ms)
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:6])
+}
+
+// UsedTag names the set of models Codex used (Fit's used): the list Fit
+// makes changes with the set, not with which of them came last.
+func UsedTag(used []string) string {
+	set := slices.Clone(used)
+	slices.Sort(set)
+	b, _ := json.Marshal(set)
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:6])
 }
