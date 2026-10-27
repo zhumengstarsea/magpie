@@ -11,7 +11,7 @@
 // A link stays here after its seat ends: a copy of the README or the page
 // may still point at it.
 export const SPONSORS = [
-  { id: "yylx", home: "https://yylx.io/?ref=magpie" },
+  { id: "yylx", home: "https://app.yylx.io/register?aff=YETONE" },
   { id: "apinebula", home: "https://apinebula.ai/ref/Gs54HwyB", readme: "https://apinebula.ai/ref/qmXqFGpr" },
   { id: "zerotoken", readme: "https://zzq.si/go/22zuh4a" },
   { id: "kimi", readme: "https://www.kimi.ai/code?aff=magpie" },

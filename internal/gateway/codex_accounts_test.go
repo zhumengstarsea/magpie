@@ -171,7 +171,7 @@ func TestCodexOwnModelRetriesPoolAfterTransientUpstreamFailure(t *testing.T) {
 	if code != http.StatusOK || !strings.Contains(body, "pong") {
 		t.Fatalf("status %d: %s; tried %v", code, body, tried)
 	}
-	if attempts != 5 || strings.Join(tried, ",") != "acct-1,acct-2,acct-2,acct-2,acct-1" {
+	if attempts != 5 || strings.Join(tried, ",") != "acct-1,acct-2,acct-1,acct-2,acct-1" {
 		t.Fatalf("attempts %d tried %v", attempts, tried)
 	}
 }
@@ -205,7 +205,7 @@ func TestCodexOwnModelRetriesPoolAfterUpstreamOverload(t *testing.T) {
 	if code != http.StatusOK || !strings.Contains(body, "pong") {
 		t.Fatalf("status %d: %s; tried %v", code, body, tried)
 	}
-	if attempts != 5 || strings.Join(tried, ",") != "acct-1,acct-2,acct-2,acct-2,acct-1" {
+	if attempts != 5 || strings.Join(tried, ",") != "acct-1,acct-2,acct-1,acct-2,acct-1" {
 		t.Fatalf("attempts %d tried %v", attempts, tried)
 	}
 }

@@ -1,14 +1,16 @@
 // Package guard runs AstrLink Guard (QuantumNous/astrlink-guard,
 // Apache-2.0), a token classifier for secrets and personal data in Chinese
-// and English text, on the CPU in Go: its int8 ONNX model (37 MB) read by
-// onnx.go and run by bert.go, its tokenizer by tokenizer.go. Nothing
-// native is linked or started.
+// and English text: its int8 ONNX model (37 MB) read by onnx.go and run
+// by bert.go on the CPU in Go, or on a Mac by CoreML (coreml.go),
+// its tokenizer by tokenizer.go. Nothing is started.
 package guard
 
 import (
 	"fmt"
 	"math"
 	"path/filepath"
+
+	"github.com/yetone/magpie/internal/pii/guard/coreml"
 )
 
 // labels are the model's BIO tags, by output index (its labels.json).
@@ -26,6 +28,9 @@ var Files = []string{"model_int8.onnx", "model_int8.onnx_data", "tokenizer.json"
 type Model struct {
 	tok *tokenizer
 	net *net
+	ml  *coreml.Model // nil where CoreML isn't, or couldn't be made
+	// MLErr is why CoreML isn't used, on a Mac.
+	MLErr error
 }
 
 // Span is what the model found: text[Start:End], a Label of its (email,
@@ -67,7 +72,20 @@ func Load(dir string) (*Model, error) {
 	if nt.labels != len(labels) {
 		return nil, fmt.Errorf("model: %d labels, not %d", nt.labels, len(labels))
 	}
-	return &Model{tok, nt}, nil
+	m := &Model{tok: tok, net: nt}
+	m.ml, m.MLErr = openCoreML(dir, nt)
+	return m, nil
+}
+
+// logits are the network's scores for ids, from CoreML when it is there
+// and the window is long enough to gain by it.
+func (m *Model) logits(ids []int) []float32 {
+	if m.ml != nil && len(ids) >= coremlMin {
+		if lg, err := coremlLogits(m.ml, m.net, ids); err == nil {
+			return lg
+		}
+	}
+	return m.net.logits(ids)
 }
 
 // Find is what the model finds in text, at Floor, each span with its score.
@@ -91,7 +109,7 @@ func (m *Model) Find(text string) []Span {
 			ids = append(ids, t.id)
 		}
 		ids = append(ids, 2)
-		lg := m.net.logits(ids)
+		lg := m.logits(ids)
 		k := len(labels)
 		for i := 0; i < end-start; i++ {
 			j := start + i

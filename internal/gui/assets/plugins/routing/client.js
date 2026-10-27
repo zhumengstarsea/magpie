@@ -1386,15 +1386,27 @@ function routingPage(part) {
   // three agents sending at once, ~10 s of a 40 s look at the page went to
   // getTotalLength and getPointAtLength alone, and the page lagged
   // (yg6888 on X: "打开页面很卡").
-  const measured = new WeakMap(); // path → { d, L, tips, pts, flat }
+  // Neither is asked of the browser for a d of magpie's own: its length is
+  // that of its points (flat) and the wire ends a flight meets are read
+  // from it (wireEnds). While rows slide every wire's d is new each frame,
+  // and getTotalLength on each was a quarter of a busy page's time
+  // (#3813).
+  const measured = new WeakMap(); // path → { d, L, tips, pts, flat, ends }
   function measure(p) {
     const d = p.isConnected && p.getAttribute("d");
     if (!d) return null;
     let m = measured.get(p);
-    if (!m || m.d !== d) measured.set(p, m = { d, L: p.getTotalLength?.() || 0, tips: [], pts: [] });
+    if (!m || m.d !== d) measured.set(p, m = { d, tips: [], pts: [] });
     return m;
   }
-  const pathLength = (p) => measure(p)?.L || 0;
+  const lengthOf = (p, m) => {
+    if (m.L === undefined) {
+      if (m.flat === undefined) m.flat = flat(m.d);
+      m.L = m.flat ? m.flat.len[m.flat.len.length - 1] : p.getTotalLength?.() || 0;
+    }
+    return m.L;
+  };
+  const pathLength = (p) => { const m = measure(p); return m ? lengthOf(p, m) : 0; };
   // pointAt is the point s along p, read between the points measured every
   // ptStep along it, each measured once for its d: every flight asked
   // getPointAtLength three times a frame, and the flights on one wire asked
@@ -1441,13 +1453,10 @@ function routingPage(part) {
   }
   function pointAt(p, s) {
     const m = measure(p);
-    if (!m?.L) return p.getPointAtLength(s);
+    if (!m || !lengthOf(p, m)) return p.getPointAtLength(s);
     s = Math.max(0, Math.min(m.L, s));
-    if (m.flat === undefined) m.flat = flat(m.d);
     if (m.flat) {
-      // the browser's length and the points' differ by a hair: s is read
-      // as the same share of the way along
-      const { xs, ys, len } = m.flat, u = s / m.L * len[len.length - 1];
+      const { xs, ys, len } = m.flat, u = s;
       let lo = 0, hi = len.length - 1;
       while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (len[mid] <= u) lo = mid; else hi = mid; }
       const f = len[hi] > len[lo] ? (u - len[lo]) / (len[hi] - len[lo]) : 0;
@@ -1464,16 +1473,58 @@ function routingPage(part) {
   // tip is where a flight meets a wire's end or start, and which way it
   // heads there: along the wire, or back along it
   const tip = (p, atEnd, back) => () => {
-    const m = measure(p), L = m?.L;
-    if (!L) return null; // not laid out: nowhere to meet it yet
+    const m = measure(p);
+    if (!m) return null; // not laid out: nowhere to meet it yet
     const key = (atEnd ? 2 : 0) + (back ? 1 : 0);
     if (m.tips[key]) return m.tips[key];
-    const a = p.getPointAtLength(atEnd ? L : 0), b = p.getPointAtLength(atEnd ? Math.max(0, L - 2) : Math.min(L, 2));
-    let tx = atEnd ? a.x - b.x : b.x - a.x, ty = atEnd ? a.y - b.y : b.y - a.y;
+    if (m.ends === undefined) m.ends = wireEnds(m.d);
+    let a, tx, ty;
+    if (m.ends) {
+      const e = m.ends[atEnd ? 1 : 0];
+      a = e; tx = e.tx; ty = e.ty;
+    } else {
+      const L = lengthOf(p, m);
+      if (!L) return null;
+      a = p.getPointAtLength(atEnd ? L : 0);
+      const b = p.getPointAtLength(atEnd ? Math.max(0, L - 2) : Math.min(L, 2));
+      tx = atEnd ? a.x - b.x : b.x - a.x; ty = atEnd ? a.y - b.y : b.y - a.y;
+    }
     if (back) { tx = -tx; ty = -ty; }
     const n = Math.hypot(tx, ty) || 1;
     return m.tips[key] = { x: a.x, y: a.y, tx: tx / n, ty: ty / n };
   };
+  // wireEnds are a d's start and end, each with the way it heads there (along
+  // the path at its end, into it at its start), read off its first and
+  // last pieces: the line or control point next to each end that isn't
+  // the end itself. Only for magpie's own absolute M, L, Q and C, and
+  // null for any other d, or one with no way at all, which the browser
+  // measures instead.
+  function wireEnds(d) {
+    const n = d.match(/[A-Za-z]|-?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?/gi) || [], k = { M: 2, L: 2, Q: 4, C: 6 };
+    const pts = []; // [x, y], each point the d names in turn
+    let c = "";
+    for (let i = 0; i < n.length;) {
+      if (/[A-Za-z]/.test(n[i])) { c = n[i++]; continue; }
+      if (!k[c] || (c === "M" && pts.length)) return null;
+      const a = n.slice(i, i += k[c]).map(Number);
+      if (a.length < k[c] || a.some(isNaN)) return null;
+      for (let j = 0; j < a.length; j += 2) pts.push([a[j], a[j + 1]]);
+      if (c === "M") c = "L";
+    }
+    if (pts.length < 2) return null;
+    const way = (from, step) => {
+      const [x, y] = pts[from];
+      for (let j = from + step; j >= 0 && j < pts.length; j += step) {
+        const tx = (pts[j][0] - x) * step, ty = (pts[j][1] - y) * step, h = Math.hypot(tx, ty);
+        if (h > 1e-9) return { x, y, tx: tx / h, ty: ty / h };
+      }
+      return null;
+    };
+    // at its start, from the start to what comes next; at its end, from
+    // what came before to the end
+    const s = way(0, 1), e = way(pts.length - 1, -1);
+    return s && e ? [s, e] : null;
+  }
   // via is the way through magpie from one wire to the next: a gentle arc
   // across it, carrying on the way the flight came in and leaving the way
   // the next wire goes — or, out the side it came in, a loop round inside.

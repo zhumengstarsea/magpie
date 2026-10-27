@@ -211,6 +211,10 @@ func entriesAt(ms []catalog.Model, after int, effort string) []any {
 			entries = append(entries, e)
 			continue
 		}
+		if e, ok := listedEntry(m, after+i+1, work, autoReview, v1, effort); ok {
+			entries = append(entries, e)
+			continue
+		}
 		e := model{
 			Slug: m.ID, DisplayName: m.Name, Description: m.Name + " via magpie",
 			Instructions: Prompt, Efforts: []level{},
@@ -718,6 +722,90 @@ func ownEntry(raw map[string]any, id, name string, priority int) map[string]any 
 		e["base_instructions"] = Prompt
 	}
 	return e
+}
+
+// listedEntry is the entry m's vendor lists it under in Codex's own shape
+// (catalog.Model.Codex, a sub2api's), under magpie's id: as the vendor
+// gave it — its instructions, tools, truncation, tiers and the rest, which
+// magpie neither guesses nor rewrites — but for what the user set. A
+// window, compaction or levels the user gave the model, its images
+// switched, and the auto-review model picked in magpie, are said as the
+// entries magpie makes say them; with none of them it is the vendor's
+// entry, its description ending " via magpie" so it is told from Codex's
+// own (catalog.MagpieAdded). False when m has none, or one magpie can't
+// read, which is then made as any other model's.
+func listedEntry(m catalog.Model, priority int, work settings.Settings, autoReview string, v1 bool, effort string) (map[string]any, bool) {
+	var raw map[string]any
+	if len(m.Codex) == 0 || json.Unmarshal(m.Codex, &raw) != nil || raw == nil {
+		return nil, false
+	}
+	e := ownEntry(raw, m.ID, m.Name, priority)
+	desc, _ := e["description"].(string)
+	e["description"] = cmp.Or(strings.TrimSpace(desc), m.Name) + " via magpie"
+	if c := m.Context; c > 0 {
+		// the window magpie resolves (the user's, else this entry's own),
+		// and where the user has Codex compact it, theirs alone: not
+		// magpie's default working window, as the vendor said its own
+		Window(e, c, 0)
+		w := c
+		if m.Compact > 0 {
+			w = min(c, m.Compact)
+		} else if work.CompactAt > 0 {
+			w = work.Working(c)
+		}
+		if w < c {
+			e["context_window"] = w
+		}
+	}
+	// the levels, where the user's differ from the vendor's: those the
+	// vendor lists kept as it wrote them, with their descriptions
+	listed, _ := e["supported_reasoning_levels"].([]any)
+	byEffort := map[string]any{}
+	var had []string
+	for _, l := range listed {
+		o, _ := l.(map[string]any)
+		if ef, _ := o["effort"].(string); ef != "" {
+			byEffort[ef] = l
+			had = append(had, ef)
+		}
+	}
+	if !slices.Equal(had, m.Efforts) {
+		levels := []any{}
+		for _, ef := range m.Efforts {
+			l, ok := byEffort[ef]
+			if !ok {
+				l = map[string]any{"effort": ef}
+			}
+			levels = append(levels, l)
+		}
+		e["supported_reasoning_levels"] = levels
+		if d, _ := e["default_reasoning_level"].(string); !slices.Contains(m.Efforts, d) {
+			if len(m.Efforts) == 0 {
+				e["default_reasoning_level"] = nil
+			} else {
+				e["default_reasoning_level"] = ModelDefault(m.Efforts, effort)
+			}
+		}
+	}
+	// images, where the user's say (or magpie describing them) differs
+	if in, ok := e["input_modalities"].([]any); ok {
+		has := slices.Contains(in, any("image"))
+		if m.Images && !has {
+			e["input_modalities"] = append(slices.Clone(in), "image")
+		} else if !m.Images && has {
+			e["input_modalities"] = slices.DeleteFunc(slices.Clone(in), func(x any) bool { return x == "image" })
+		}
+	}
+	if v1 && m.Fast {
+		Stamp(e)
+	} else if _, ok := e["multi_agent_version"]; !ok && m.AgentsV2 {
+		e["multi_agent_version"] = "v2"
+	}
+	AutoReview(e, autoReview)
+	if autoReview == settings.CodexAutoReviewSession {
+		e["auto_review_model_override"] = m.ID
+	}
+	return e, true
 }
 
 // Window has one of Codex's own entries say a context window of n tokens

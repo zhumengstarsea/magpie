@@ -263,26 +263,30 @@ func DismissCodexApp() {
 // proxy, nor an editor's codex.
 func findCodexApp(ps []proc.Process) int {
 	for _, p := range ps {
-		if isManagedDaemon(p.Args) {
-			continue
+		if isCodexAppServer(p.Args) {
+			return p.PID
 		}
-		// the program's own path: ps leaves a path's spaces unquoted, so
-		// "…/Codex Computer Use.app/Contents/MacOS/…" reads as one named Codex
-		exe, rest := splitExe(p.Args)
-		if !strings.Contains(exe, ".app/Contents/") && !strings.Contains(exe, `\WindowsApps\OpenAI.`) {
-			continue
-		}
-		if base := strings.ToLower(exe[strings.LastIndexAny(exe, `/\`)+1:]); base != "codex" && base != "codex.exe" {
-			continue
-		}
-		f := strings.Fields(rest)
-		i := slices.Index(f, "app-server")
-		if i < 0 || i+1 < len(f) && !strings.HasPrefix(f[i+1], "-") {
-			continue
-		}
-		return p.PID
 	}
 	return 0
+}
+
+// isCodexAppServer is findCodexApp's test of one command line.
+func isCodexAppServer(args string) bool {
+	if isManagedDaemon(args) {
+		return false
+	}
+	// the program's own path: ps leaves a path's spaces unquoted, so
+	// "…/Codex Computer Use.app/Contents/MacOS/…" reads as one named Codex
+	exe, rest := splitExe(args)
+	if !strings.Contains(exe, ".app/Contents/") && !strings.Contains(exe, `\WindowsApps\OpenAI.`) {
+		return false
+	}
+	if base := strings.ToLower(exe[strings.LastIndexAny(exe, `/\`)+1:]); base != "codex" && base != "codex.exe" {
+		return false
+	}
+	f := strings.Fields(rest)
+	i := slices.Index(f, "app-server")
+	return i >= 0 && (i+1 >= len(f) || strings.HasPrefix(f[i+1], "-"))
 }
 
 // RestartCodexDaemon has Codex restart its app-server, which reads the

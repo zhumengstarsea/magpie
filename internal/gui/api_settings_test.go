@@ -326,3 +326,28 @@ func TestSettingsRedactWordsAnyCaseKept(t *testing.T) {
 		}
 	}
 }
+
+// Whole words only is the Privacy page's too: a page from before it sends
+// no redactWordsWhole, and its save leaves the user's choice as it was; a
+// page that sends it sets it (acmilan_ on Discord).
+func TestSettingsRedactWordsWholeKept(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	h := Handler(nil, nil)
+	for _, c := range []struct {
+		body string
+		want bool
+	}{
+		{`{"theme":"dark","redactWords":["ABC"],"redactWordsWhole":true}`, true},
+		{`{"theme":"light","redactWords":["ABC"],"redactWordsAnyCase":true}`, true},
+		{`{"theme":"light","redactWords":["ABC"],"redactWordsWhole":false}`, false},
+	} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("POST", "/api/settings", strings.NewReader(c.body)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("saving %s: %d %s", c.body, rec.Code, rec.Body)
+		}
+		if got := settings.Load(); got.RedactWordsWhole != c.want || !reflect.DeepEqual(got.RedactWords, []string{"ABC"}) {
+			t.Fatalf("after %s: whole words %v, words %v; want %v", c.body, got.RedactWordsWhole, got.RedactWords, c.want)
+		}
+	}
+}

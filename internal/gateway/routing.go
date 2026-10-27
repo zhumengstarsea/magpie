@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/yetone/magpie/internal/catalog"
 	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/routes"
 	"github.com/yetone/magpie/internal/usage"
@@ -339,38 +340,9 @@ const reloopedError = "the model's reasoning was stuck in a loop before it said 
 // over HTTP (proxyconnect) or SOCKS (socks connect).
 var proxyDown = regexp.MustCompile(`proxyconnect |socks connect `)
 
-// wordsOf is an error body as its words are matched: a JSON body that
-// escapes what isn't ASCII as \uXXXX (Python's json.dumps does by default)
-// has its strings decoded and put after it, one to a line, so "用量",
-// "频率" or "将在 … 重置" are read whether the vendor escaped them or not
-// (#1669). Any other body is matched as it is.
-func wordsOf(body []byte) []byte {
-	if !bytes.Contains(body, []byte(`\u`)) {
-		return body
-	}
-	var v any
-	if json.Unmarshal(body, &v) != nil {
-		return body
-	}
-	out := append([]byte(nil), body...)
-	var walk func(any)
-	walk = func(x any) {
-		switch x := x.(type) {
-		case string:
-			out = append(append(out, '\n'), x...)
-		case map[string]any:
-			for _, y := range x {
-				walk(y)
-			}
-		case []any:
-			for _, y := range x {
-				walk(y)
-			}
-		}
-	}
-	walk(v)
-	return out
-}
+// wordsOf is catalog.Words: an error body as its words are matched, with
+// the strings of a JSON body that escapes what isn't ASCII decoded (#1669).
+func wordsOf(body []byte) []byte { return catalog.Words(body) }
 
 // failure says why a reply failed.
 func failure(status int, body []byte) string {

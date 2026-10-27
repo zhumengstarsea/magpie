@@ -297,8 +297,14 @@ func layerNorm(x []float32, rows int, w, b []float32) {
 // logits are the classifier's scores for each of ids, a sequence of up to
 // maxPos tokens with its <s> and </s>: [len(ids), labels].
 func (nt *net) logits(ids []int) []float32 {
+	return nt.encode(nt.embed(ids, 0), len(ids))
+}
+
+// embed is the layer-normed embeddings of ids, [len(ids), hidden], in a
+// slice of at least rows rows (the rest zero).
+func (nt *net) embed(ids []int, rows int) []float32 {
 	n := len(ids)
-	x := make([]float32, n*hidden)
+	x := make([]float32, max(n, rows)*hidden)
 	for t, id := range ids {
 		row := x[t*hidden : t*hidden+hidden]
 		w := nt.word[id*hidden : id*hidden+hidden]
@@ -308,6 +314,11 @@ func (nt *net) logits(ids []int) []float32 {
 		}
 	}
 	layerNorm(x, n, nt.embLNw, nt.embLNb)
+	return x
+}
+
+// encode is the classifier's scores for embeddings x of n tokens.
+func (nt *net) encode(x []float32, n int) []float32 {
 	for i := range nt.layers {
 		l := &nt.layers[i]
 		qkv := l.qkv.matmul(x, n)

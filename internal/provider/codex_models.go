@@ -508,6 +508,15 @@ func buildCodexListTag(kind string) string {
 	for _, slug := range off {
 		ms = append(ms, catalog.Model{ID: "-" + slug})
 	}
+	// and the account's own kept to the codex provider's picks, none of
+	// them under Usage only (#2530), so a change of either has Codex ask
+	// for the list again rather than keep the one it has
+	if keep, narrowed := CodexNativePicked(); narrowed {
+		ms = append(ms, catalog.Model{ID: "~picked"})
+		for _, slug := range slices.Sorted(maps.Keys(keep)) {
+			ms = append(ms, catalog.Model{ID: "~picked:" + slug})
+		}
+	}
 	// and those kept out of the lists for routing groups (#1602)
 	all, unlisted := CodexNativeUnlisted()
 	if all {
@@ -551,10 +560,17 @@ func buildCodexListTag(kind string) string {
 //
 // A provider switched off picks nothing, as it serves no agent anything
 // (Provider.Off): its picks are kept for when it is switched on again and
-// are not a narrowing now.
+// are not a narrowing now. Usage only narrows the visible native list to
+// none, as it does the general catalog; codexModels keeps hidden jobs.
 func CodexNativePicked() (map[string]bool, bool) {
 	p, ok := find(All(), "codex")
-	if !ok || p.Off || len(p.Models) == 0 {
+	if !ok || p.Off {
+		return nil, false
+	}
+	if p.ServesNone() {
+		return nil, true
+	}
+	if len(p.Models) == 0 {
 		return nil, false
 	}
 	keep := make(map[string]bool, len(p.Models))
@@ -656,7 +672,7 @@ func codexListed(shown []Entry, members func(id string) []Member, own bool) []ca
 		if CodexOwn(e) && !own {
 			continue
 		}
-		m := catalog.Model{ID: e.ID, Name: labels[i], Efforts: e.Efforts, Images: e.Images || seen, Context: e.Context, AgentsV2: e.AgentsV2}
+		m := catalog.Model{ID: e.ID, Name: labels[i], Efforts: e.Efforts, Images: e.Images || seen, Context: e.Context, AgentsV2: e.AgentsV2, Codex: e.Codex}
 		m.Compact = CompactFor(s, e, find)
 		CodexTiers(&m, e, members)
 		ms = append(ms, m)

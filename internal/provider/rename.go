@@ -168,6 +168,9 @@ type Gave struct {
 type Renames struct {
 	now  map[string]string
 	gave map[string][]gaveTo
+	// hosts are the providers by the host each is on, for magpie's own
+	// requests to a provider being added, which has no id yet (ProbeOf)
+	hosts map[string]string
 }
 
 type gaveTo struct {
@@ -188,6 +191,20 @@ func (r Renames) Of(id string, at time.Time) string {
 		return to
 	}
 	return id
+}
+
+// ProbeOf is Of for one of magpie's own requests (probelog): one sent
+// while a provider was being added, its Detect or Test before it had an
+// id, is recorded under its host, and is the provider's on that host now.
+// yyddbds on Discord: 大灰狼, on dahuilang.best, was listed twice in the
+// Requests page's providers, once as dahuilang.best for the model lists
+// asked while adding it. A host two providers are on, or none, stays as
+// it is.
+func (r Renames) ProbeOf(id string, at time.Time) string {
+	if to := r.hosts[strings.ToLower(id)]; to != "" {
+		return to
+	}
+	return r.Of(id, at)
 }
 
 // Timed is whether the id's calls go to more than one provider by when
@@ -260,6 +277,27 @@ func renamesOf(ps []Provider) Renames {
 	}
 	for _, gs := range r.gave {
 		slices.SortStableFunc(gs, func(a, b gaveTo) int { return a.Until.Compare(b.Until) })
+	}
+	for _, p := range ps {
+		if p.Hidden {
+			continue
+		}
+		for _, u := range []string{p.Chat, p.Responses, p.Anthropic, p.Gemini, p.Decide} {
+			h := HostOf(u)
+			// a provider's id (one stored by hand can have a dot, b.ai)
+			// is that provider's, never a host's
+			if h == "" || held[h] {
+				continue
+			}
+			if r.hosts == nil {
+				r.hosts = map[string]string{}
+			}
+			if to, ok := r.hosts[h]; ok && to != p.ID {
+				r.hosts[h] = "" // two providers on it: which one is unknown
+				continue
+			}
+			r.hosts[h] = p.ID
+		}
 	}
 	return r
 }

@@ -121,8 +121,11 @@ type Settings struct {
 	RedactWords      []string           `json:"redactWords,omitempty"`
 	// RedactWordsAnyCase matches RedactWords in any case (ZoeCats on
 	// Discord); off, the default, a word is matched as written.
-	RedactWordsAnyCase bool          `json:"redactWordsAnyCase,omitempty"`
-	RedactRules        []redact.Rule `json:"redactRules,omitempty"`
+	RedactWordsAnyCase bool `json:"redactWordsAnyCase,omitempty"`
+	// RedactWordsWhole matches RedactWords only as whole words (acmilan_
+	// on Discord); off, the default, a word is found inside longer ones too.
+	RedactWordsWhole bool          `json:"redactWordsWhole,omitempty"`
+	RedactRules      []redact.Rule `json:"redactRules,omitempty"`
 	// RedactActions is what is done with a value of a kind (redact.Hit's
 	// Kind: API_KEY, EMAIL, a rule's own…) other than masking it, where
 	// the user chose: redact.Warn sends it as written and records it,
@@ -514,7 +517,8 @@ type Settings struct {
 	CodexTitles string `json:"codexTitles,omitempty"`
 	// CodexDescriptions is where the request Codex makes for a thread's
 	// description (thread_description: its own hidden turn, on Codex's own
-	// model through its ChatGPT sign-in) goes: "" as Codex sends it, or a
+	// model through its ChatGPT sign-in) goes: "" as Codex sends it, "off"
+	// answered by magpie with no description and sent nowhere, or a
 	// model's id (provider/model, group/<id>) that writes it. It is not
 	// CodexTitles: a description asks for {"description"} alone.
 	CodexDescriptions string `json:"codexDescriptions,omitempty"`
@@ -1587,8 +1591,8 @@ func save(s Settings, recording bool) error {
 		return fmt.Errorf("the model for Codex's titles must be a model's id such as openai/gpt-5-mini, or off, not %q", s.CodexTitles)
 	}
 	s.CodexDescriptions = strings.TrimSpace(s.CodexDescriptions)
-	if s.CodexDescriptions != "" && !strings.Contains(s.CodexDescriptions, "/") {
-		return fmt.Errorf("the model for Codex's descriptions must be a model's id such as openai/gpt-5-mini, not %q", s.CodexDescriptions)
+	if s.CodexDescriptions != "" && s.CodexDescriptions != "off" && !strings.Contains(s.CodexDescriptions, "/") {
+		return fmt.Errorf("the model for Codex's descriptions must be a model's id such as openai/gpt-5-mini, or off, not %q", s.CodexDescriptions)
 	}
 	s.CodexPredictions = strings.TrimSpace(s.CodexPredictions)
 	if s.CodexPredictions != "" && s.CodexPredictions != "off" && !strings.Contains(s.CodexPredictions, "/") {

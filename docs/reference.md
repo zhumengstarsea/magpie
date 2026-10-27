@@ -1896,17 +1896,27 @@ page's port (`127.0.0.1:3430`) answers the gateway's client routes as well
 (`/v1/…`, `/v1beta/…`, `/mcp/…`, `/backend-api/codex/…` and the same
 routes without `/v1`), handing them to the gateway, so a proxy that sends
 everything to the page's port serves the page at `https://magpie.example.com/`
-and the agents at `https://magpie.example.com/v1`. Those routes are judged
-there exactly as on the gateway's port (the allow list, a gateway key from
-another machine or through the proxy, the Origin and Host checks); the
-page's sign-in cookie is no gateway key, and the page and its `/api` still
-need the page's key. Ollama's `/api/*` and Claude Desktop's `/api/hello`
-are the page's own namespace on that port, so a client of those is given
-the gateway's own port. When the
-proxy and magpie run on the same machine, a request it forwards over
-loopback carries a forwarding header and needs a gateway key as one from
-the network does (see [Providers and the gateway](#providers-and-the-gateway)); a proxy that
-authenticates its clients itself can be trusted with `MAGPIE_TRUST_PROXY=1`.
+and the agents at `https://magpie.example.com/v1`. On the page's port every
+one of those routes is answered as a request from another machine, from
+loopback too: only while Settings → Network and sharing → Share on local
+network is on (or `MAGPIE_ADDR` is on the network), and with an enabled
+gateway key, after the allow list. A forward to that port that adds no
+forwarding header (frp's `tcp`, `ssh -R`, socat, an nginx `proxy_pass`
+without `X-Forwarded-For`) reaches it from loopback, so magpie can't tell
+it from an agent on this computer and never answers it as one;
+`MAGPIE_TRUST_PROXY=1` doesn't change that. The page's sign-in cookie is
+no gateway key, and the page and its `/api` still need the page's key.
+Agents on this computer call the gateway's own port (`127.0.0.1:3425`),
+which needs no key from loopback. Ollama's `/api/*` and Claude Desktop's
+`/api/hello` are the page's own namespace on that port, so a client of
+those is given the gateway's own port. On the gateway's own port, a
+request a proxy on the same machine forwards over loopback with a
+forwarding header needs a gateway key as one from the network does (see
+[Providers and the gateway](#providers-and-the-gateway)), and one without
+a forwarding header looks like an agent here: put the page's port, not
+the gateway's, behind a forward that adds none. A proxy that authenticates
+its clients itself can be trusted on the gateway's port with
+`MAGPIE_TRUST_PROXY=1`.
 
 It exposes:
 

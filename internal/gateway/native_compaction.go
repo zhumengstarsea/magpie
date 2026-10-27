@@ -296,9 +296,9 @@ func (s *Server) checkpointReaders(cands []candidate, pl planned, cp checkpointW
 		}
 		// Preserve the last-resort writer when every account's model list
 		// has become stale. No unrelated provider is added to the plan.
-		return checkpointReaders(kept, pool, cp.Who)
+		return checkpointReaders(kept, pool, cp)
 	}
-	return checkpointReaders(cands, pl, cp.Who)
+	return checkpointReaders(cands, pl, cp)
 }
 
 // checkpointReaders keeps of cands those of the key or account who, pl's
@@ -308,15 +308,17 @@ func (s *Server) checkpointReaders(cands []candidate, pl planned, cp checkpointW
 // and none other can read what it sealed. Its row goes from left to the
 // order with it, so the Routing page doesn't tell it both tried and
 // unlisted, skipped.
-func checkpointReaders(cands []candidate, pl planned, who string) (_ []candidate, _ planned, left bool) {
-	kept, pl, ok := keepCandidates(cands, pl, func(c candidate) bool { return c.who() == who })
+func checkpointReaders(cands []candidate, pl planned, cp checkpointWriter) (_ []candidate, _ planned, left bool) {
+	// behind a remote magpie, the provider there that sealed it too
+	reads := func(c candidate) bool { return c.sameVendor(cp.Who, cp.Model) }
+	kept, pl, ok := keepCandidates(cands, pl, reads)
 	if ok {
 		return kept, pl, true
 	}
 	var found []candidate
 	var ws []Weighed
 	for i, c := range pl.unlisted {
-		if c.who() != who {
+		if !reads(c) {
 			continue
 		}
 		found = append(found, c)

@@ -57,6 +57,8 @@ func clipProbeError(s string) string {
 // row's is; nil for none.
 // A provider renamed since is listed by the id it has now (Renames): the
 // Requests page's provider list named a renamed one twice (cybercaius).
+// One asked while a provider was being added, under its host, is listed
+// by the id of the provider on that host (Renames.ProbeOf).
 func probeChunk(probes []probeRow, since time.Time, renames provider.Renames) *rowChunk {
 	var c *rowChunk
 	for _, p := range probes {
@@ -67,7 +69,7 @@ func probeChunk(probes []probeRow, since time.Time, renames provider.Renames) *r
 			c = &rowChunk{}
 		}
 		r := p.Record
-		r.Provider = renames.Of(r.Provider, r.Time)
+		r.Provider = renames.ProbeOf(r.Provider, r.Time)
 		c.add(Row{Record: r, Source: SourceProbe}, "", p.off, false)
 	}
 	if c == nil {

@@ -46,6 +46,36 @@ func init() {
 	}
 	// a Copilot CLI signed in inside a running distro (#723)
 	provider.CopilotWSLHomes = copilotWSLHomes
+	// the Codex app's app-server is restarted when magpie becomes Codex's
+	// provider for its used-up ChatGPT account, and when it stops being it;
+	// and when Codex is connected or disconnected, or its route otherwise
+	// changes, so a running app sends where its config now says
+	provider.CodexAppRoute = codexAppRoute
+}
+
+// codexAppRoute is where Codex's config sends it, as the app-server reads
+// it at its start: the keys magpie writes for that, never one the Codex
+// app writes itself (model); and whether magpie is Codex's provider for
+// its used-up ChatGPT account (AppOut). Not known when Codex's config
+// can't be read.
+func codexAppRoute() (route string, out, known bool) {
+	home, _ := homes()
+	a := codex(home)
+	if _, err := os.ReadFile(a.Path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", false, false
+	}
+	out = a.AppOut != nil && a.AppOut()
+	var b strings.Builder
+	for _, k := range []string{"model_provider", "openai_base_url", "model_catalog_json"} {
+		v, _ := edit.GetTOMLTop(a.Path, k)
+		b.WriteString(k + "=" + v + "\n")
+	}
+	t, _ := edit.GetTOMLTable(a.Path, "model_providers."+magpieID)
+	b.WriteString("magpie.base_url=" + t["base_url"] + "\n")
+	if out {
+		b.WriteString("out\n")
+	}
+	return b.String(), out, true
 }
 
 // others are clients that reach the gateway without being agents magpie

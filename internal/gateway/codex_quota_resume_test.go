@@ -75,6 +75,94 @@ func TestCodexQuotaResumeAfterSingleProbe(t *testing.T) {
 	}
 }
 
+// A transport failure can rest a nearly spent account until its allowance
+// window resets. Its "other/window" rest must not veto a pool's quota wait.
+func TestCodexQuotaResumeWithWindowRest(t *testing.T) {
+	quotaResumeTest(t)
+	reset := time.Now().Add(time.Second)
+	old := allowances
+	t.Cleanup(func() { allowances = old })
+	allowances = func(string) map[string]provider.Allowance {
+		used := 98.0
+		if !time.Now().Before(reset) {
+			used = 0
+		}
+		return map[string]provider.Allowance{
+			"me@example.com":    {{Used: 100, Resets: reset, Span: 5 * time.Hour}},
+			"spare@example.com": {{Used: used, Resets: reset.Add(time.Second), Span: 5 * time.Hour}},
+		}
+	}
+	var asks atomic.Int32
+	quotaBackend(t, func(w http.ResponseWriter, r *http.Request) {
+		io.ReadAll(r.Body)
+		asks.Add(1)
+		if time.Now().Before(reset) {
+			quotaReply(w)
+			return
+		}
+		quotaPong(w)
+	})
+	p, err := provider.Find("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New()
+	cs, _ := s.plan(*p, "gpt-5.5", provider.Responses)
+	if len(cs) != 2 {
+		t.Fatalf("pool: %d accounts", len(cs))
+	}
+	for _, c := range cs {
+		if c.p.Account.User == "spare@example.com" {
+			rest := s.restAfter(c, 502, nil, []byte(`upstream EOF`))
+			if rest.Why != failOther || rest.By != "window" {
+				t.Fatalf("wanted the reporter's other/window rest, got %+v", rest)
+			}
+		} else {
+			s.restAfter(c, 429, nil, []byte(`{"error":{"type":"usage_limit_reached","resets_in_seconds":1}}`))
+		}
+	}
+	code, body := codexPost(t, `{"model":"gpt-5.5","stream":true,"input":"ping"}`)
+	if code != 200 || !strings.Contains(body, "pong") || asks.Load() < 2 {
+		t.Fatalf("mixed window rest ended the request: status=%d asks=%d body=%s", code, asks.Load(), body)
+	}
+}
+
+func TestCodexQuotaWaitDoesNotHideOtherFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		used   float64
+	}{
+		{"invalid login", http.StatusUnauthorized, 98},
+		{"forbidden", http.StatusForbidden, 98},
+		{"transport failure with allowance left", http.StatusBadGateway, 20},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			quotaResumeTest(t)
+			capUsage(t, map[string]float64{"me@example.com": 100, "spare@example.com": tc.used})
+			p, err := provider.Find("codex")
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := New()
+			cs, _ := s.plan(*p, "gpt-5.5", provider.Responses)
+			if len(cs) != 2 {
+				t.Fatalf("pool: %d accounts", len(cs))
+			}
+			for _, c := range cs {
+				if c.p.Account.User == "spare@example.com" {
+					s.restAfter(c, tc.status, nil, []byte(`upstream failure`))
+				} else {
+					s.restAfter(c, 429, nil, []byte(`{"error":{"type":"usage_limit_reached","resets_in_seconds":1}}`))
+				}
+			}
+			if at, wait := codexQuotaBack(cs); wait {
+				t.Fatalf("unrelated failure entered quota wait until %s", at)
+			}
+		})
+	}
+}
+
 func mixedQuotaRequest(t *testing.T, s *Server) (int, string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

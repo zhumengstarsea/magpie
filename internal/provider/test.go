@@ -30,6 +30,9 @@ type Result struct {
 	Millis   int64    `json:"ms"`
 	Model    string   `json:"model,omitempty"`
 	Error    string   `json:"error,omitempty"`
+	// otherAPI: the vendor said the model isn't served on the API asked
+	// (catalog.WrongEndpoint), so another may be asked instead
+	otherAPI bool
 }
 
 // Test sends the smallest possible request to each endpoint the vendor
@@ -315,20 +318,7 @@ func (p Provider) testOne(ctx context.Context, model string) Result {
 		proto = Anthropic
 	}
 	// a key made for that endpoint, else one made for any, that sees it
-	q, ok := p, true
-	if keys := p.KeysOn(); len(keys) > 0 {
-		ok = false
-		serves := p.Serving(model)
-	pick:
-		for _, want := range []Protocol{proto, ""} {
-			for _, k := range keys {
-				if k.Protocol == want && serves(k) {
-					q, ok = p.WithKey(k), true
-					break pick
-				}
-			}
-		}
-	}
+	q, ok := p.keySeeing(proto, model)
 	if !ok {
 		return Result{Protocol: proto, Model: model, Error: "no key that's on sees this model"}
 	}
@@ -350,11 +340,7 @@ func (p Provider) testOne(ctx context.Context, model string) Result {
 		}
 		return r
 	}
-	url, body := tiny(q, proto, UpstreamName(p, model))
-	if client != "" {
-		body = asClient(client, proto, body)
-	}
-	r := probe(ctx, q, proto, url, q.tested(body), model, testWait)
+	r := q.testOn(ctx, client, proto, model, UpstreamName(p, model))
 	if !r.OK && client == "" && proto == Chat && r.Status == 400 && catalog.DrawsID(model) && catalog.PointsToImagesAPI(r.Error) {
 		// an image model its name doesn't place on the images API
 		// (agnes-image-2.5-flash, #1837), which the vendor turns away in
@@ -365,7 +351,59 @@ func (p Provider) testOne(ctx context.Context, model string) Result {
 			return d
 		}
 	}
+	if !r.OK && r.otherAPI && client != ClientClaudeCode {
+		// the vendor's word that the model isn't served on that API: it
+		// is asked on the next one that may serve it, as the gateway asks
+		// a request there (usable), and that one's answer is the model's
+		// (#3766, char1eslu: models AgentRouter turns away on chat
+		// completions were red there while the gateway answered them on
+		// Responses). As Codex it is asked with Codex's headers, as the
+		// gateway sends them on Responses and Chat; as Claude Code it
+		// stays, since the gateway sends Claude Code's on Messages alone.
+		apis := p.APIs(model)
+		for _, next := range protos {
+			if next == proto || !(apis == nil && !p.NamedOnlyOn(next) || slices.Contains(apis, next)) {
+				continue
+			}
+			q, ok := p.keySeeing(next, model)
+			if !ok {
+				continue
+			}
+			if n := q.testOn(ctx, client, next, model, UpstreamName(p, model)); n.OK || !n.otherAPI {
+				return n
+			}
+		}
+	}
 	return r
+}
+
+// keySeeing is p with the key a test of model on proto goes with: one made
+// for that API, else one made for any, that sees the model. A provider
+// without keys is left as it is.
+func (p Provider) keySeeing(proto Protocol, model string) (Provider, bool) {
+	keys := p.KeysOn()
+	if len(keys) == 0 {
+		return p, true
+	}
+	serves := p.Serving(model)
+	for _, want := range []Protocol{proto, ""} {
+		for _, k := range keys {
+			if k.Protocol == want && serves(k) {
+				return p.WithKey(k), true
+			}
+		}
+	}
+	return p, false
+}
+
+// testOn is model's test on proto's endpoint with p's key, asked for by
+// its upstream name, as client would ask it when one is named (TestAs).
+func (p Provider) testOn(ctx context.Context, client string, proto Protocol, model, upstream string) Result {
+	url, body := tiny(p, proto, upstream)
+	if client != "" {
+		body = asClient(client, proto, body)
+	}
+	return probe(ctx, p, proto, url, p.tested(body), model, testWait)
 }
 
 // keyFor is p using the first key on that works with proto: one made for
@@ -567,6 +605,7 @@ func probe(ctx context.Context, p Provider, proto Protocol, url string, body []b
 	}
 	b, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
 	r.Error = APIError(b, res.Status)
+	r.otherAPI = catalog.WrongEndpoint(res.StatusCode, b)
 	return r
 }
 
