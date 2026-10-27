@@ -40,7 +40,9 @@ import { LANGS } from "./i18n.js";
 import { PARTNERS } from "./partners.js";
 import { SPONSORS } from "./sponsors.js";
 
-const REPO = "yetone/magpie-releases";
+// A fork's update-only deployment can select its own repository at build time.
+const REPO = typeof MAGPIE_RELEASE_REPO === "string" ? MAGPIE_RELEASE_REPO : "yetone/magpie-releases";
+const UPDATE_ORIGIN = typeof MAGPIE_UPDATE_ORIGIN === "string" ? MAGPIE_UPDATE_ORIGIN : "https://usemagpie.ai";
 const TTL = 300; // seconds the newest release is remembered
 
 const SHORT = {
@@ -335,7 +337,7 @@ function cacheFor(got) {
 // cached and remember are the edge's cache (caches.default) by name. The
 // names carry a version: an entry an older worker kept in another shape is
 // never read as this one's. Anything unreadable is a miss.
-const CACHE = "https://usemagpie.ai/__v2/";
+const CACHE = UPDATE_ORIGIN + "/__v2/";
 
 async function cached(name) {
   try {
@@ -381,7 +383,7 @@ async function latest(ctx, env) {
   return got;
 }
 
-const UA = { "User-Agent": "usemagpie.ai" };
+const UA = { "User-Agent": new URL(UPDATE_ORIGIN).hostname };
 
 // api asks GitHub's API, with the GITHUB_TOKEN secret where one is set.
 function api(path, env) {

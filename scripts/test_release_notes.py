@@ -36,6 +36,25 @@ class ReleaseNotesTest(unittest.TestCase):
         with redirect_stderr(io.StringIO()), self.assertRaises(RuntimeError):
             notes.translate([subject], [lambda texts: texts])
 
+    def test_chinese_title_with_long_product_name_is_not_translated_again(self):
+        subject = "接入 Cloudflare 更新服务"
+        def fail_if_called(texts):
+            self.fail("Chinese subject was sent for translation")
+        self.assertEqual(notes.translate([subject], [fail_if_called]), [subject])
+
+    def test_english_title_with_inline_chinese_is_still_translated(self):
+        subject = 'gui: show the 中文 label after opening the settings page'
+        self.assertFalse(notes.mostly_chinese(subject))
+
+    def test_web_retry_does_not_retry_successful_batch_items(self):
+        calls = []
+        def successful(texts):
+            calls.append(list(texts))
+            return ["界面：刷新模型列表", "网关：修复连接中断"]
+        with patch.object(notes, "edge", successful), redirect_stderr(io.StringIO()):
+            notes.translate(["gui: refresh the model list", "gateway: fix a disconnected stream"], [notes.edge])
+        self.assertEqual(len(calls), 1)
+
     def test_protected_literal_cannot_count_as_chinese_translation(self):
         subject = "gui: refresh the model list `中文`"
         with redirect_stderr(io.StringIO()), self.assertRaises(RuntimeError):
@@ -65,6 +84,26 @@ class ReleaseNotesTest(unittest.TestCase):
             )
         self.assertEqual(result, ["界面：刷新模型列表", "网关：修复连接中断"])
         self.assertEqual(calls, ["gateway: fix a disconnected stream"])
+
+    def test_web_translation_retries_a_rejected_line_alone(self):
+        calls = []
+
+        def flaky(texts):
+            calls.append(list(texts))
+            if len(texts) > 1:
+                return ["界面：刷新模型列表", texts[1]]
+            return ["网关：修复连接中断"]
+
+        with patch.object(notes, "edge", flaky), redirect_stderr(io.StringIO()):
+            result = notes.translate(
+                ["gui: refresh the model list", "gateway: fix a disconnected stream"],
+                [notes.edge],
+            )
+        self.assertEqual(result, ["界面：刷新模型列表", "网关：修复连接中断"])
+        self.assertEqual(calls, [
+            ["gui: refresh the model list", "gateway: fix a disconnected stream"],
+            ["gateway: fix a disconnected stream"],
+        ])
 
     def test_chinese_and_protected_literals_are_kept(self):
         subjects = ["修复模型名称", "gui: refresh `model_catalog_json` (未寒 on Discord)"]

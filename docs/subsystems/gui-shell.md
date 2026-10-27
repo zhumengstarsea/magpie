@@ -17,6 +17,23 @@ commit updates Homebrew after the release; after that commit is pushed, the
 workflow adds its link to that version's English and Chinese notes. Older
 publication commits are excluded from the product changes.
 
+The update service address is injected from the `MAGPIE_UPDATE_ORIGIN`
+Actions Secret at build time; downloads remain in `zhumengstarsea/magpie`
+Releases. Source builds without that value have no default update service.
+`site/update-worker.js` exposes
+only update metadata and download redirects, reusing `site/worker.js`'s
+weekly Stable selection, urgent-release marker, and KV release ledger.
+Copy `site/wrangler.update.example.jsonc` to the ignored
+`site/.wrangler/update-config.jsonc`, set the account, domain, and KV there,
+and deploy with `wrangler deploy --config site/.wrangler/update-config.jsonc`.
+The dedicated `LEDGER` KV is refreshed every 15 minutes. The client sends
+its channel and language to this service and only accepts download URLs
+for the selected version in this fork. Stable selection follows upstream's
+Monday 00:00 UTC boundary and three-day soak; changing channels does not
+downgrade an already installed newer build. A failed update check keeps its
+error reason, but removes the configured feed address from the Version row,
+its tooltip and the update API (`checkError` in `internal/gui/update.go`).
+
 The fork's branch synchronization leaves `master` untouched and mirrors other
 upstream branches. `main` has one exception: `scripts/guard-main-workflows.py`
 excludes pushes to `main` in every upstream workflow, preserving other events

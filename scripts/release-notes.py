@@ -81,7 +81,11 @@ def mostly_chinese(text):
     text = LITERALS.sub("", text)
     chinese = len(re.findall(r"[\u3400-\u9fff]", text))
     latin = len(re.findall(r"[A-Za-z]", text))
-    return chinese >= 2 and chinese >= latin
+    latin_words = len(re.findall(r"[A-Za-z]+", text))
+    # A Chinese title can contain a long product name such as Cloudflare.
+    # Count words too, so the name does not make the Chinese sentence look
+    # English, while a long English sentence with one Chinese term is kept.
+    return (chinese >= 2 and chinese >= latin) or (chinese >= 4 and chinese >= latin_words * 3)
 
 
 def protect(text):
@@ -532,11 +536,14 @@ def translate(subjects, providers=None):
                 size += len(text)
             ranges.append((start, len(pending)))
         accepted = set()
+        retry_singles = set()
         for start, end in ranges:
+            batch_completed = False
             try:
                 values = provider([text for text, _ in protected[start:end]])
                 if not isinstance(values, list) or len(values) != end - start:
                     raise ValueError("translation returned a different number of subjects")
+                batch_completed = True
                 for offset, value in enumerate(values, start):
                     i = pending[offset]
                     try:
@@ -552,6 +559,28 @@ def translate(subjects, providers=None):
                 # A transport failure is not specific to one subject.
                 if isinstance(error, OSError):
                     break
+            if batch_completed and provider in (edge, google):
+                # Edge and Google sometimes return one untranslated line in a
+                # multiline response. Retry only those lines separately; the
+                # next provider should receive them only after this retry.
+                retry_singles.update(
+                    pending[offset]
+                    for offset in range(start, end)
+                    if pending[offset] not in accepted
+                )
+        if retry_singles:
+            for i in sorted(retry_singles - accepted):
+                offset = pending.index(i)
+                text, literals = protected[offset]
+                try:
+                    values = provider([text])
+                    if not isinstance(values, list) or len(values) != 1:
+                        raise ValueError("translation returned a different number of subjects")
+                    output[i] = translated_subject(values[0], subjects[i], literals)
+                    accepted.add(i)
+                except Exception as error:
+                    detail = f"HTTP {error.code}" if isinstance(error, HTTPError) else type(error).__name__
+                    print(f"Translation via {name} single retry failed ({detail}); trying fallback.", file=sys.stderr)
         print(f"Translation via {name}: validated {len(accepted)}/{len(pending)} subjects.", file=sys.stderr)
         pending = [i for i in pending if i not in accepted]
     if pending:

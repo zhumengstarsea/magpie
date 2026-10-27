@@ -210,7 +210,11 @@ jobs:
           echo "IDENTITY=$IDENTITY" >> $GITHUB_ENV
 
       - name: 构建 macOS 应用
-        run: make app VERSION="$VERSION"
+        env:
+          MAGPIE_UPDATE_ORIGIN: ${{ secrets.MAGPIE_UPDATE_ORIGIN }}
+        run: |
+          test -n "$MAGPIE_UPDATE_ORIGIN" || { echo "::error::请配置 MAGPIE_UPDATE_ORIGIN Secret"; exit 1; }
+          make app VERSION="$VERSION"
 
       - name: 签名 macOS 应用
         run: |
@@ -316,7 +320,11 @@ jobs:
           go-version-file: go.mod
 
       - name: 编译应用
-        run: make release-cli release-windows VERSION="$VERSION"
+        env:
+          MAGPIE_UPDATE_ORIGIN: ${{ secrets.MAGPIE_UPDATE_ORIGIN }}
+        run: |
+          test -n "$MAGPIE_UPDATE_ORIGIN" || { echo "::error::请配置 MAGPIE_UPDATE_ORIGIN Secret"; exit 1; }
+          make release-cli release-windows VERSION="$VERSION"
 
       - name: 上传构建附件
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -408,7 +416,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends libgtk-3-dev libwebkit2gtk-4.1-dev xvfb dbus-x11
 
       - name: 编译应用
-        run: make release-linux VERSION="$VERSION"
+        env:
+          MAGPIE_UPDATE_ORIGIN: ${{ secrets.MAGPIE_UPDATE_ORIGIN }}
+        run: |
+          test -n "$MAGPIE_UPDATE_ORIGIN" || { echo "::error::请配置 MAGPIE_UPDATE_ORIGIN Secret"; exit 1; }
+          make release-linux VERSION="$VERSION"
 
       - name: 启动并验证网关
         run: |

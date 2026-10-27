@@ -31,7 +31,7 @@ func NotesFeed() string {
 	if f := os.Getenv("MAGPIE_NOTES_FEED"); f != "" {
 		return f
 	}
-	return releasesAPI
+	return updateSite + "/api/notes"
 }
 
 // ReleasePage is version's page on GitHub, where its notes are when the

@@ -1,6 +1,6 @@
-// Package update keeps magpie current. Builds are published as GitHub
-// releases of zhumengstarsea/magpie. GitHub describes the newest release,
-// its notes and each asset's SHA-256. Custom feeds remain available for tests.
+// Package update keeps magpie current. The fork's update service selects a
+// release from zhumengstarsea/magpie and describes its notes and asset hashes.
+// Custom feeds remain available for tests.
 //
 // The macOS app replaces its own bundle: the new zip is downloaded, checked
 // against its hash, unpacked, and accepted only if it is signed by the same
@@ -41,7 +41,8 @@ import (
 // Site is the fork that publishes this build.
 const Site = "https://github.com/zhumengstarsea/magpie"
 
-const releasesAPI = "https://api.github.com/repos/zhumengstarsea/magpie/releases"
+// Injected by release builds; the deployment address is kept in Actions Secrets.
+var updateSite string
 
 // Feed is where the newest release is described. MAGPIE_UPDATE_FEED points
 // it elsewhere, for testing an update against a local server.
@@ -49,7 +50,7 @@ func Feed() string {
 	if f := os.Getenv("MAGPIE_UPDATE_FEED"); f != "" {
 		return f
 	}
-	return releasesAPI + "/latest"
+	return updateSite + "/api/latest"
 }
 
 // Release is one published version.
@@ -89,7 +90,7 @@ func LatestIn(ctx context.Context, lang string) (*Release, error) {
 	if os.Getenv("MAGPIE_UPDATE_FEED") == "" {
 		return latestFork(ctx, lang)
 	}
-	req, err := http.NewRequestWithContext(ctx, "GET", withLang(Feed(), lang), nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", withChannel(withLang(Feed(), lang)), nil)
 	if err != nil {
 		return nil, err
 	}

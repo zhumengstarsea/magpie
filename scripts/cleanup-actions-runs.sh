@@ -44,8 +44,9 @@ if [ "${GITHUB_EVENT_NAME:-}" = schedule ] && [ "${CURRENT_SYNC_OUTCOME:-}" = fa
   fi
 fi
 
-# Keep every completed workflow run for six hours when successful and one day
-# when it failed or was cancelled. Releases and artifacts are unaffected.
+# Delete completed successful and skipped runs at this scan. Keep failed or
+# cancelled runs for one day. GitHub also deletes a run's Actions artifacts;
+# the published GitHub Release and its assets remain available.
 gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?status=completed&per_page=100" \
   --jq '.workflow_runs[] | select(.status == "completed") | [.id, .conclusion, .updated_at] | @tsv' > "$RUNNER_TEMP/action-run-candidates.txt"
 now=$(date -u +%s)
@@ -53,8 +54,8 @@ while IFS=$'\t' read -r run_id conclusion finished; do
   [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "Invalid run ID" >&2; exit 1; }
   [ "$run_id" != "${GITHUB_RUN_ID:-}" ] || continue
   case "$conclusion" in
-    success) keep_seconds=$((6 * 3600)); label='成功记录超过 6 小时' ;;
-    failure|cancelled|timed_out|action_required|neutral|skipped|stale|startup_failure) keep_seconds=$((24 * 3600)); label='失败记录超过 1 天' ;;
+    success|skipped) keep_seconds=0; label='成功或跳过记录' ;;
+    failure|cancelled|timed_out|action_required|neutral|stale|startup_failure) keep_seconds=$((24 * 3600)); label='失败记录超过 1 天' ;;
     *) continue ;;
   esac
   finished_epoch=$(date -u -d "$finished" +%s)

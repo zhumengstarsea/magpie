@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -314,6 +315,23 @@ func (u *updater) begin() bool {
 	return true
 }
 
+// checkError keeps the reason for a failed update check without exposing the
+// configured feed address in the settings row, tooltip, or update API.
+func checkError(err error) string {
+	for {
+		var request *url.Error
+		if !errors.As(err, &request) || request.Err == nil || request.Err == err {
+			break
+		}
+		err = request.Err
+	}
+	message := err.Error()
+	if feed, parseErr := url.Parse(update.Feed()); parseErr == nil && feed.Hostname() != "" {
+		message = strings.ReplaceAll(message, feed.Hostname(), "update server")
+	}
+	return message
+}
+
 func (u *updater) run() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -357,7 +375,7 @@ func (u *updater) run() {
 		return
 	}
 	if err != nil {
-		u.state, u.err = "error", err.Error()
+		u.state, u.err = "error", checkError(err)
 		return
 	}
 	u.latest, u.notesIn = rel, lang
