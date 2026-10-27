@@ -348,7 +348,9 @@ its story's head has "Request and response", which fetches
 `GET /api/gateway/call?route=…` (`Server.RouteCall`) only when pressed.
 A call carries the Routing request it was (`Call.Route`, the trace's
 `Route.ID`, set where `serve`, the Codex backend and a refused title
-record it); a route id is not a call id. When the ring no longer has it,
+record it; the Codex backend's refused key and empty failure too, but not
+a compaction's, which opens no route: `TestCodexKeyRefusedCarriesItsRoute`);
+a route id is not a call id. When the ring no longer has it,
 the story shows the request archive's copy through `archivePanel` if the
 route names one (`Route.Archive`, `call.archiveName()`, set only when the
 archive was on for that request), and otherwise says how to turn the

@@ -223,6 +223,23 @@ var (
 	// 5-hour, day or 7-day limit ("api key 7天限额已用完", sent as
 	// rate_limit_exceeded).
 	plannedWords = regexp.MustCompile(`(?i)quota|usage.?limit|hit your .*limit|limit.{0,24}resets|per.?(day|week|month)|daily|weekly|monthly|额度|用量|套餐|限额已用完`)
+	// minuteWords: a 429 that names a window of a minute or less, or the
+	// rate itself — tokens or requests per minute, TPM, RPM — which some
+	// vendors call a quota all the same: Gemini's "You exceeded your
+	// current quota … quotaId GenerateContentPaidTierInputTokensPerModel
+	// PerMinute … Please retry in 33s", Vertex's "Quota exceeded for
+	// …requests_per_minute_per_project…", Azure's "exceeded token rate
+	// limit". Read as a used-up plan, each rested the quarter of an hour
+	// of a quota that says nothing of when, with balance left
+	// (monater.114514 on Discord). A longer window named beside it
+	// (longWords) is still the plan's.
+	minuteWords = regexp.MustCompile(`(?i)per.?(second|minute)|per.?(sec|min)\b|\b[rt]p[ms]\b|(token|call|request) rate limit|每分钟|每秒`)
+	// longWords: a window longer than a minute, or a plan's own limit,
+	// named in a 429 — what minuteWords' rate limit is not.
+	longWords = regexp.MustCompile(`(?i)usage.?limit|hit your .*limit|limit.{0,24}resets|per.?(hour|day|week|month)|\bhours?\b|hourly|daily|weekly|monthly|\b[rt]p[dh]\b|额度已用|用量|套餐|限额已用完|小时|每天|每日|每周|每月`)
+	// urlWords: a link in an error, whose words are its path, not what the
+	// vendor said: Azure's rate limit points to aka.ms/oai/quotaincrease
+	urlWords = regexp.MustCompile(`https?://\S+`)
 	// resetsWords: Claude Code's "usage limit reached|<when it resets>".
 	resetsWords = regexp.MustCompile(`(?i)limit reached\|(\d{10})\b`)
 	// resetsWhen: a 429 that says in words when the account is back, as
@@ -376,6 +393,10 @@ func failure(status int, body []byte) string {
 		// English one as a rate limit, and each rested its own fallback
 		// (#1669)
 		return failQuota
+	case status == 429 && minuteLimit(body):
+		// a limit per minute, whatever it calls itself: back in a
+		// minute, not a plan used up (minuteWords)
+		return failRate
 	case status == 429 && !creditWords.Match(body) && backSoon(body):
 		// back within a wait a provider's patience can cover, as it says
 		// itself, whatever else it says: a LAN aggregator's "Usage has
@@ -385,7 +406,7 @@ func failure(status int, body []byte) string {
 		// for (zoecats on Discord). A limit that says it is back in
 		// hours stays out of quota below
 		return failRate
-	case status == 429 && rateWords.Match(body) && !plannedWords.Match(body):
+	case status == 429 && rateWords.Match(body) && !plannedWords.Match(urlWords.ReplaceAll(body, nil)):
 		return failRate
 	case status >= 500 && quotaCodes.Match(body), status < 500 && usedUpWords.Match(body), status == 429 && plannedWords.Match(body):
 		return failQuota
@@ -393,6 +414,41 @@ func failure(status int, body []byte) string {
 		return failRate
 	}
 	return failOther
+}
+
+// minuteLimit says a 429's words name a limit per minute or less
+// (minuteWords), and nothing longer or spent beside it: no longer window
+// (longWords), no balance spent (brokeWords, insufficient_quota). Words
+// in a link don't count.
+func minuteLimit(body []byte) bool {
+	body = urlWords.ReplaceAll(body, nil)
+	return minuteWords.Match(body) && !longWords.Match(body) && !brokeWords.Match(body) && !bytes.Contains(body, []byte("insufficient_quota"))
+}
+
+// dashScopeTokenRate: DashScope's (Model Studio's) 429 for the tokens
+// per minute or second its account is allowed, which it words as a
+// quota: Throttling.AllocationQuota "Allocated quota exceeded, please
+// increase your quota limit.", or in OpenAI's shape insufficient_quota
+// "You exceeded your current quota, please check your plan and billing
+// details." — both "超出TPM/TPS限制" in its error-code list
+// (help.aliyun.com/zh/model-studio/error-code). Its free allowance used
+// up ("Free allocated quota exceeded."), its Coding Plan's hour, week or
+// month ("hour allocated quota exceeded") and arrears (400 Arrearage) are
+// worded otherwise. OpenAI's own insufficient_quota is out of credit, so
+// this is DashScope's alone.
+var dashScopeTokenRate = regexp.MustCompile(`Allocated quota exceeded, please increase your quota limit|"(?:code|type)"\s*:\s*"insufficient_quota"`)
+
+// dashScopeRate says p is DashScope and its 429 is a rate per minute or
+// second (dashScopeTokenRate), not its free allowance or a plan's window.
+func dashScopeRate(p provider.Provider, status int, body []byte) bool {
+	if status != http.StatusTooManyRequests || !dashScope(p) {
+		return false
+	}
+	w := wordsOf(body)
+	if bytes.Contains(bytes.ToLower(w), []byte("free allocated quota")) || longWords.Match(urlWords.ReplaceAll(w, nil)) {
+		return false
+	}
+	return dashScopeTokenRate.Match(w)
 }
 
 // failureOf says why c's reply failed: a Claude account's sign-in that
@@ -409,6 +465,9 @@ func failureOf(c candidate, status int, body []byte) string {
 	}
 	if restrictedRefused(c.p, status, body) {
 		return failRestricted
+	}
+	if dashScopeRate(c.p, status, body) {
+		return failRate
 	}
 	return failure(status, body)
 }
@@ -628,7 +687,7 @@ func (s *Server) UnrestAll(key string) int {
 	}
 	liftedLocked(key, now)
 	restingUntil.Unlock()
-	unsink(key)
+	unsinkAll(key)
 	s.trace.lifted()
 	return n
 }
@@ -1055,7 +1114,15 @@ func (s *Server) restAfterMarked(c candidate, status int, header http.Header, bo
 		d, r.By, r.Failures = s.rateRest(c, header, body, sharedPool, now)
 		// rate limited with quota left: to the back, where the order sinks
 		if c.full(now).IsZero() && !(c.isOpenRouterFree() && sharedPool) {
-			sink(c.restKey(), now)
+			// a remote magpie's rest is the model's alone (caa53673, the
+			// key's own limit apart): the sink keeps the same scope, or
+			// one model's 429 would send the remote's other models, never
+			// limited, behind the others too
+			if remoteModelRest(c, failRate, header) {
+				sink(c.restID(), now)
+			} else {
+				sink(c.restKey(), now)
+			}
 		}
 	case failRestricted:
 		// out until the vendor lifts it: an appeal, not a wait (#1849)
@@ -1216,7 +1283,7 @@ func (s *Server) restAfterMarked(c candidate, status int, header http.Header, bo
 // on Discord: "Remote Magpie: Claude Code: You've hit your session
 // limit" answered every model of it for the five hours it named).
 func remoteModelRest(c candidate, why string, header http.Header) bool {
-	if !c.p.IsRemoteMagpie() && header.Get(answeredThereHeader) == "" || header.Get(remoteKeyLimitHeader) != "" {
+	if !c.p.IsRemoteMagpie() && header.Get(answeredThereHeader) == "" || header.Get(remoteKeyLimitHeader) != "" || header.Get(keyLimitThereHeader) != "" {
 		return false
 	}
 	return why == failQuota || why == failCredit || why == failRate || why == failRestricted || why == failVerify
@@ -1394,6 +1461,15 @@ func keepRetry(dst, src http.Header, body []byte) {
 			dst.Set("Retry-After", strconv.Itoa(int(d.Seconds())))
 		}
 	}
+	if src.Get(remoteKeyLimitHeader) != "" {
+		// another magpie's gateway key is over its own limit: noted for
+		// restAfter, which rests that magpie whole (remoteModelRest), as
+		// the held try's header is all it reads (#2791, ggbdpq: the
+		// marker was left out, and the key's limit rested one model). A
+		// note, not the marker, so a magpie this one answers doesn't read
+		// another's key limit as this one's
+		dst.Set(keyLimitThereHeader, "1")
+	}
 	if who := src.Get(providerHeader); who != "" {
 		// another magpie refused it, naming its provider that did: this
 		// magpie's own name for the provider goes in the same header
@@ -1412,6 +1488,18 @@ func keepRetry(dst, src http.Header, body []byte) {
 		dst.Set(zdrHeader, "1")
 	}
 }
+
+// keepRetryOut is keepRetry onto a reply that goes to the client as it
+// is, with no holdWriter to drop magpie's own notes.
+func keepRetryOut(dst, src http.Header, body []byte) {
+	keepRetry(dst, src, body)
+	dst.Del(answeredThereHeader)
+	dst.Del(keyLimitThereHeader)
+}
+
+// keyLimitThereHeader carries, from keepRetry to restAfter, that another
+// magpie refused with its gateway key's own limit (remoteKeyLimitHeader).
+const keyLimitThereHeader = "X-Magpie-Key-Limit-There"
 
 // answeredThereHeader carries, from keepRetry to restAfter, the provider
 // another magpie named on its refusal (providerHeader): the refusal is

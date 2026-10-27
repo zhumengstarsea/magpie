@@ -456,3 +456,48 @@ func TestCodexAppServerRestartedOnAccountSwitch(t *testing.T) {
 		t.Fatalf("still said to be on %q after its restart", got)
 	}
 }
+
+// The Agents row's Restart ends only the app-server the app at the bundle
+// runs for itself, and leaves its window, the app itself, another
+// program's --listen server and another bundle's alone (yoshi037070: a
+// quit and open opened a new window).
+func TestRestartCodexAppEndsOnlyItsServer(t *testing.T) {
+	const bundle = "/Applications/ChatGPT.app"
+	ps := []proc.Process{
+		{PID: 1, Args: bundle + "/Contents/MacOS/ChatGPT"},
+		{PID: 2, Args: bundle + "/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex -c features.code_mode_host=true app-server --analytics-default-enabled"},
+		{PID: 3, Args: bundle + "/Contents/Resources/codex app-server --listen ws://127.0.0.1:4500"},
+		{PID: 4, Args: "/Applications/Codex.app/Contents/Resources/codex app-server"},
+		{PID: 5, Args: "/opt/homebrew/bin/codex app-server"},
+		{PID: 6, Args: bundle + "/Contents/Resources/codex exec-server --remote x"},
+	}
+	oldList, oldEnd, oldWait := listProcesses, endCodexAppServer, codexAppGoneWait
+	t.Cleanup(func() { listProcesses, endCodexAppServer, codexAppGoneWait = oldList, oldEnd, oldWait })
+	listProcesses = func(context.Context) ([]proc.Process, error) { return slices.Clone(ps), nil }
+	var ended []int
+	endCodexAppServer = func(pid int) error {
+		ended = append(ended, pid)
+		ps = slices.DeleteFunc(ps, func(p proc.Process) bool { return p.PID == pid })
+		return nil
+	}
+	if err := RestartCodexApp(context.Background(), bundle); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(ended, []int{2}) {
+		t.Fatalf("ended %v, want only the app's own app-server 2", ended)
+	}
+
+	// none running: said
+	ended = nil
+	if err := RestartCodexApp(context.Background(), "/Applications/Other.app"); err == nil || len(ended) > 0 {
+		t.Fatalf("no app-server: %v, ended %v", err, ended)
+	}
+
+	// one that doesn't end: said, not waited on forever
+	ps = append(ps, proc.Process{PID: 7, Args: bundle + "/Contents/Resources/codex app-server"})
+	endCodexAppServer = func(pid int) error { ended = append(ended, pid); return nil }
+	codexAppGoneWait = 300 * time.Millisecond
+	if err := RestartCodexApp(context.Background(), bundle); err == nil {
+		t.Fatal("an app-server that stays: no error")
+	}
+}

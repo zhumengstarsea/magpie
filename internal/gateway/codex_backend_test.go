@@ -183,6 +183,87 @@ func TestCodexAPIKeyRecordedAsOpenAI(t *testing.T) {
 	}
 }
 
+// A Codex relay OpenAI refuses (an API key it turns away) is still the
+// request its Routing row is: the call it records carries the route, so
+// the Routing page's "Request and response" opens it while the recent
+// calls have it, instead of saying it is gone (#2481, ggbdpq).
+func TestCodexKeyRefusedCarriesItsRoute(t *testing.T) {
+	setup(t, provider.Chat, &fake{t: t})
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		io.WriteString(w, `{"error":{"message":"Incorrect API key provided: sk-synth***","type":"invalid_request_error","code":"invalid_api_key"}}`)
+	}))
+	t.Cleanup(up.Close)
+	was := codexAPIBase
+	codexAPIBase = up.URL + "/v1"
+	t.Cleanup(func() { codexAPIBase = was })
+	s := New()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", CodexPath+"/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":"hi"}`))
+	req.Header.Set("Authorization", "Bearer sk-synthetic")
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	routeHasItsCall(t, s, http.StatusUnauthorized)
+}
+
+// A Codex relay the backend fails with nothing said (Codex shows it as
+// "Unknown error" alone) is the request its Routing row is too.
+func TestCodexEmptyFailureCarriesItsRoute(t *testing.T) {
+	chatgpt(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	s := New()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", CodexPath+"/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":"hi"}`))
+	req.Header.Set("Authorization", "Bearer chatgpt-token")
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	routeHasItsCall(t, s, http.StatusInternalServerError)
+}
+
+// A compaction failed with nothing said reaches the same exit with no
+// route open: Codex is still told what happened and the call is still
+// recorded, with no route to carry.
+func TestCodexCompactEmptyFailureRecordsNoRoute(t *testing.T) {
+	chatgpt(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	s := New()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", CodexPath+"/responses/compact", strings.NewReader(`{"model":"gpt-5.5","input":[]}`))
+	req.Header.Set("Authorization", "Bearer chatgpt-token")
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "this compaction") {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	calls := s.Recent()
+	if len(calls) != 1 || calls[0].Status != http.StatusInternalServerError || calls[0].Route != 0 {
+		t.Fatalf("recorded %+v", calls)
+	}
+}
+
+// routeHasItsCall checks that the one route the trace has finds its call,
+// the one that answered status.
+func routeHasItsCall(t *testing.T, s *Server, status int) {
+	t.Helper()
+	st := s.Trace(t.Context(), 0, 0)
+	if len(st.Routes) != 1 {
+		t.Fatalf("routing view has %d routes, want the turn", len(st.Routes))
+	}
+	c, ok := s.RouteCall(st.Routes[0].ID)
+	if !ok {
+		t.Fatalf("route %d: no call in the ring, so Request and response says the request is gone though its call is one of the last 40", st.Routes[0].ID)
+	}
+	if c.Status != status {
+		t.Errorf("route %d is the call %d (%d), not the failure (%d)", st.Routes[0].ID, c.ID, c.Status, status)
+	}
+}
+
 // A compaction signed by another account is that account's, not the
 // sign-in the request would have relayed on. A request naming another
 // ChatGPT account than the sign-in magpie reads (a Codex in WSL, or

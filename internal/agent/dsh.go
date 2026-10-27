@@ -96,7 +96,12 @@ func dshAt(at place) *Agent {
 	// DeepSeek Harness Desktop, on this machine (a distro has none)
 	desktop := func() bool { return at.spell == nil && (&Agent{ID: "dsh"}).HasApp() }
 	path := filepath.Join(dir, "config.yaml")
-	if files := dshProfiles(dir); len(files) > 0 {
+	// a stopped distro's folder is never listed: that starts it (#3896)
+	var files []string
+	if !at.cold {
+		files = dshProfiles(dir)
+	}
+	if len(files) > 0 {
 		path = files[0]
 	} else if desktop() {
 		path = dshDesktopFile(dir)

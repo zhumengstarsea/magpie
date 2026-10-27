@@ -457,3 +457,38 @@ func TestWindowHoldsReckonsAntigravityPools(t *testing.T) {
 		}
 	}
 }
+
+// The ledger prices a call whose own id has no price as the model the
+// reply named (Served, #1498). A window's whole is priced the same way:
+// one such call otherwise has no API price, and that drops the dollar
+// whole for every other call in the window.
+func TestHoldsPriceTheModelTheReplyNamed(t *testing.T) {
+	holdsHome(t)
+	priceOf := apiPricer()
+	named := Record{Provider: "relay", Model: "moonshot-kimi-k3", Served: "gpt-5.5"}
+	if pr := priceOf(named); pr == nil || pr.Input != 1.25 {
+		t.Fatalf("the model the reply named wasn't its API price: %+v", pr)
+	}
+	same := named
+	same.Served = named.Model
+	if pr := priceOf(same); pr != nil {
+		t.Fatalf("a reply that names the same unpriced id was priced: %+v", pr)
+	}
+	own := Record{Provider: "relay", Model: "claude-opus-4-7", Served: "gpt-5.5"}
+	if pr := priceOf(own); pr == nil || pr.Input != 5 {
+		t.Fatalf("the asked model's own price lost: %+v", pr)
+	}
+
+	now := holdClock(t, time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC))
+	reset := now.Add(2 * time.Hour)
+	Append(Record{Time: now.Add(-8 * 24 * time.Hour), Agent: "codex", Provider: "codex", ProviderAccount: "sam@example.com",
+		Model: "gpt-5.5", Input: 1000, Status: 200})
+	Append(Record{Time: now.Add(-time.Hour), Agent: "codex", Provider: "codex", ProviderAccount: "sam@example.com",
+		Model: "moonshot-kimi-k3", Served: "gpt-5.5", Input: 1000, Status: 200})
+	qs := WithWindowHolds([]provider.SubscriptionQuota{{Provider: "codex", User: "sam@example.com", Windows: []provider.QuotaWindow{
+		{Name: "5 hours", Used: 10, ResetsAt: &reset, Span: 5 * time.Hour},
+	}}}, now)
+	if h := qs[0].Windows[0].Holds; h == nil || !h.Priced || h.Cost <= 0 {
+		t.Fatalf("5 hours: %+v, a priced reply left the dollar whole out", h)
+	}
+}

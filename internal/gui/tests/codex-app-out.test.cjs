@@ -5,8 +5,12 @@
 // the app sends again but turns its ChatGPT side off till the reset. The
 // Agents row says so: on magpie until when, and (on hover and in the row
 // opened) what is off and that it all comes back. When magpie couldn't
-// restart the app-server, it says to quit and reopen the app. Every
-// language, both engines, wide and narrow. No backend, the API is faked.
+// restart the app-server, it says to quit and reopen the app. What is off
+// names browser use, which the Codex app's Chrome control loses with
+// magpie its provider, and the row opened offers Keep on ChatGPT right
+// there, posted as the sign-in's Always ChatGPT (eddie.zhan on Discord:
+// browser use said it had no permission). Every language, both engines,
+// wide and narrow. No backend, the API is faked.
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -22,17 +26,21 @@ const codex = (appOut) => ({
 });
 
 const words = {
-  en: { until: "On magpie until", reset: "On magpie until the reset", stuck: "quit and reopen the Codex app", off: "cloud tasks" },
-  zh: { until: "由 magpie 接管至", reset: "由 magpie 接管至额度重置", stuck: "退出并重新打开 Codex 应用", off: "云端任务" },
-  "zh-TW": { until: "由 magpie 接管至", reset: "由 magpie 接管至額度重設", stuck: "結束並重新開啟 Codex 應用", off: "雲端任務" },
-  ja: { until: "まで magpie が処理", reset: "リセットまで magpie が処理", stuck: "Codex アプリを終了して開き直して", off: "クラウドタスク" },
-  de: { until: "Über magpie bis", reset: "Über magpie bis zum Zurücksetzen", stuck: "beende die Codex-App", off: "Cloud-Aufgaben" },
+  en: { until: "On magpie until", reset: "On magpie until the reset", stuck: "quit and reopen the Codex app", off: "cloud tasks", browser: "browser use", keep: "Keep on ChatGPT" },
+  zh: { until: "由 magpie 接管至", reset: "由 magpie 接管至额度重置", stuck: "退出并重新打开 Codex 应用", off: "云端任务", browser: "浏览器操作", keep: "保持 ChatGPT" },
+  "zh-TW": { until: "由 magpie 接管至", reset: "由 magpie 接管至額度重設", stuck: "結束並重新開啟 Codex 應用", off: "雲端任務", browser: "瀏覽器操作", keep: "保持 ChatGPT" },
+  ja: { until: "まで magpie が処理", reset: "リセットまで magpie が処理", stuck: "Codex アプリを終了して開き直して", off: "クラウドタスク", browser: "ブラウザ操作", keep: "ChatGPT のまま" },
+  de: { until: "Über magpie bis", reset: "Über magpie bis zum Zurücksetzen", stuck: "beende die Codex-App", off: "Cloud-Aufgaben", browser: "Browser-Nutzung", keep: "Bei ChatGPT bleiben" },
 };
 
-function serve(lang, agents) {
+function serve(lang, agents, sets = []) {
   const state = { agents, profiles: [], settings: { lang, theme: "light" } };
   return async (route) => {
     const url = new URL(route.request().url());
+    if (url.pathname === "/api/set") {
+      sets.push(route.request().postDataJSON());
+      return route.fulfill({ json: { ...state, agents: agents.map((a) => ({ ...a, appOut: undefined })) } });
+    }
     if (url.pathname === "/boot.js") return route.fulfill({ contentType: "text/javascript", body: `window.bootPrefs = {lang:"${lang}",theme:"light",web:false};` });
     if (url.pathname === "/wails/runtime.js") return route.fulfill({ contentType: "text/javascript", body: "export const Window = {};" });
     if (url.pathname === "/api/state") return route.fulfill({ json: state });
@@ -68,7 +76,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
             page.setDefaultTimeout(5000);
             const errors = [];
             page.on("pageerror", (e) => errors.push(e.message));
-            await page.route("**/*", serve(lang, [codex(appOut)]));
+            const sets = [];
+            await page.route("**/*", serve(lang, [codex(appOut)], sets));
             await page.goto("http://magpie.test/?view=agents");
             const st = page.locator(`${row} .ag-st-t`);
             await st.waitFor();
@@ -76,7 +85,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
             assert.ok(text.includes(w[kind]), `${JSON.stringify(text)} lacks ${JSON.stringify(w[kind])}`);
             assert.doesNotMatch(text, /\{\w+\}/);
             const title = await page.locator(`${row} .ag-st-t`).getAttribute("title");
-            assert.ok(title && title.includes(w.off), "the hover says what is off: " + title);
+            assert.ok(title && title.includes(w.off) && title.includes(w.browser), "the hover says what is off, browser use too: " + title);
+            assert.ok(title.includes(w.keep), "the hover names Keep on ChatGPT: " + title);
             assert.ok(title.includes("spent@example.com"), "the hover names the account: " + title);
             assert.doesNotMatch(title, /\{\w+\}/);
 
@@ -84,10 +94,23 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
             const said = page.locator(`${row} .ag-app-out`);
             await said.waitFor();
             const s = await said.textContent();
-            assert.ok(s.includes(w.off), "the row opened says what is off: " + s);
+            assert.ok(s.includes(w.off) && s.includes(w.browser), "the row opened says what is off, browser use too: " + s);
             assert.doesNotMatch(s, /\{\w+\}/);
             const side = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
             assert.ok(side <= 1, "scrolls sideways: " + side);
+            const keep = page.locator(`${row} .ag-app-out + .ag-vl button`);
+            assert.equal((await keep.textContent()).trim(), w.keep);
+            const box = await keep.boundingBox(), vw = page.viewportSize().width;
+            assert.ok(box && box.x >= 0 && box.x + box.width <= vw + 0.5, "Keep on ChatGPT is on the page: " + JSON.stringify(box));
+            // the row grows open on a spring: pressed once it has, as a
+            // reader would, the button the top thing where it is
+            await page.waitForFunction(() => {
+              const b = document.querySelector('.row.agent[data-id="codex"] .ag-app-out + .ag-vl button'), r = b.getBoundingClientRect();
+              return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === b;
+            });
+            await keep.click();
+            await page.waitForFunction(() => !document.querySelector('.row.agent[data-id="codex"] .ag-app-out'));
+            assert.deepEqual(sets, [{ agent: "codex", field: "login", value: "chatgpt" }]);
             assert.deepEqual(errors, []);
             await page.close();
           });

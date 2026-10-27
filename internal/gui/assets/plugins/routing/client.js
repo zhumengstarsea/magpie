@@ -6709,7 +6709,10 @@ function routingPage(part) {
         ctl.append(k);
       }
       row.append(nm, ctl);
-      row.title = p.who.join(", ");
+      // the accounts this provider routes over are what nm says: on the
+      // whole row, the Routing and Stays buttons inherited the list as
+      // their own tip (#3785)
+      nm.title = p.who.join(", ");
       return row;
     }));
   }

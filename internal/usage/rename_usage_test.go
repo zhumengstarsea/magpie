@@ -164,3 +164,63 @@ func TestProbesOfADeletedProviderStayWithIt(t *testing.T) {
 		t.Fatalf("twice.example's rows: total %d", p.Total)
 	}
 }
+
+// CyberCaius on Discord: Leee's model list was asked at leee.baby while it
+// was being added, and it was saved on another host of that site, so the
+// Usage page's provider filter listed Leee and leee.baby (as example and
+// example.me before: a provider on api.example.me). A probe recorded under
+// a host no provider is on is the one provider's on a host of the same site
+// (its registrable domain, whatever the subdomain or port), and after that
+// one is deleted, the one the log's calls to that site went to. A site two
+// providers are on, a hosting platform's names (vercel.app is a suffix of
+// its own) and an address stay as they were recorded.
+func TestProbesOfAProviderOnAnotherHostOfItsSiteListIt(t *testing.T) {
+	reportedHome(t)
+	then := time.Now().Add(-time.Hour)
+	adding := probelog.With(context.Background(), probelog.KindList, "", "")
+	for _, u := range []string{
+		"https://leee.baby/v1/models", "https://Leee.Baby/v1/models", "https://www.leee.baby:443/v1/models",
+		"https://two.example/v1/models", "https://mine.vercel.app/v1/models", "http://127.0.0.1:7/v1/models",
+	} {
+		probelog.Note(adding, u, http.MethodGet, then, 200, nil)
+	}
+	id, err := provider.Add(provider.Provider{Name: "Leee", Key: "k", Chat: "https://api.leee.baby/v1", Models: []string{"gpt-9"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := provider.Find(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []provider.Provider{
+		{ID: "two-a", Name: "Two A", Key: "a", Chat: "https://a.two.example/v1", Models: []string{"m"}},
+		{ID: "two-b", Name: "Two B", Key: "b", Chat: "https://b.two.example/v1", Models: []string{"m"}},
+		{ID: "theirs", Name: "Theirs", Key: "c", Chat: "https://theirs.vercel.app/v1", Models: []string{"m"}},
+		{ID: "local", Name: "Local", Key: "d", Chat: "http://127.0.0.1:8/v1", Models: []string{"m"}},
+	} {
+		if err := provider.Save(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list := func() []string { return QueryPage(All, Filter{}, 0, 50).Providers }
+	want := []string{"127.0.0.1:7", id, "mine.vercel.app", "two.example"}
+	if !slices.Equal(list(), want) { // saved, no call made yet
+		t.Fatalf("no calls: providers %v, want %v", list(), want)
+	}
+	Append(Record{Time: then.Add(time.Minute), Agent: "codex", Session: "s1", Provider: id, Host: saved.Where(), Model: "gpt-9", Input: 100, Output: 10, Status: 200})
+	if !slices.Equal(list(), want) {
+		t.Fatalf("saved: providers %v, want %v", list(), want)
+	}
+	if p := QueryPage(All, Filter{Provider: id}, 0, 50); p.Total != 4 || p.Sum.Calls != 1 {
+		t.Fatalf("%s's rows: total %d, sum %+v", id, p.Total, p.Sum)
+	}
+	if err := provider.Delete(id); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(list(), want) {
+		t.Fatalf("deleted: providers %v, want %v", list(), want)
+	}
+	if p := QueryPage(All, Filter{Provider: id}, 0, 50); p.Total != 4 {
+		t.Fatalf("deleted %s's rows: total %d", id, p.Total)
+	}
+}

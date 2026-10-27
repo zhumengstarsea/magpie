@@ -26,6 +26,9 @@ package agent
 // bot kept the old model). The config magpie connects is the profile
 // `hermes` starts in (hermesActive), and Disconnect leaves each bot on a
 // model it can start with, which connecting again puts back (hermesBack).
+// With more than one profile, each other one has a model picker of its own
+// on the Agents page (hermesProfileFields; dongshanfengdongshizhcn on
+// Discord), and a bot picked there no longer follows the connected one.
 
 import (
 	"encoding/json"
@@ -94,15 +97,26 @@ func hermesIn(at place) *Agent {
 		}
 		return edit.SetYAML(path, kvs...)
 	}
-	return &Agent{
+	a := &Agent{
 		ID: "hermes", Name: "Hermes Agent", Icon: "hermes", Aliases: []string{"hermes-agent"}, Spelled: prefixed, NoNames: true,
 		UA:  []string{"hermes-agent"},
 		Bin: "hermes", Dir: dir, Path: path,
 		Sync: func() error {
-			if err := syncYAML(path, "providers."+magpieID, func() any { return hermesProvider(path) }); err != nil || !joined() {
+			if err := syncYAML(path, "providers."+magpieID, func() any { return hermesProvider(path) }); err != nil {
 				return err
 			}
-			return spread()
+			if joined() {
+				return spread()
+			}
+			// a bot put on magpie by its own picker keeps magpie's
+			// provider current while the connected config isn't
+			var errs []error
+			for _, p := range hermesOthers(at, dir) {
+				if edit.GetYAMLMap(p, "providers."+magpieID) != nil {
+					errs = append(errs, syncYAML(p, "providers."+magpieID, func() any { return hermesProvider(p) }))
+				}
+			}
+			return errors.Join(errs...)
 		},
 		Notice: func() string {
 			if Running(`(^|/)hermes( |$)`) {
@@ -226,6 +240,94 @@ func hermesIn(at place) *Agent {
 			},
 		}},
 	}
+	a.Fields = append(a.Fields, hermesProfileFields(at, dir, hermesProvider)...)
+	return a
+}
+
+// hermesProfileKey begins the key of a profile's model field
+// (hermesProfileFields): "profile:<name>"
+const hermesProfileKey = "profile:"
+
+// hermesProfileFields is a model picker for each of Hermes's profiles
+// besides the one magpie connects (dongshanfengdongshizhcn on Discord: only
+// the default profile's model could be set). Each is named as `hermes -p
+// <name>` names it, "default" for the root's own, and reads and writes that
+// profile's config.yaml alone. A magpie model puts the profile on magpie's
+// provider, its own model kept for Disconnect and for an own pick to put
+// back (the stash hermesUnwireProfile reads); the pick is recorded, so the
+// profile stays on it when the connected config's model changes
+// (hermesFollow). Unset puts back the model it had before magpie, and a
+// profile nobody picks for here keeps what it has.
+func hermesProfileFields(at place, dir string, provider func(string) any) []Field {
+	root := filepath.Clean(hermesRoot(at))
+	var out []Field
+	for _, p := range hermesOthers(at, dir) {
+		name := "default"
+		if d := filepath.Clean(filepath.Dir(p)); d != root {
+			name = filepath.Base(d)
+		}
+		k := "hermes:" + p + ":"
+		out = append(out, Field{
+			Key: hermesProfileKey + name, Label: name, Quiet: true,
+			Get: func() string {
+				m := hermesModelOf(p)
+				if m.Default != "" && m.Provider == magpieID {
+					return magpieID + "/" + m.Default
+				}
+				return m.Default
+			},
+			Set: func(v string) error {
+				cur := hermesModelOf(p)
+				if ref, ok := strings.CutPrefix(v, magpieID+"/"); ok && isMagpie(ref) {
+					if cur.Provider != magpieID {
+						stash(map[string]string{k + "model.provider": cur.Provider, k + "model.default": cur.Default})
+					}
+					if err := edit.SetYAML(p,
+						edit.KV{Path: "providers." + magpieID, Value: provider(p)},
+						edit.KV{Path: "model.provider", Value: magpieID},
+						edit.KV{Path: "model.default", Value: ref},
+					); err != nil {
+						return err
+					}
+					stash(map[string]string{k + "picked": ref})
+					return nil
+				}
+				forget(k + "picked")
+				if cur.Provider == magpieID {
+					// back to the provider and model it had before magpie
+					var del []string
+					var kvs []edit.KV
+					for _, f := range []string{"model.provider", "model.default"} {
+						if was := unstash(k + f); was != "" {
+							kvs = append(kvs, edit.KV{Path: f, Value: was})
+						} else {
+							del = append(del, f)
+						}
+					}
+					if len(del) > 0 {
+						if err := edit.DelYAML(p, del...); err != nil {
+							return err
+						}
+					}
+					if len(kvs) > 0 {
+						if err := edit.SetYAML(p, kvs...); err != nil {
+							return err
+						}
+					}
+				}
+				// unset: the profile keeps its own model, which Hermes
+				// needs to start there
+				if v == "" {
+					return nil
+				}
+				return edit.SetYAML(p, edit.KV{Path: "model.default", Value: v})
+			},
+			Options: func(cur map[string]string) []Option {
+				return append(ownOptions("", cur[hermesProfileKey+name]), viaMagpie("hermes", magpieID+"/")...)
+			},
+		})
+	}
+	return out
 }
 
 // hermesProfileID is the name a Hermes profile may have
@@ -299,6 +401,10 @@ func hermesActive(at place) string {
 	if at.getenv("HERMES_HOME") != "" && filepath.Base(filepath.Dir(home)) == "profiles" {
 		return home
 	}
+	// a stopped distro's file is never opened: that starts it (#3896)
+	if at.cold {
+		return home
+	}
 	root := hermesRoot(at)
 	b, err := os.ReadFile(filepath.Join(root, "active_profile"))
 	if err != nil {
@@ -344,6 +450,7 @@ func hermesFollow(at place, dir, was, now, ref string) error {
 		return nil
 	}
 	var errs []error
+	picked := stashLoad()
 	for _, p := range hermesOthers(at, dir) {
 		if v, _ := edit.GetYAML(p, "model.provider"); v != magpieID {
 			continue
@@ -356,7 +463,9 @@ func hermesFollow(at place, dir, was, now, ref string) error {
 			k = "model.model"
 			v, _ = edit.GetYAML(p, k)
 		}
-		if from(v) {
+		// one picked for this profile on the Agents page is the user's
+		// (hermesProfileFields)
+		if from(v) && picked["hermes:"+p+":picked"] != v {
 			errs = append(errs, edit.SetYAML(p, edit.KV{Path: k, Value: ref}))
 		}
 	}

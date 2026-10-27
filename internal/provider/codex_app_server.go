@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -337,4 +338,52 @@ func sessionTurnOpen(path string) bool {
 	started := bytes.LastIndex(b, []byte(`"type":"task_started"`))
 	ended := max(bytes.LastIndex(b, []byte(`"type":"task_complete"`)), bytes.LastIndex(b, []byte(`"type":"turn_aborted"`)))
 	return started > ended
+}
+
+// codexAppGoneWait is how long RestartCodexApp waits for the app-servers
+// it ended to be gone; a var for tests.
+var codexAppGoneWait = 10 * time.Second
+
+// RestartCodexApp restarts the app-server the Codex desktop app at bundle
+// (/Applications/ChatGPT.app) runs for itself, as codexAppStep does: it is
+// ended as a clean exit, and the app starts another, which reads Codex's
+// config and model list afresh, while the app's window, threads and drafts
+// stay as they are. The Agents row's Restart quit the app and opened it
+// again, which opened a new window (yoshi037070 on Discord, 10-27). An
+// app-server another program runs from the bundle (--listen) is left
+// alone. It waits until the ones ended are gone, and errs when none ran.
+func RestartCodexApp(ctx context.Context, bundle string) error {
+	ps, err := listProcesses(ctx)
+	if err != nil {
+		return err
+	}
+	in := strings.TrimSuffix(bundle, "/") + "/Contents/"
+	var ended []int
+	for _, p := range ps {
+		if !strings.HasPrefix(strings.TrimSpace(p.Args), in) || !isCodexAppOwnServer(p.Args) {
+			continue
+		}
+		if err := endCodexAppServer(p.PID); err != nil {
+			return err
+		}
+		ended = append(ended, p.PID)
+	}
+	if len(ended) == 0 {
+		return errors.New("the Codex app's app-server isn't running")
+	}
+	end := time.Now().Add(codexAppGoneWait)
+	for {
+		ps, err := listProcesses(ctx)
+		if err == nil && !slices.ContainsFunc(ps, func(p proc.Process) bool { return slices.Contains(ended, p.PID) }) {
+			return nil
+		}
+		if time.Now().After(end) {
+			return errors.New("the Codex app's app-server didn't end")
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
 }

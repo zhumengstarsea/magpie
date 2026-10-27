@@ -137,6 +137,7 @@ const zh = {
   "plat.win": "10 及以上",
   "foot.start": "快速上手",
   "foot.feed": "更新源",
+  "foot.apache": "与 Apache Magpie 及 Apache 软件基金会没有隶属关系。",
 
   "nav.masking": "脱敏",
   "alt.masking": "观测 › 脱敏：7 天里没让厂商看到的 5,812 处，从 Claude Code 和 Codex 经 magpie 流向 OpenAI、Kimi 和 DeepSeek",
@@ -285,6 +286,7 @@ const ja = {
   "plat.win": "10 以降",
   "foot.start": "はじめに",
   "foot.feed": "更新フィード",
+  "foot.apache": "Apache Magpie および Apache Software Foundation とは関係ありません。",
 
   "nav.masking": "マスク",
   "alt.masking": "観測 › マスク：7 日間でベンダーに渡さなかった 5,812 か所。Claude Code と Codex から magpie を経て OpenAI、Kimi、DeepSeek へ",
@@ -433,6 +435,7 @@ const de = {
   "plat.win": "10 oder neuer",
   "foot.start": "Erste Schritte",
   "foot.feed": "Update-Feed",
+  "foot.apache": "Nicht verbunden mit Apache Magpie oder der Apache Software Foundation.",
 
   "nav.masking": "Maskierung",
   "alt.masking": "Einblick › Maskierung: 5.812 Werte in 7 Tagen vor Anbietern verborgen, von Claude Code und Codex über magpie zu OpenAI, Kimi und DeepSeek",

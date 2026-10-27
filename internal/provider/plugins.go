@@ -97,6 +97,23 @@ func (p Provider) PluginProvider() string {
 	return p.Account.plugin.ID
 }
 
+// PluginOpenAICompatible is whether p is a plugin's provider that speaks
+// model on an OpenAI-compatible API (@ai-sdk/openai-compatible), whose
+// other routes, the images API among them, its fetch sends under the same
+// base: SenseNova's plugin at token.sensenova.cn/v1. A plugin of a vendor
+// with an API of its own (Cursor's, Kiro's) speaks another package.
+func (p Provider) PluginOpenAICompatible(model string) bool {
+	if !p.IsPlugin() {
+		return false
+	}
+	pp := *p.Account.plugin
+	if cur, ok := PluginOf(p.ID); ok {
+		pp = cur
+	}
+	m, ok := pluginModel(pp, model)
+	return ok && firstOf(m.NPM, pp.NPM) == "@ai-sdk/openai-compatible"
+}
+
 // PluginOf is the plugin provider magpie's provider id is, when it is one.
 func PluginOf(id string) (plugin.Provider, bool) {
 	for _, pp := range heldPlugins() {

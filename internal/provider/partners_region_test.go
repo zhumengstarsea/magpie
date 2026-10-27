@@ -77,6 +77,14 @@ func TestPartnerStartsAtTheUsersRegion(t *testing.T) {
 		if p, _ := FromPreset("apikeyfan"); p.Chat != "https://api.apikey.fan/v1" {
 			t.Errorf("APIKEY.FAN (%d) starts at %q", where, p.Chat)
 		}
+		// Kimi's China and Global accounts don't cross, so its picker
+		// says to pick by the account (Kimi, 10-27: "并在编辑器加一句「按你
+		// 的 Kimi 账号所在区域选择」"); no other partner's regions are both
+		for _, pr := range Partners() {
+			if pr.SplitAccounts != (pr.ID == "kimi") {
+				t.Errorf("%s (%d): SplitAccounts %v", pr.ID, where, pr.SplitAccounts)
+			}
+		}
 	}
 }
 

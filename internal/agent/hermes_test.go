@@ -838,3 +838,167 @@ func TestHermesStickyProfile(t *testing.T) {
 		t.Fatalf("coder after Off: %+v", m)
 	}
 }
+
+// Each of Hermes's other profiles has a model picker of its own
+// (dongshanfengdongshizhcn on Discord: only the default profile's model
+// could be set): it writes that profile's config alone, a magpie model
+// stays when the connected config's model changes, an own model puts back
+// the provider the profile had, and a profile nobody picks for keeps what
+// it has. With the root's profile only, there is no such picker.
+func TestHermesProfileModels(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("HERMES_HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	if err := provider.Save(provider.Provider{ID: "deepseek", Name: "DeepSeek", Chat: "https://api.deepseek.com/v1", Key: "k", Models: []string{"pro", "flash", "max"}}); err != nil {
+		t.Fatal(err)
+	}
+	root := appdir.HermesHomeIn(home)
+	write := func(rel, s string) string {
+		p := filepath.Join(root, rel)
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte(s), 0o644)
+		return p
+	}
+	model := func(p string) (string, string) {
+		var c struct {
+			Model struct{ Default, Provider string }
+		}
+		b, _ := os.ReadFile(p)
+		yaml.Unmarshal(b, &c)
+		return c.Model.Default, c.Model.Provider
+	}
+	check := func(when, p, want, wantProv string) {
+		t.Helper()
+		if m, prov := model(p); m != want || prov != wantProv {
+			b, _ := os.ReadFile(p)
+			t.Fatalf("%s: %s is on %s/%s, want %s/%s:\n%s", when, p, prov, m, wantProv, want, b)
+		}
+	}
+	main := write("config.yaml", "model:\n  default: anthropic/claude-opus-5\n  provider: openrouter\n")
+	profileKeys := func(a *Agent) []string {
+		var ks []string
+		for _, f := range a.Fields {
+			if strings.HasPrefix(f.Key, "profile:") {
+				ks = append(ks, f.Key)
+			}
+		}
+		return ks
+	}
+	if ks := profileKeys(hermes(home)); len(ks) != 0 {
+		t.Fatalf("one profile only, yet pickers %v", ks)
+	}
+
+	coder := write("profiles/coder/config.yaml", "# coder bot\nmodel:\n  default: kimi-k3\n  provider: moonshot\nproviders:\n  mine:\n    base_url: https://x\n")
+	writer := write("profiles/writer/config.yaml", "model:\n  default: gpt-5.5\n  provider: openai\n")
+	write("profiles/old/config.yaml", "model:\n  default: x\n")
+	write("profiles/.deleted/old", "")
+	a := hermes(home)
+	if ks := profileKeys(a); !slices.Equal(ks, []string{"profile:coder", "profile:writer"}) {
+		t.Fatalf("pickers %v", ks)
+	}
+	if f := a.Field("profile:coder"); f == nil || f.Label != "coder" || f.Get() != "kimi-k3" {
+		t.Fatalf("coder's picker: %+v", f)
+	}
+	if err := a.Connect(); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Apply("model", "magpie/deepseek/pro"); err != nil {
+		t.Fatal(err)
+	}
+	// picked here: that profile alone, on magpie
+	if err := a.Apply("profile:coder", "magpie/deepseek/flash"); err != nil {
+		t.Fatal(err)
+	}
+	check("coder on flash", coder, "deepseek/flash", "magpie")
+	check("coder on flash", main, "deepseek/pro", "magpie")
+	check("coder on flash", writer, "gpt-5.5", "openai")
+	if b, _ := os.ReadFile(coder); !strings.Contains(string(b), "# coder bot") || !strings.Contains(string(b), "mine:") {
+		t.Fatalf("coder lost its own settings:\n%s", b)
+	}
+	if v := hermes(home).Field("profile:coder").Get(); v != "magpie/deepseek/flash" {
+		t.Fatalf("coder reads %q", v)
+	}
+
+	// picked the model the connected config is on: it stays when that one
+	// changes, as it was picked for this profile
+	if err := a.Apply("profile:coder", "magpie/deepseek/pro"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Apply("model", "magpie/deepseek/max"); err != nil {
+		t.Fatal(err)
+	}
+	check("main on max", coder, "deepseek/pro", "magpie")
+	check("main on max", writer, "gpt-5.5", "openai")
+
+	// a model of its own: the provider it had before magpie comes back
+	if err := a.Apply("profile:coder", "kimi-k3.5"); err != nil {
+		t.Fatal(err)
+	}
+	check("coder on its own", coder, "kimi-k3.5", "moonshot")
+
+	// Default on a profile on magpie: the model it had before magpie;
+	// on one of its own model, it keeps it
+	if err := a.Apply("profile:writer", "magpie/deepseek/flash"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Apply("profile:writer", ""); err != nil {
+		t.Fatal(err)
+	}
+	check("writer on default", writer, "gpt-5.5", "openai")
+	if err := a.Apply("profile:coder", ""); err != nil {
+		t.Fatal(err)
+	}
+	check("coder on default", coder, "kimi-k3.5", "moonshot")
+
+	// on magpie again, then Off and On: back on its own model, then on
+	// the one picked for it
+	if err := a.Apply("profile:writer", "magpie/deepseek/flash"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Disconnect(); err != nil {
+		t.Fatal(err)
+	}
+	check("after disconnect", writer, "gpt-5.5", "openai")
+	check("after disconnect", coder, "kimi-k3.5", "moonshot")
+	if err := hermes(home).Connect(); err != nil {
+		t.Fatal(err)
+	}
+	check("connected again", writer, "deepseek/flash", "magpie")
+	check("connected again", coder, "kimi-k3.5", "moonshot")
+	if err := hermes(home).Disconnect(); err != nil {
+		t.Fatal(err)
+	}
+
+	// a bot put on magpie while the connected config isn't keeps magpie's
+	// provider current: a model added since reaches its list at a sync
+	a = hermes(home)
+	if err := a.Apply("profile:writer", "magpie/deepseek/flash"); err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.Save(provider.Provider{ID: "deepseek", Name: "DeepSeek", Chat: "https://api.deepseek.com/v1", Key: "k", Models: []string{"pro", "flash", "max", "lite"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(writer); !strings.Contains(string(b), "deepseek/lite") {
+		t.Fatalf("writer's provider after a sync:\n%s", b)
+	}
+
+	// with a sticky profile, the root's config is the profile "default"
+	write("active_profile", "coder\n")
+	a = hermes(home)
+	if ks := profileKeys(a); !slices.Equal(ks, []string{"profile:default", "profile:writer"}) {
+		t.Fatalf("sticky coder: pickers %v", ks)
+	}
+	if err := a.Apply("profile:default", "openrouter/x-model"); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := model(main); m != "openrouter/x-model" {
+		b, _ := os.ReadFile(main)
+		t.Fatalf("default profile:\n%s", b)
+	}
+}

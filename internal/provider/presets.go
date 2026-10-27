@@ -41,6 +41,10 @@ type PresetDef struct {
 	Regions   []Region `json:"regions,omitempty"`   // base-URL choices (a relay's regional endpoints, a vendor's plans)
 	// RegionLabel names what the Regions choose between, "Region" if unset.
 	RegionLabel string `json:"regionLabel,omitempty"`
+	// SplitAccounts is set on a partner whose regions are China's and
+	// Global's, whose accounts don't work at each other's endpoints (Kimi
+	// Code): its region picker says to pick by the account.
+	SplitAccounts bool `json:"splitAccounts,omitempty"`
 	// KeyPlans: each key may be on a Region of its own (KeyAccount.Plan),
 	// a vendor whose plans and pay as you go are sold on keys of their own
 	// that only their own endpoints take (Volcengine's Coding and Agent

@@ -132,6 +132,21 @@ func homes() (home, cfg string) {
 
 // builtins are the agents magpie has wiring of its own for.
 func builtins(home, cfg string) []*Agent {
+	return append(onMachine(home, cfg), wslAgents()...)
+}
+
+// local is All() without the agents in WSL distros, which wsl.exe is asked
+// for: what start-up moves look in, on every command, `magpie version`
+// too, and the moves came before WSL agents. A wsl.exe that hangs held each
+// command 20s, its two listings' timeouts.
+func local() []*Agent {
+	home, cfg := homes()
+	own := onMachine(home, cfg)
+	return append(own, pluggedAgents(home, own, nil)...)
+}
+
+// onMachine are builtins but those in WSL.
+func onMachine(home, cfg string) []*Agent {
 	return append([]*Agent{
 		claude(home),
 		claudeDesktop(home),
@@ -201,7 +216,7 @@ func builtins(home, cfg string) []*Agent {
 		cindy(),
 		aionui(),
 		lody(home),
-	}, append(ompProfiles(home), wslAgents()...)...)
+	}, ompProfiles(home)...)
 }
 
 // ---- accessors -------------------------------------------------------------

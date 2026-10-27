@@ -1301,9 +1301,12 @@ func buildResponses(r *Request, model, host string, rejectTemp bool) []byte {
 	// input's goes back to a Responses upstream, as it would without magpie
 	// (#1445); an account or vendor that can't read another's turns it away,
 	// and is asked again without it (foreignReasoning, withoutRefused).
+	// Output token replay's include is OpenAI's alone, as Codex sends it
+	// (forVendor): Copilot refuses it (echo_ts).
 	var include []string
 	for _, v := range r.Include {
-		if v == "" || slices.Contains(include, v) || (v == "reasoning.encrypted_content" && out["reasoning"] == nil) {
+		if v == "" || slices.Contains(include, v) || (v == "reasoning.encrypted_content" && out["reasoning"] == nil) ||
+			v == outputReplay && host != "chatgpt.com" && host != "api.openai.com" {
 			continue
 		}
 		include = append(include, v)

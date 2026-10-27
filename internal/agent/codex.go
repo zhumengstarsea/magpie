@@ -1344,6 +1344,24 @@ func codexIn(at place) *Agent {
 		// joined, a model of Codex's own is picked beside magpie's, as in
 		// Codex's /model: it stays connected
 		if joined() && !api() && chatGPT() {
+			// magpie made its provider for a used-up account (codex.out)
+			// and that no longer holds (kept on ChatGPT, or room again):
+			// back on the sign-in as Join leaves it. Only the model set
+			// left magpie the provider of one of Codex's own for good
+			// (eddie.zhan on Discord, Always ChatGPT from the takeover)
+			if asProvider() && stashLoad()[at.key("codex.out")] == "1" && !out() {
+				forget(at.key("codex.out"), at.key("codex.out_own"))
+				if err := edit.DelTOMLTop(path, "model_provider", "model_catalog_json"); err != nil {
+					return err
+				}
+				if err := edit.SetTOMLTop(path,
+					edit.KV{Path: "openai_base_url", Value: at.codexURL()},
+					edit.KV{Path: "model", Value: v},
+				); err != nil {
+					return err
+				}
+				return settle()
+			}
 			if err := edit.SetTOMLTop(path, edit.KV{Path: "model", Value: v}); err != nil {
 				return err
 			}

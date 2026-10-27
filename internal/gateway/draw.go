@@ -255,6 +255,20 @@ func Drawers(p provider.Provider) []catalog.Model {
 		}
 		return out
 	}
+	if p.IsPlugin() {
+		// a plugin in front of an OpenAI-compatible API: the image models
+		// its list names that draw on the images API, sent through its
+		// fetch under the base its chat goes to (01huadalang on Discord:
+		// the SenseNova plugin's sensenova-u1.5-lite)
+		var out []catalog.Model
+		for _, m := range p.Available() {
+			if catalog.DrawsID(m.ID) && catalog.ImagesAPI(m.ID) && p.PluginOpenAICompatible(m.ID) && p.ModelKind(m.ID) != provider.KindVideo {
+				m.Provider = p.ID
+				out = append(out, m)
+			}
+		}
+		return out
+	}
 	// any other subscription is asked through its agent's own API, which
 	// draws nothing magpie can ask for yet. A Responses-only relay (a Codex
 	// backend such as sub2api) has no chat base but serves the images API

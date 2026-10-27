@@ -2570,7 +2570,8 @@ var claudeManaged = func() string {
 // StandIn is the model Claude Code is set to use in place of one it named
 // that magpie doesn't serve: claude-haiku-4-5-… for a title or a small
 // task goes to its haiku tier's model, and a name of no tier to its main
-// model. For Codex, the model it is set to (codexStandIn). "" when the
+// model. For Codex, the model it is set to (codexStandIn), in a WSL
+// distro the distro's config names (wslCodexStandIn). "" when the
 // agent isn't routed through magpie or is neither. For gateway.StandIn.
 func StandIn(agent, model string) string {
 	if agent != "claude" && agent != "codex" {
@@ -2581,7 +2582,11 @@ func StandIn(agent, model string) string {
 		return ""
 	}
 	if agent == "codex" {
-		return codexStandIn(filepath.Join(here(home).codexHome(), "config.toml"))
+		if m := codexStandIn(filepath.Join(here(home).codexHome(), "config.toml")); m != "" || runtime.GOOS != "windows" {
+			return m
+		}
+		// a Codex in a WSL distro is known by the same client
+		return wslCodexStandIn()
 	}
 	if m := claudeStandIn(filepath.Join(here(home).claudeDir(), "settings.json"), model); m != "" || runtime.GOOS != "windows" {
 		return m

@@ -89,8 +89,11 @@ func (s *Server) compactsNatively(p provider.Provider, model string) bool {
 // nativeCompactionFor is whether Codex's compaction_trigger for the model
 // it asked (a provider's model, or a routing group) goes on as Codex sent
 // it: every member of a group compacting natively, as any of them may
-// answer it. A group with one that doesn't keeps magpie's summary, which
-// any member can read.
+// answer it, and a key or account the request would go over able to be
+// asked it (plannedCarrier, #2725). A group with one that doesn't keeps
+// magpie's summary, which any member can read; so does a provider whose
+// vendor lists the model only to keys that speak no Responses there, as
+// with native compaction off, where the trigger was refused before.
 func (s *Server) nativeCompactionFor(asked string) bool {
 	if _, ms, ok := provider.FindGroup(asked); ok {
 		if len(ms) == 0 {
@@ -101,10 +104,45 @@ func (s *Server) nativeCompactionFor(asked string) bool {
 				return false
 			}
 		}
-		return true
+		return slices.ContainsFunc(ms, func(m provider.Member) bool { return s.plannedCarrier(m.Provider, m.Model) })
 	}
 	p, model, ok := provider.Resolve(asked)
-	return ok && s.compactsNatively(p, model)
+	if !ok || !s.compactsNatively(p, model) {
+		return false
+	}
+	// the request goes over the provider's keys, then its fallbacks' (plan)
+	if s.plannedCarrier(p, model) {
+		return true
+	}
+	seen := map[string]bool{p.ID + "/" + model: true}
+	for _, id := range p.Fallback {
+		fp, fm, ok := provider.Resolve(id)
+		if !ok || seen[fp.ID+"/"+fm] {
+			continue
+		}
+		seen[fp.ID+"/"+fm] = true
+		if s.plannedCarrier(fp, fm) {
+			return true
+		}
+	}
+	return false
+}
+
+// plannedCarrier is whether one of the keys or accounts plan would put in
+// a Responses request's candidates for model at p — those it goes over,
+// those made for another protocol, and the held and capped ones, not those
+// whose own list lacks the model — can be asked Codex's compaction, as
+// compactionCarriers keeps them. It reads perKeyBarred alone, not plan:
+// a plan weighs the keys, and a provider routed in turn would move its
+// turn along for a request that never went (every Codex turn is decided).
+func (s *Server) plannedCarrier(p provider.Provider, model string) bool {
+	cs, aside, _, barred := perKeyBarred(p, model, provider.Responses)
+	for _, l := range [][]candidate{cs, aside, creditsHeld(barred), capHeldOnly(barred)} {
+		if slices.ContainsFunc(l, func(c candidate) bool { return s.carriesCompaction(c.p, c.model) }) {
+			return true
+		}
+	}
+	return false
 }
 
 // keepsCompaction is whether body goes to p as it is for its compaction:

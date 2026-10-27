@@ -387,6 +387,8 @@ func validPartners(in []Partner) []Partner {
 		for i := range p.Regions {
 			p.Regions[i].Decide = ""
 		}
+		p.SplitAccounts = slices.ContainsFunc(p.Regions, func(r Region) bool { return placeOf(r) == "china" }) &&
+			slices.ContainsFunc(p.Regions, func(r Region) bool { return placeOf(r) == "global" })
 		if p.Chat == "" && p.Responses == "" && p.Anthropic == "" {
 			// the first region is the default, as a built-in preset's is,
 			// unless it is China's or Global's and the user is in the

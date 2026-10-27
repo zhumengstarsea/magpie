@@ -85,6 +85,14 @@ export const FakePlugin = async ({ client }) => ({
     if (process.env.FAKE_RESPONSES) cfg.provider[ID].models["fake-resp"] = { name: "Fake Responses", provider: { npm: "@ai-sdk/openai" }, limit: { context: 4000, output: 400 } }
     // $FAKE_GROK: a Grok model on Responses, as Grok's plugin serves it
     if (process.env.FAKE_GROK) cfg.provider[ID].models["grok-4.7"] = { name: "Grok 4.7", provider: { npm: "@ai-sdk/openai" }, limit: { context: 4000, output: 400 } }
+    // $FAKE_SENSENOVA: SenseNova's image model as its plugin lists it from
+    // token.sensenova.cn/v1/models, on the provider's openai-compatible;
+    // and an image model on a vendor's own API (Anthropic's package), which
+    // no images API of the base serves
+    if (process.env.FAKE_SENSENOVA) {
+      cfg.provider[ID].models["sensenova-u1.5-lite"] = { name: "sensenova-u1.5-lite", limit: { context: 131072, output: 32768 } }
+      cfg.provider[ID].models["flux-2"] = { name: "Flux 2", provider: { npm: "@ai-sdk/anthropic" }, limit: { context: 1000, output: 100 } }
+    }
     // $FAKE_DEEPSEEK: a DeepSeek model, as Cline's cline-pass/deepseek-v4-pro
     if (process.env.FAKE_DEEPSEEK) cfg.provider[ID].models["deepseek-v4-pro"] = { name: "DeepSeek V4 Pro", limit: { context: 1000, output: 100 } }
     // $FAKE_GLM: a GLM model, as Cline's cline-pass/glm-5.3

@@ -298,29 +298,41 @@ func windowHolds(qs []provider.SubscriptionQuota, now, first time.Time, priceOf 
 // apiPricer is each call's model at its API list price: its maker's, else
 // the provider's own list, else the maker's of the model the user said it
 // is the same as (provider.SamePriceIn), never a price the user set for the
-// subscription (which may well be nothing) nor a rate it bills at. A price
-// of nothing at all is no API price.
+// subscription (which may well be nothing) nor a rate it bills at. A model
+// none of those prices is priced as the model the reply named (Served), as
+// the ledger is (#1498). A price of nothing at all is no API price.
 func apiPricer() func(Record) *catalog.Price {
 	st := settings.Load()
-	prices := map[[2]string]*catalog.Price{}
-	return func(r Record) *catalog.Price {
-		k := [2]string{r.Provider, r.Model}
-		if pr, ok := prices[k]; ok {
-			return pr
-		}
-		var pr *catalog.Price
-		v, ok := provider.MakerPrice(r.Model)
+	prices := map[[3]string]*catalog.Price{}
+	one := func(providerID, model string) *catalog.Price {
+		v, ok := provider.MakerPrice(model)
 		if !ok || v.Cost(1e6, 1e6, 0, 0) == 0 {
 			ok = false
-			if p, err := provider.Find(r.Provider); err == nil {
-				v, ok = p.ListPrice(r.Model)
+			if p, err := provider.Find(providerID); err == nil {
+				v, ok = p.ListPrice(model)
 			}
 		}
 		if !ok || v.Cost(1e6, 1e6, 0, 0) == 0 { // the model the user said it is (#2344)
-			v, ok = provider.SamePriceIn(st, r.Provider, r.Model)
+			v, ok = provider.SamePriceIn(st, providerID, model)
 		}
-		if ok && v.Cost(1e6, 1e6, 0, 0) > 0 {
-			pr = &v
+		if !ok || v.Cost(1e6, 1e6, 0, 0) == 0 {
+			return nil
+		}
+		pr := v
+		return &pr
+	}
+	return func(r Record) *catalog.Price {
+		served := strings.TrimSpace(r.Served)
+		if served == r.Model {
+			served = ""
+		}
+		k := [3]string{r.Provider, r.Model, served}
+		if pr, ok := prices[k]; ok {
+			return pr
+		}
+		pr := one(r.Provider, r.Model)
+		if pr == nil && served != "" {
+			pr = one(r.Provider, served)
 		}
 		prices[k] = pr
 		return pr
