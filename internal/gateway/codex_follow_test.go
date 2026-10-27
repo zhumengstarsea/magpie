@@ -277,3 +277,150 @@ func TestCodexMemoriesBeforeAnyTurnFollowTheConfig(t *testing.T) {
 		t.Fatalf("the relay got %v", reqs)
 	}
 }
+
+// codexSideAsk is one of Codex's side calls on one of its own models, with
+// the headers Codex sends for it.
+func codexSideAsk(s *Server, model string, h map[string]string) {
+	body := `{"model":"` + model + `","stream":true,"input":[` + leadAsk + `]}`
+	req := httptest.NewRequest("POST", CodexPath+"/responses", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer chatgpt-token")
+	req.Header.Set("chatgpt-account-id", "acct-1")
+	req.Header.Set("User-Agent", "codex_cli_rs/0.159.0 (Mac OS 26.2.0; arm64)")
+	for k, v := range h {
+		req.Header.Set(k, v)
+	}
+	s.Handler().ServeHTTP(httptest.NewRecorder(), req)
+}
+
+// beforeTheTurn runs side, then turn once side is waiting for a turn or has
+// been answered (on the old code a memory call never waits, and is
+// answered first), and waits for side to finish.
+func beforeTheTurn(t *testing.T, s *Server, side, turn func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		side()
+	}()
+	for waiting := false; !waiting; {
+		select {
+		case <-done:
+			waiting = true
+		default:
+			s.codexLeads.mu.Lock()
+			waiting = s.codexLeads.next != nil
+			s.codexLeads.mu.Unlock()
+			if !waiting {
+				time.Sleep(time.Millisecond)
+			}
+		}
+	}
+	turn()
+	<-done
+}
+
+// cybercaius on Discord: after switching Codex's model, does the first of
+// each side call go on the new model, as the title does? Each kind, sent
+// before the first turn on the new model reaches magpie: a new
+// conversation's title and description (a temporary thread of the app's),
+// its composer prediction (a fork of it), and its memories, which Codex
+// starts with every turn of a conversation (phase 1 under the
+// conversation's thread, phase 2 on a consolidation thread of its own).
+// Each goes on the model switched to, none on the one before, none to
+// ChatGPT.
+func TestCodexSideCallsBeforeTheFirstTurnFollowTheSwitch(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		h    map[string]string
+	}{
+		{"title", map[string]string{"session_id": "title-thread", "x-codex-turn-metadata": `{"thread_source":"thread_title"}`}},
+		{"description", map[string]string{"session_id": "desc-thread", "x-codex-turn-metadata": `{"thread_source":"thread_description"}`}},
+		{"prediction", map[string]string{"session_id": "fork-of-lead-2", "x-codex-turn-metadata": `{"thread_source":"composer_predictions","forked_from_thread_id":"lead-2"}`}},
+		{"memory extraction", map[string]string{"session_id": "lead-2", "x-codex-turn-metadata": `{"thread_source":"memory_consolidation","request_kind":"memory"}`}},
+		{"memory consolidation", map[string]string{"session_id": "consolidation-thread", "x-openai-memgen-request": "true", "x-codex-turn-metadata": `{"thread_source":"memory_consolidation"}`}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			up, old, s := codexFollowSetup(t, false)
+			switched := relayOn(t, "fourth")
+			wasModel, wasFresh, wasWait := CodexSideModel, codexSideFresh, codexSideWait
+			CodexSideModel = func() string { return "" }
+			codexSideFresh, codexSideWait = 0, time.Minute
+			t.Cleanup(func() { CodexSideModel, codexSideFresh, codexSideWait = wasModel, wasFresh, wasWait })
+			beforeTheTurn(t, s, func() { codexSideAsk(s, "gpt-5.6-luna", c.h) }, func() {
+				if rec := codexSubTurn(s, "fourth/gpt-6-astra", "lead-2", "", leadAsk); rec.Code != 200 {
+					t.Errorf("new conversation: %d %s", rec.Code, rec.Body.String())
+				}
+			})
+			if got := up.asked(); len(got) != 0 {
+				t.Fatalf("ChatGPT was asked for %v", got)
+			}
+			if reqs := old.requests(); len(reqs) != 1 {
+				t.Fatalf("the model switched from got %d requests, the %s among them", len(reqs), c.name)
+			}
+			if reqs := switched.requests(); len(reqs) != 2 {
+				t.Fatalf("the model switched to got %d requests, want the turn and the %s", len(reqs), c.name)
+			}
+		})
+	}
+}
+
+// The model switched in a conversation already under way: Codex starts its
+// memories with the conversation's next turn, under that thread, and the
+// memory call that beats the turn to magpie goes on the new model, not on
+// the thread's last. A composer prediction of that thread asked after the
+// turn is on the new model too.
+func TestCodexMemoryOfASwitchedConversationFollowsTheSwitch(t *testing.T) {
+	up, old, s := codexFollowSetup(t, false)
+	switched := relayOn(t, "fourth")
+	wasModel, wasFresh, wasWait := CodexSideModel, codexSideFresh, codexSideWait
+	CodexSideModel = func() string { return "" }
+	codexSideFresh, codexSideWait = 0, time.Minute
+	t.Cleanup(func() { CodexSideModel, codexSideFresh, codexSideWait = wasModel, wasFresh, wasWait })
+	memory := map[string]string{"session_id": "lead-1", "x-codex-turn-metadata": `{"thread_source":"memory_consolidation","request_kind":"memory"}`}
+	beforeTheTurn(t, s, func() { codexSideAsk(s, "gpt-5.6-luna", memory) }, func() {
+		if rec := codexSubTurn(s, "fourth/gpt-6-astra", "lead-1", "", leadAsk); rec.Code != 200 {
+			t.Errorf("the switched turn: %d %s", rec.Code, rec.Body.String())
+		}
+	})
+	codexSideAsk(s, "gpt-6-luna", map[string]string{"session_id": "fork-of-lead-1", "x-codex-turn-metadata": `{"thread_source":"composer_predictions","forked_from_thread_id":"lead-1"}`})
+	if got := up.asked(); len(got) != 0 {
+		t.Fatalf("ChatGPT was asked for %v", got)
+	}
+	if reqs := old.requests(); len(reqs) != 1 {
+		t.Fatalf("the model switched from got %d requests", len(reqs))
+	}
+	if reqs := switched.requests(); len(reqs) != 3 {
+		t.Fatalf("the model switched to got %d requests, want the turn, the memory and the prediction", len(reqs))
+	}
+}
+
+// Codex with magpie as its provider asks for its memories on a model of
+// its own by its bare name (codexMemoryStandIn): the one that beats the
+// first turn after a switch goes on the model switched to, not on the
+// last turn's.
+func TestCodexMemoryStandInFollowsTheSwitch(t *testing.T) {
+	fresh(t)
+	old, switched := relayOn(t, "third"), relayOn(t, "fourth")
+	wasFresh, wasWait := codexSideFresh, codexSideWait
+	codexSideFresh, codexSideWait = 0, time.Minute
+	t.Cleanup(func() { codexSideFresh, codexSideWait = wasFresh, wasWait })
+	s := New()
+	if rec := codexCall(t, s, "third/gpt-6-astra", ""); rec.Code != 200 {
+		t.Fatalf("the old turn: %d %s", rec.Code, rec.Body.String())
+	}
+	beforeTheTurn(t, s, func() {
+		if rec := codexCall(t, s, "gpt-5.6-luna", "memory_consolidation"); rec.Code != 200 {
+			t.Errorf("memory: %d %s", rec.Code, rec.Body.String())
+		}
+	}, func() {
+		if rec := codexCall(t, s, "fourth/gpt-6-astra", ""); rec.Code != 200 {
+			t.Errorf("the switched turn: %d %s", rec.Code, rec.Body.String())
+		}
+	})
+	if reqs := old.requests(); len(reqs) != 1 {
+		t.Fatalf("the model switched from got %d requests", len(reqs))
+	}
+	if reqs := switched.requests(); len(reqs) != 2 {
+		t.Fatalf("the model switched to got %d requests, want the turn and the memory", len(reqs))
+	}
+}

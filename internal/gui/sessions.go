@@ -80,6 +80,8 @@ func gatewaySession(g usage.GatewaySession) sessions.Session {
 func sessionRoutes(mux *http.ServeMux, w Windows) {
 	warmSessions()
 	mux.HandleFunc("GET /api/sessions", func(rw http.ResponseWriter, r *http.Request) {
+		// the list and the Codex threads' effort each list every session file
+		defer sessions.OneListing()()
 		n, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 		// The page draws a session count taken from every session
 		// (statsFor's Overview) beside this list, so the list is read as
@@ -140,7 +142,10 @@ func sessionRoutes(mux *http.ServeMux, w Windows) {
 			j.Path = tilde(j.Path)
 			out.Sessions = append(out.Sessions, j)
 		}
-		writeJSON(rw, out)
+		writeJSONRows(rw, r, "sessions", out.Sessions, struct {
+			Terminal bool     `json:"terminal"`
+			Dirs     []string `json:"dirs"`
+		}{out.Terminal, out.Dirs})
 	})
 	// stats is every session's usage by day over the last ?days=N days
 	// (every day when 0 or none), cut by agent, folder and model for the
@@ -161,7 +166,7 @@ func sessionRoutes(mux *http.ServeMux, w Windows) {
 				agents[a.Agent] = cmp.Or(names[a.Agent], a.Agent)
 			}
 		}
-		writeJSON(rw, struct {
+		writeJSONSame(rw, r, struct {
 			sessions.Stats
 			Agents map[string]string `json:"agents"`
 		}{st, agents})

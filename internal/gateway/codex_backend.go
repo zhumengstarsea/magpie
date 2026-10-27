@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"io"
 	"log"
 	"net/http"
@@ -1658,10 +1657,8 @@ func codexSaidNothing(rest, model, who string, res *http.Response, msg []byte) (
 	said := " and said nothing more"
 	if page {
 		said = " with a web page in place of an API error"
-		if m := pageTitle.FindSubmatch(msg); m != nil {
-			if title := strings.Join(strings.Fields(html.UnescapeString(string(m[1]))), " "); title != "" {
-				said += " (“" + clipRunes(title, 120) + "”)"
-			}
+		if title := provider.PageTitle(msg); title != "" {
+			said += " (“" + title + "”)"
 		}
 	}
 	return who + " answered " + what + " for " + model + " " + res.Status + said +

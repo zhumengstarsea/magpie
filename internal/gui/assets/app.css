@@ -1026,7 +1026,7 @@ body.window .field.solo { grid-column: auto; }
    while it shows its account */
 .acct-eye { display: none; flex: none; align-self: center; padding: 2px; border-radius: 4px; color: var(--muted); line-height: 0; opacity: 0; }
 body.masked .acct-eye { display: inline-flex; }
-body.masked :hover > .acct-eye, body.masked :focus-within > .acct-eye, .acct-eye[aria-pressed="true"] { opacity: 1; }
+body.masked :hover > .acct-eye, body.masked .pq-card:hover .acct-eye, body.masked :focus-within > .acct-eye, .acct-eye[aria-pressed="true"] { opacity: 1; }
 .acct-eye:hover { color: var(--fg); background: var(--pill-hover); }
 .quota-balance b { margin-left: auto; font-size: 15px; color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; }
 /* a balance field's several amounts (#420): a line each, the label quiet
@@ -1874,7 +1874,8 @@ body.panel .profiles #save { height: 25px; } /* the field's: the line keeps its 
 @keyframes pq-mode-flash { 0%, 30% { background: var(--accent-soft); color: var(--accent); } }
 @media (prefers-reduced-motion: reduce) { .pq-mode.flash { animation: none; } }
 .pq-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 12px; padding: 10px 12px; border-radius: 11px; background: var(--card); box-shadow: var(--card-edge); }
-.pq-user { font-size: 12.5px; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pq-who { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.pq-user { flex: 0 1 auto; min-width: 0; font-size: 12.5px; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pq-sub { font-size: 11px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .pq-sub.err { color: var(--muted); white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 /* a line with the card's refresh: the words shorten, the refresh keeps

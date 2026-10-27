@@ -32,6 +32,10 @@ const (
 	// serves at no cost to the subscription's allowance or credits, before
 	// the ones that spend it (routes.FreeFirst).
 	FreeFirst = "free"
+	// Fastest goes by speed: the one that has answered the model fastest
+	// lately — first token, then how fast it wrote — first; one not
+	// measured lately gets a turn now and then to be (routes.Fastest).
+	Fastest = "fast"
 )
 
 // pluginRouting is a routing a plugin serves: "<plugin>/<name>".

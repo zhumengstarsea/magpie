@@ -538,6 +538,10 @@ var wslKinds = []wslKind{
 	{id: "mothx", name: "MothX", dir: ".mothx", bin: "mothx", in: mothxIn,
 		restart: newNotice("{agent} in WSL {distro} reads its settings at start-up — restart open mothx sessions to use this."),
 		asleep:  wslOwnAsleep("mothx", "model")},
+	// PenguinHarness's ~/.penguin/data in the distro: its PENGUIN_HOME
+	// there isn't read; its server reads the file again as it changes
+	{id: "penguin", name: "PenguinHarness", dir: ".penguin", bin: "penguin", in: penguinIn,
+		asleep: wslOwnAsleep("penguin", "model")},
 	{id: "reasonix", name: "Reasonix", bin: "reasonix", in: reasonixIn, version: true,
 		accept: func(d distro) bool {
 			v := d.Versions["reasonix"]

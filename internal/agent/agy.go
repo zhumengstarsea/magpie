@@ -14,6 +14,17 @@ package agent
 // names the model with --model too: agy 1.2 asks for a custom model picked
 // in settings.json or its /model picker with no model name ("model is
 // empty"); only one given on the command line resolves.
+//
+// So that typing agy just works (bestony on Discord: the command was
+// copied at each start), magpie puts a function named agy in the profile
+// of each shell the user has, between "# >>> magpie agy >>>" and
+// "# <<< magpie agy <<<" (update.ShellFunction), while agy is on one of
+// magpie's models. It runs `magpie agy run`, which starts the real agy
+// with the two variables and --model when settings.json's model is still
+// magpie's and as it is otherwise (cli/agy_cli.go); PowerShell's asks
+// `magpie agy env` for them, since the app it would run is a GUI program
+// PowerShell doesn't wait for. A terminal open before takes the command
+// from the row.
 
 import (
 	"encoding/json"
@@ -27,6 +38,7 @@ import (
 
 	"github.com/yetone/magpie/internal/edit"
 	"github.com/yetone/magpie/internal/gateway"
+	"github.com/yetone/magpie/internal/update"
 )
 
 const agyModels = "customModelsConfig.customModels"
@@ -43,6 +55,69 @@ func AgyLaunch(model string) string {
 		return `$env:GEMINI_API_KEY="` + key + `"; $env:GOOGLE_GEMINI_BASE_URL="` + gateway.URL() + `"; agy --model '` + strings.ReplaceAll(model, "'", "''") + `'`
 	}
 	return "GEMINI_API_KEY=" + key + " GOOGLE_GEMINI_BASE_URL=" + gateway.URL() + " agy --model '" + strings.ReplaceAll(model, "'", `'\''`) + "'"
+}
+
+// AgyStart is what starts agy on magpie, the variables and the model,
+// while settings.json's model is one of magpie's; nil and "" otherwise,
+// when agy starts as it is.
+func AgyStart() (env []string, model string) {
+	home, _ := homes()
+	m := jsonGet(filepath.Join(home, ".gemini", "antigravity-cli", "settings.json"), "model")()
+	if !usesMagpie(m) {
+		return nil, ""
+	}
+	return []string{"GEMINI_API_KEY=" + agentKey("agy"), "GOOGLE_GEMINI_BASE_URL=" + gateway.URL()}, m
+}
+
+// agyShell gives the user's shells the function agy, or takes it out of
+// them; only for agy on this machine. What fails leaves the setting as it
+// is: the row's command still starts it.
+func agyShell(home string, on bool) {
+	if here, _ := homes(); here != home {
+		return
+	}
+	if on {
+		update.ShellFunction("agy", agyFunction)
+	} else {
+		update.DropShellFunction("agy")
+	}
+}
+
+// agyTyped is "agy" while a shell's profile has magpie's function for it.
+func agyTyped() string {
+	if len(update.ShellFunctionIn("agy")) > 0 {
+		return "agy"
+	}
+	return ""
+}
+
+// agyFunction is the function agy in a shell of kind, which runs prog
+// (this magpie) to start it; the agy on PATH when prog is gone.
+func agyFunction(kind, prog string) string {
+	switch kind {
+	case "fish":
+		q := "'" + strings.NewReplacer(`\`, `\\`, "'", `\'`).Replace(prog) + "'"
+		return "function agy\n    if test -x " + q + "\n        " + q + " agy run $argv\n    else\n        command agy $argv\n    end\nend"
+	case "powershell":
+		q := "'" + strings.ReplaceAll(prog, "'", "''") + "'"
+		return `function agy {
+    $real = Get-Command agy -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $real) { Write-Error 'agy is not installed'; return }
+    $start = @{}
+    if (Test-Path -LiteralPath ` + q + `) {
+        foreach ($l in @(& ` + q + ` agy env)) { $k, $v = "$l" -split '=', 2; if ($v) { $start[$k] = $v } }
+    }
+    if (-not $start.model) { & $real @args; return }
+    $was = $env:GEMINI_API_KEY, $env:GOOGLE_GEMINI_BASE_URL
+    $env:GEMINI_API_KEY = $start.GEMINI_API_KEY; $env:GOOGLE_GEMINI_BASE_URL = $start.GOOGLE_GEMINI_BASE_URL
+    try {
+        if (@($args | Where-Object { "$_" -match '^--?model(=|$)' }).Count) { & $real @args } else { & $real --model $start.model @args }
+    } finally { $env:GEMINI_API_KEY = $was[0]; $env:GOOGLE_GEMINI_BASE_URL = $was[1] }
+}`
+	}
+	q := "'" + strings.ReplaceAll(prog, "'", `'\''`) + "'"
+	// "function": a name the user aliased isn't expanded where it is defined
+	return "function agy {\n  if [ -x " + q + " ]; then " + q + ` agy run "$@"; else command agy "$@"; fi` + "\n}"
 }
 
 // agyCustom reads customModels as it is, raw JSON by key.
@@ -106,8 +181,16 @@ func agy(home string) *Agent {
 			}
 			return ""
 		},
-		Sync: func() error {
+		Typed: func() string {
 			if !usesMagpie(get()) {
+				return ""
+			}
+			return agyTyped()
+		},
+		Sync: func() error {
+			on := usesMagpie(get())
+			agyShell(home, on)
+			if !on {
 				return nil
 			}
 			return setModels(true)
@@ -116,6 +199,12 @@ func agy(home string) *Agent {
 			v := get()
 			if !usesMagpie(v) {
 				return ""
+			}
+			if in := update.ShellFunctionIn("agy"); len(in) > 0 {
+				for i := range in {
+					in[i] = update.TildeHome(in[i])
+				}
+				return noticeAgyTyped.say("profiles", strings.Join(in, ", "), "command", AgyLaunch(v))
 			}
 			return noticeAgy.say("command", AgyLaunch(v))
 		},
@@ -144,7 +233,11 @@ func agy(home string) *Agent {
 					if err := setModels(true); err != nil {
 						return err
 					}
-					return edit.SetJSON(path, edit.KV{Path: "modelProvider", Value: "gemini"}, edit.KV{Path: "model", Value: v})
+					if err := edit.SetJSON(path, edit.KV{Path: "modelProvider", Value: "gemini"}, edit.KV{Path: "model", Value: v}); err != nil {
+						return err
+					}
+					agyShell(home, true)
+					return nil
 				}
 				if usesMagpie(cur) {
 					// back to what the user had
@@ -159,6 +252,9 @@ func agy(home string) *Agent {
 				}
 				if err := put("model", v); err != nil {
 					return err
+				}
+				if usesMagpie(cur) {
+					agyShell(home, false)
 				}
 				return setModels(false)
 			},
@@ -189,4 +285,7 @@ func agy(home string) *Agent {
 }
 
 // what agy says after a change (notice.go)
-var noticeAgy = newNotice("agy takes magpie's gateway and model only from how it is started — start it with {command}")
+var (
+	noticeAgy      = newNotice("agy takes magpie's gateway and model only from how it is started — start it with {command}")
+	noticeAgyTyped = newNotice("Type agy in a new terminal: magpie added it to {profiles}, to start agy on magpie's gateway and model (in a terminal open now: {command}).")
+)

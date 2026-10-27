@@ -165,7 +165,7 @@
     </figure>
 
     <h3>一个供应商里的多个账号或密钥</h3>
-    <p>展开供应商那一行，勾选要用的每个账号或密钥。<span class="ui">路由</span> 决定请求怎么分给它们：<span class="ui">智能</span>（默认）、<span class="ui">按顺序</span>、<span class="ui">轮流</span>、<span class="ui">用量少的优先</span> 或 <span class="ui">重置前用完</span>。<span class="ui">备用</span> 里列出这个供应商额度用完、被限流或不可用时改用的模型。</p>
+    <p>展开供应商那一行，勾选要用的每个账号或密钥。<span class="ui">路由</span> 决定请求怎么分给它们：<span class="ui">智能</span>（默认）、<span class="ui">按顺序</span>、<span class="ui">轮流</span>、<span class="ui">用量少的优先</span>、<span class="ui">重置前用完</span> 或 <span class="ui">速度优先</span>（最近回答最快的密钥先用）。<span class="ui">备用</span> 里列出这个供应商额度用完、被限流或不可用时改用的模型。</p>
 
     <h3>跨供应商的同一个模型</h3>
     <p>路由组是几个模型（来自一个或多个供应商），Agent 把它当作一个来选：<code>group/&lt;id&gt;</code>，在选择列表的 <em>路由组</em> 下面。两个供应商用同一个名字提供的模型会自动成组；在 <span class="ui">路由</span> 标签页点 <span class="ui">新建组</span> 可以把任意模型组到一起。排第一的模型决定这个组对外的能力。</p>
@@ -178,6 +178,7 @@
       <tr><td>最少使用 <code>usage</code></td><td>剩余额度最多的账号或 Key 排第一。</td></tr>
       <tr><td>重置前用完 <code>pace</code></td><td>每周剩余额度除以距重置的小时数，最高的账号排第一——重置时损失最多的那个——少让成员的周额度到重置时作废；只有 5 小时额度、没有周额度的账号（如 Claude Enterprise）按 5 小时窗口的剩余额度除以距它重置的小时数算，所以几乎总排第一。用到 90% 以上的等其他账号都答不了时才用。Key 按最近发给它的 token 数排。</td></tr>
       <tr><td>按权重 <code>weight</code></td><td>每个模型按群组编辑器里它旁边设的权重（1 到 1000，不设为 1）分得请求：权重 3 的模型每拿三个，权重 1 的拿一个，均匀穿插而不是成批。每个模型按它自己提供方的路由用自己的账号或 Key，群组里的群组算一个成员。失败后歇着的那个退出这一轮；一个失败时，下一个模型接上。</td></tr>
+      <tr><td>速度优先 <code>fast</code></td><td>最近回答这个模型最快的成员、账号或 Key 先用：看首字时间和输出速度，越新的回答算得越重。相差不到一成的保持原来的顺序。一小时内没测过的每五个请求分到一个，慢过一次的渠道还会再试；失败后歇着的排最后。只测流式回复，重启后重新测。</td></tr>
     </table></div>
     <div class="table-wrap"><table>
       <tr><th>会话保持</th><th>会话在回答过它的账号或 Key 上留多久</th></tr>

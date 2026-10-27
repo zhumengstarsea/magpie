@@ -20,7 +20,8 @@ import (
 // account rather than where the user had routed Codex (cybercaius on
 // Discord). With nothing set for them, a subagent and the memories follow
 // the session: they go on the model the conversation's own turns go on,
-// when that is one of magpie's (codexSessionOf), as the app's titles,
+// when that is one of magpie's (codexSessionOf; a memory call, started
+// with a turn, after that turn: codexMemorySession), as the app's titles,
 // descriptions, summaries and composer predictions do (codexSideTo). The auto-review follows it when set to
 // (settings.CodexAutoReviewSession, which codexcat writes into each of
 // magpie's entries); left to Codex it stays on codex-auto-review, which a
@@ -121,19 +122,28 @@ var (
 	codexSideWait  = 5 * time.Second
 )
 
-// sideOf is of for the Codex app's own side turns: a title, description,
-// summary or prediction. Codex writes a new conversation's title on a
-// temporary thread of its own, with no link to the conversation, started
-// as the user's first message is sent, so it often reaches magpie before
-// that conversation's first turn. Read then, the key's last turn is the
-// previous conversation's, on the model the user switched away from
-// (cybercaius on Discord: the first title after a switch came from the
-// old model). When this key's last turn is older than codexSideFresh,
-// such a call waits, up to codexSideWait or until it is cancelled, for
-// the next turn of any conversation, and takes that one's model.
-func (l *codexLeads) sideOf(r *http.Request, body []byte) string {
+// sideOf is of for a side call started beside a turn: the Codex app's
+// title, description, summary or prediction, and Codex's memories. Codex
+// writes a new conversation's title on a temporary thread of its own, with
+// no link to the conversation, started as the user's first message is
+// sent, so it often reaches magpie before that conversation's first turn.
+// Read then, the key's last turn is the previous conversation's, on the
+// model the user switched away from (cybercaius on Discord: the first
+// title after a switch came from the old model). When this key's last
+// turn is older than codexSideFresh, such a call waits, up to
+// codexSideWait or until it is cancelled, for the next turn of any
+// conversation, and takes that one's model.
+//
+// beside is a call Codex starts with every turn of its conversation, tied
+// to it: its memories, which Codex extracts and consolidates as each turn
+// with the user's input starts (codex-rs app-server turn_processor,
+// start_memories_startup_task), under that conversation's thread. Racing
+// the turn, the conversation's last model is the one before a switch, so
+// it waits too. A call tied to a conversation that isn't (a composer
+// prediction, a known thread's title) takes its last model at once.
+func (l *codexLeads) sideOf(r *http.Request, body []byte, beside bool) string {
 	model, tied, at := l.lookup(r, body)
-	if tied || model == "" || time.Since(at) < codexSideFresh {
+	if tied && !beside || model == "" || time.Since(at) < codexSideFresh {
 		return model
 	}
 	l.mu.Lock()
@@ -177,13 +187,19 @@ func (s *Server) codexFollowTo(r *http.Request, agent, kind, asked string, body 
 	default:
 		return ""
 	}
-	to := s.codexSessionOf(r, body)
-	if to == "" || to == asked {
+	// the user's own pick in Codex's config is kept; read before the
+	// session, which a memory call may wait on
+	if CodexSideSet == nil || CodexSideSet(which) {
 		return ""
 	}
-	// the user's own pick in Codex's config is kept; read last, as it
-	// reads the config
-	if CodexSideSet == nil || CodexSideSet(which) {
+	var to string
+	if which == "memories" {
+		// started with a turn, maybe the first after a switch
+		to = s.codexMemorySession(r, body)
+	} else {
+		to = s.codexSessionOf(r, body)
+	}
+	if to == "" || to == asked {
 		return ""
 	}
 	return to
@@ -206,7 +222,13 @@ func (s *Server) codexSessionOf(r *http.Request, body []byte) string {
 // codexSideSession is codexSessionOf for the Codex app's own side turns,
 // read after the turn they were started beside (codexLeads.sideOf).
 func (s *Server) codexSideSession(r *http.Request, body []byte) string {
-	return s.servedSession(r, s.codexLeads.sideOf(r, body))
+	return s.servedSession(r, s.codexLeads.sideOf(r, body, false))
+}
+
+// codexMemorySession is codexSessionOf for Codex's memory calls, read
+// after the turn they were started with (codexLeads.sideOf, beside).
+func (s *Server) codexMemorySession(r *http.Request, body []byte) string {
+	return s.servedSession(r, s.codexLeads.sideOf(r, body, true))
 }
 
 // servedSession is to, else the model in Codex's config, when magpie can
