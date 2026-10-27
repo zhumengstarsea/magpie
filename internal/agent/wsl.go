@@ -298,7 +298,8 @@ var wslKinds = []wslKind{
 					if codexFailover() {
 						return append(group("OpenAI", options(ownCodex(), "")), viaMagpie("codex", "")...)
 					}
-					return append(codexInMagpie(group("OpenAI", options(ownCodex(), ""))), viaMagpieFor("codex", "")...)
+					own := codexInMagpie(group("OpenAI", options(ownCodex(), "")))
+					return append(own, codexViaMagpieFor(own)...)
 				}
 			case "effort":
 				return func(cur map[string]string) []Option {

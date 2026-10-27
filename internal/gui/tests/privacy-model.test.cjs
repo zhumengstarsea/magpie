@@ -216,6 +216,12 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.equal((await pick.textContent()).trim(), "Privacy Filter");
         let m = await look(page);
         assert(!m.cut && m.inside && !m.wide, `shown in full and inside: ${JSON.stringify(m)}`);
+        // the menu and the switch are two boxes: they stand apart, on one line
+        const gap = await page.evaluate(() => {
+          const p = document.querySelector("#privacyModelRow .pm-model").getBoundingClientRect(), s = document.querySelector("#privacyModelRow .segs").getBoundingClientRect();
+          return { gap: s.left - p.right, mid: Math.abs(p.top + p.height / 2 - (s.top + s.height / 2)) };
+        });
+        assert(gap.gap >= 6 && gap.gap <= 12 && gap.mid <= 1, `the menu stands apart from the switch: ${JSON.stringify(gap)}`);
         const before = await page.evaluate(() => [scrollX, scrollY, document.querySelector("#view-settings").scrollTop]);
         await pick.click();
         const menu = page.locator(".proto-menu");

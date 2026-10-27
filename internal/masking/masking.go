@@ -8,6 +8,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync/atomic"
+	"time"
 
 	"github.com/yetone/magpie/internal/gwmw"
 	"github.com/yetone/magpie/internal/pii"
@@ -37,8 +39,37 @@ func optionsCtx(ctx context.Context) redact.Options {
 	return o
 }
 
-// picked is the local model st has masking use; a var for tests.
-var picked = func(st settings.Settings) pii.Model { return pii.Of(pii.Choose(st.RedactModelName, true)) }
+// picked is the local model st has masking use; a var for tests. One
+// that is Privacy Filter only because no model was picked (pii.Choose)
+// starts AstrLink Guard's download, the default, and is moved onto it
+// once that is done.
+var picked = func(st settings.Settings) pii.Model {
+	id := pii.Choose(st.RedactModelName, true)
+	if st.RedactModelName == "" && id == pii.PrivacyFilter {
+		toGuard()
+	}
+	return pii.Of(id)
+}
+
+// guardTried is when toGuard last started a download, so a failed one is
+// tried again an hour later rather than on every request.
+var guardTried atomic.Int64
+
+// toGuard downloads AstrLink Guard, then saves it as the pick, unless the
+// user picked a model in between, and lets Privacy Filter go.
+func toGuard() {
+	now := time.Now().Unix()
+	if t := guardTried.Load(); t != 0 && now-t < 3600 || !guardTried.CompareAndSwap(t, now) {
+		return
+	}
+	g := pii.Of(pii.AstrLinkGuard)
+	g.Download(func() {
+		if settings.Load().RedactModelName == "" && settings.UseRedactModel(pii.AstrLinkGuard) == nil {
+			pii.Of(pii.PrivacyFilter).Stop()
+			g.Warm()
+		}
+	})
+}
 
 // model is the local model m (internal/pii) as redact's Model, waited for
 // until ctx ends, keeping what it is at least min sure of. One that can't

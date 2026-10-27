@@ -44,8 +44,11 @@
   <div class="side-foot">
     <button type="button" class="side-gw" id="sideGw" data-feature="gateway" hidden><i></i><span></span></button>
   </div>
-  <!-- its edge, dragged to make it wider or narrower (app.js sideDrag) -->
-  <div class="side-edge" id="sideEdge" role="separator" aria-orientation="vertical" tabindex="0" style="--wails-draggable:no-drag"></div>
+  <!-- its edge, dragged to make it wider or narrower (app.js sideDrag).
+       Out of Tab's reach, as a Mac split view's divider is: a Mac window
+       shown has WebKit focus the first stop Tab reaches, and its ring
+       showed on every open (ysm119) -->
+  <div class="side-edge" id="sideEdge" role="separator" aria-orientation="vertical" tabindex="-1" style="--wails-draggable:no-drag"></div>
 </aside>
 <header class="top" style="--wails-draggable:drag">
   <div class="brand">

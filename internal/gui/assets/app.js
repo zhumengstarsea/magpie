@@ -1414,7 +1414,8 @@ function expandLink(a) {
   const b = el("button", "ag-link" + (open ? " open" : ""));
   b.type = "button";
   b.setAttribute("aria-expanded", String(open));
-  b.append(el("span", "", open ? t("Collapse") : a.id === "claude" ? t("Tiers") : a.models && !listsMenu(a) ? t("Models {n}", { n: a.models.shown }) : t("Details")));
+  // it opens more than models; their count is in the status line
+  b.append(el("span", "", open ? t("Collapse") : t("Details")));
   if (!open) {
     b.append(el("span", "chev", svg(CHEV_R, 10, 1.6)));
   }
@@ -4251,9 +4252,9 @@ async function renderUpdateBadge() {
   };
   const restart = async () => {
     b.classList.add("busy");
-    label.textContent = t("Restarting…");
+    label.textContent = t("Updating…");
     // an answer means it didn't: the password prompt dismissed, the swap
-    // failed, or a newer version is out and downloading first
+    // failed, or a newer version is out and downloading first (dawnmarch7429)
     const a = await api("update/install", installFrom()).catch(() => ({}));
     if (!a) return backAsNew(u.current);
     if (a) {

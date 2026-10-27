@@ -3294,6 +3294,7 @@ body:not(.side-nav) #view-settings .set-head.stuck::before { box-shadow: 0 1px 0
 .set-searching .feat-say { display: none; }
 .row.pref .sub.feat-why { color: var(--muted); font-size: 11px; }
 /* the local model's row says a download, a device or an error in full */
+#privacyModelRow .val { gap: 8px; }
 #privacyModelRow .sub { white-space: normal; overflow-wrap: anywhere; }
 /* Privacy › how it's found: the rules, always on while anything is masked,
    and the local model, which says why it can't be used while nothing is */

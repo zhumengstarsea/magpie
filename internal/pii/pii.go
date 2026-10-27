@@ -229,17 +229,18 @@ func Of(id string) Model {
 }
 
 // Choose is the model masking uses: the one the user picked (name);
-// with none picked, Privacy Filter where it was turned on (on) or
-// downloaded before there was a choice, so its user keeps the model they
-// had and downloads nothing; else AstrLink Guard, a 38 MB download that
-// runs on every CPU and, measured on code (docs/subsystems), masks far
-// fewer ordinary values.
+// with none picked, AstrLink Guard, a 38 MB download that runs on every
+// CPU and, measured on code (docs/subsystems), masks far fewer ordinary
+// values. Only while the model is on (on) and Privacy Filter is on disk
+// but AstrLink Guard isn't is it Privacy Filter, so a user who had it on
+// before there was a choice isn't held back while AstrLink Guard
+// downloads (masking.picked starts that download).
 func Choose(name string, on bool) string {
 	switch name {
 	case PrivacyFilter, AstrLinkGuard:
 		return name
 	}
-	if on || Installed() {
+	if on && !guardInstalled() && Installed() {
 		return PrivacyFilter
 	}
 	return AstrLinkGuard

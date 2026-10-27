@@ -800,6 +800,11 @@ func mask(raw string, o Options, put func(kind, v string) string, escaped bool) 
 		if w = strings.TrimSpace(w); len(w) < 2 {
 			continue
 		}
+		// a date is matched as that date, however it is written (dateword.go)
+		if spans, ok := dateSpans(s, w); ok {
+			found = append(found, spans...)
+			continue
+		}
 		// next finds w at or after i; one inside a longer word, where the
 		// user asked for whole words, is passed over a letter at a time, so
 		// "XABC ABC" still finds the second
