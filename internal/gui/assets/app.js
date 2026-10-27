@@ -3155,11 +3155,12 @@ function closeAgentModels() {
   // was put back comes with the state
   if (m.hidden) for (const f of m.a.fields || []) f.options = f.options.filter((o) => !o.ref || !m.hidden.has(o.ref) || o.value === f.value);
   // the agent's own, left out, go as the server leaves them out
-  // (agent.Picks): from a picker of magpie's models, but its default and
-  // the one it is set to
+  // (agent.Picks): from a picker of magpie's models, but its default, the
+  // one it is set to and those magpie's list shows it too (served: Codex's
+  // ChatGPT models)
   if (m.ownHidden) {
     for (const f of m.a.fields || []) {
-      if (f.options.some((o) => o.ref)) f.options = f.options.filter((o) => o.ref || !o.value || o.value === f.value);
+      if (f.options.some((o) => o.ref)) f.options = f.options.filter((o) => o.ref || o.served || !o.value || o.value === f.value);
     }
   }
   // the agents' pickers list what's left once the writes are in
@@ -3284,7 +3285,11 @@ async function openAgentModels(a, anchor, ev) {
     groups.sort((x, y) => (y.name === ROUTING_GROUPS) - (x.name === ROUTING_GROUPS));
   };
   regroup();
-  const shut = new Set(groups.filter((g) => groups.length > 1 && g.models.length > 8 && !g.models.some((m) => m.inUse)).map((g) => g.name));
+  // folding is for telling providers apart: routing groups don't count,
+  // so a group switched on never folds away the one provider's models
+  // (shiqi_40904 on Discord)
+  const providers = groups.filter((g) => g.name !== ROUTING_GROUPS).length;
+  const shut = new Set(groups.filter((g) => providers > 1 && g.models.length > 8 && !g.models.some((m) => m.inUse)).map((g) => g.name));
   // with a few providers, a rail of them down the left: one picked shows
   // its models alone, so a long list is one click away rather than a
   // scroll down past the others (蓝猫 on Discord); a search looks in all
@@ -15541,8 +15546,12 @@ function renderQuotas(lazy) {
       // what was left over time, against an even burn (#651)
       const curve = !brief && !sub.error && quotaCurve(sub);
       if (curve) card.append(curve);
-      // WorkBuddy's credits, day by day, as magpie counted them (#568)
-      if (!brief && !history && sub.daily && !sub.error) card.append(creditDays(sub));
+      // the account's credits, day by day, as magpie counted them (#568):
+      // each pool on its own, named when there are several (#3321)
+      if (!brief && !history && sub.daily && !sub.error) {
+        const pools = [sub.daily, ...(sub.moreDaily || [])];
+        for (const d of pools) card.append(creditDays(d, pools.length > 1));
+      }
       // what is left besides the windows, under them
       if (!history && sub.balance && sub.windows?.length && !sub.error) card.append(balanceRow(sub, "What is left on the account besides its windows", false));
       // the balance over time, and when it runs out at that pace
@@ -15939,13 +15948,15 @@ async function moveUsage(key, to) {
   }
 }
 
-// creditDays: the credits an account used each day of the period, as
-// magpie counted them from its readings of the vendor's meter, which tells
-// only what the cycle has used so far — a bar a day, and the period's sum;
-// a day before magpie first read it is not known rather than nothing.
-function creditDays(sub) {
+// creditDays: the credits (or money, in its unit's currency) one of an
+// account's windows used each day of the period, as magpie counted them
+// from its readings of the vendor's meter, which tells only what the cycle
+// has used so far — a bar a day, and the period's sum; a day before magpie
+// first read it is not known rather than nothing. named: the window's name
+// beside the head, for a card with several.
+function creditDays(daily, named) {
   const box = el("div", "credit-days");
-  const { since, days } = sub.daily;
+  const { since, days, window: pool, unit } = daily;
   const by = new Map(days.map((d) => [d.day, d.used]));
   const key = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   const today = new Date();
@@ -15963,11 +15974,11 @@ function creditDays(sub) {
     d.setDate(d.getDate() - i);
     list.push({ day: key(d), date: d, used: by.get(key(d)) || 0, known: key(d) >= since });
   }
-  const num = (v) => (Math.round(v * 100) / 100).toLocaleString(intlLang());
+  const num = (v) => { try { if (unit) return new Intl.NumberFormat(intlLang(), { style: "currency", currency: unit.toUpperCase() }).format(v); } catch {} return (Math.round(v * 100) / 100).toLocaleString(intlLang()); };
   const dayName = (d) => d.toLocaleDateString(intlLang(), { month: "short", day: "numeric" });
   const sum = list.reduce((a, d) => a + d.used, 0);
   const head = el("div", "cd-head");
-  const name = el("span", "", t("Credits used per day"));
+  const name = el("span", "", t(unit ? "Spent per day" : "Credits used per day") + (named && pool ? " · " + t(pool) : ""));
   name.title = t("Counted from magpie's readings of the vendor's meter, since {date}: what is used while magpie isn't reading it is counted on the day it next does", { date: dayName(new Date(since + "T12:00:00")) });
   head.append(name, el("b", "", n > 1 ? t("{n} in {days} days", { n: num(sum), days: n }) : range && range.to !== key(today) ? t("{n} on {date}", { n: num(sum), date: dayName(last) }) : t("{n} today", { n: num(sum) })));
   box.append(head);
@@ -15979,7 +15990,7 @@ function creditDays(sub) {
       const fill = el("i");
       fill.style.height = d.known && peak ? Math.max(d.used ? 6 : 0, 100 * d.used / peak).toFixed(1) + "%" : "0%";
       b.append(fill);
-      b.title = d.known ? t("{date}: {n} credits", { date: dayName(d.date), n: num(d.used) }) : t("{date}: not counted — magpie began counting on {since}", { date: dayName(d.date), since: dayName(new Date(since + "T12:00:00")) });
+      b.title = d.known ? t(unit ? "{date}: {n} spent" : "{date}: {n} credits", { date: dayName(d.date), n: num(d.used) }) : t("{date}: not counted — magpie began counting on {since}", { date: dayName(d.date), since: dayName(new Date(since + "T12:00:00")) });
       bars.append(b);
     }
     box.append(bars);
@@ -19274,7 +19285,7 @@ function renderCLI(r) {
   const paint = (v) => {
     sub.textContent = v.stuck === "translocated" ? t("macOS runs magpie from a temporary copy until it is moved to Applications: move it there first")
       : v.stuck === "read-only" ? t("magpie runs from its disk image: copy it to Applications first")
-      : v.ours ? t("In a new terminal, magpie runs this app: {path}", { path: v.command }) + (v.shim && v.command === v.shim ? " (" + t("which runs {name}", { name: exeName(v.exe) }) + ")" : "")
+      : v.ours ? t("In a new terminal, magpie runs this app: {path}", { path: v.command }) + (/\.(cmd|com)$/i.test(v.command || "") ? " (" + t("which runs {name}", { name: exeName(v.exe) }) + ")" : "")
       : v.command ? t("In a new terminal, magpie runs another copy: {path}", { path: v.command }) + (v.version ? " (" + v.version + ")" : "")
       : t("A new terminal can't find the magpie command");
     add.hidden = v.ours || !v.dir || !!v.stuck;
@@ -19570,7 +19581,9 @@ function renderSettings() {
   // portable (a data folder beside magpie, #508): everything is in there
   row(t("Config folder"), s.portable ? t("Portable: everything magpie keeps, in the data folder beside it") : t("providers, profiles and these settings"), s.dir, copyBtn(s.dir, t("Path")), open);
   renderCLI(row(t("Command line"), t("Checking your shells…"), ""));
-  row(t("Gateway URL"), t("the address every agent is pointed at"), s.gateway, copyBtn(s.gateway, t("Gateway URL")));
+  // served to other machines (magpie web), the one they reach (noahhrreion)
+  const gw = web && s.publicURL || s.gateway;
+  row(t("Gateway URL"), t("the address every agent is pointed at"), gw, copyBtn(gw, t("Gateway URL")));
   // MAGPIE_PUBLIC_URL, where other machines reach it (#1551)
   if (s.publicURL) row(t("Public address"), t("MAGPIE_PUBLIC_URL: where other computers reach the gateway, with a gateway key"), s.publicURL, copyBtn(s.publicURL, t("Public address"))).id = "publicURLRow";
   const repo = el("button", "github");
@@ -21891,12 +21904,15 @@ function renderRedact(s, keep) {
 // privacyModelRow: the local masking model (internal/pii), downloaded when
 // it is turned on and then asked beside the rules. Its state is its own
 // (privacy-model): read when the row is drawn, and each second while it
-// downloads or starts.
+// downloads or starts. Under it, once the model can run, its threshold
+// (pmScore).
 let pmState = null, pmTimer = 0;
 function privacyModelRow(box, why) {
   const r = el("div", "row pref" + (why ? " pm-wait" : ""));
   r.id = "privacyModelRow";
   box.append(r);
+  const sr = el("div", "row pref");
+  sr.id = "pmScoreRow";
   const name = () => { const n = el("div", "name", t("Find with a local model")); n.append(el("span", "badge new", t("New"))); return n; };
   // nothing is masked: the model has nothing to find more of
   if (why) {
@@ -21927,13 +21943,21 @@ function privacyModelRow(box, why) {
       val.append(segs([["off", t("Off")], ["on", t("On")]], m.on || m.downloading ? "on" : "off", (v) => act(v)));
     }
     r.replaceChildren(who, val);
+    if (m && (m.supported || m.installed) && m.defaultScore) {
+      const sw = el("div", "who");
+      sw.append(el("div", "name", t("Confidence threshold")), el("div", "sub", t("What the model is less sure of goes as written. Higher masks less, with fewer false alarms")));
+      const sv = el("div", "val");
+      sv.append(pmScore(m, (score) => act("score", m.model, score)));
+      sr.replaceChildren(sw, sv);
+      if (!sr.isConnected) r.after(sr);
+    } else sr.remove();
     clearTimeout(pmTimer);
     // a download's progress, and where pf-serve runs once it has started
     const starting = m?.on && m.installed && !m.running && !m.failed && tries++ < 30;
     if (pmBusy(m) || starting) pmTimer = setTimeout(load, 1000);
   };
   const load = () => api("privacy-model").then((m) => { pmState = m; draw(m); }).catch(() => {});
-  const act = (doing, model) => { tries = 0; api("privacy-model", { do: doing, model }).then((m) => { pmState = m; draw(m); }).catch((e) => { status(t(e.message), "err"); load(); }); };
+  const act = (doing, model, score) => { tries = 0; api("privacy-model", { do: doing, model, score }).then((m) => { pmState = m; draw(m); }).catch((e) => { status(t(e.message), "err"); load(); }); };
   draw(pmState);
   load();
 }
@@ -21955,6 +21979,27 @@ function pmPick(m, pick) {
     const opts = (m.models || []).map((x) => ({ v: x.model, name: (PM_MODELS[x.model] || [x.model])[0], literalName: true,
       note: !x.supported && !x.installed ? t("Not available on this system yet") : t(PM_MODELS[x.model]?.[1] || "") + " · " + fmtBytes(x.size) + (x.installed ? " · " + t("downloaded") : "") }));
     openProtoMenu(b, opts, m.model, (v) => v !== m.model && pick(v), "The local model", "sess-menu", "right");
+  };
+  return b;
+}
+// pmScore picks the model's threshold (privacy-model's score) by the
+// app's menu: its default, or one of PM_SCORES
+const PM_SCORES = [0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95];
+function pmScore(m, pick) {
+  const cur = m.minScore === m.defaultScore ? "0" : String(m.minScore);
+  const b = el("button", "sess-pick pm-score");
+  b.type = "button";
+  b.setAttribute("aria-haspopup", "menu");
+  b.setAttribute("aria-expanded", "false");
+  b.title = t("Confidence threshold");
+  b.append(el("span", "", String(m.minScore)), svg(CHEV, 11, 1.6));
+  b.onclick = (e) => {
+    e.stopPropagation();
+    if (b.classList.contains("open")) return closeProtoMenu();
+    const note = (s) => s === PM_SCORES[0] ? "Masks the most" : s === PM_SCORES.at(-1) ? "Masks the least" : "";
+    const opts = [{ v: "0", name: t("Default ({score})", { score: m.defaultScore }), literalName: true, note: note(m.defaultScore) },
+      ...PM_SCORES.filter((s) => s !== m.defaultScore).map((s) => ({ v: String(s), name: String(s), literalName: true, note: note(s) }))];
+    openProtoMenu(b, opts, cur, (v) => v !== cur && pick(Number(v)), "Confidence threshold", "sess-menu", "right");
   };
   return b;
 }
@@ -22439,6 +22484,11 @@ function renderPort(s) {
         const n = res.port?.moved?.length || 0;
         if (res.port?.error) status(res.port.error, "err");
         else status(n ? t("Gateway on port {p}; {n} agents moved with it", { p, n }) : t("Gateway on port {p}", { p }), "ok", 2500);
+        // the sidebar's gateway line, and the list's address the pages
+        // copy, say where it is now, not the port before (noahhrreion on
+        // Discord: it kept the old one until Providers was opened)
+        if (res.settings?.gateway) renderSideGw({ ...sideGwAt, url: res.settings.gateway, running: true });
+        if (providers) loadProviders().catch(() => {});
         renderSettings();
       })
       .catch((e) => { d.value = field.value; d.err = portSays(e.message); status(d.err, "err"); renderSettings(); });
@@ -24272,8 +24322,11 @@ function renderSideGw(g) {
   g = sideGwAt;
   b.hidden = !g?.url;
   if (b.hidden) return;
-  let host = g.url;
-  try { host = new URL(g.url).host; } catch {}
+  // a page other machines open (magpie web) says where they reach it,
+  // MAGPIE_PUBLIC_URL, as the Gateway page does (#1551; noahhrreion)
+  const url = web && g.publicURL || g.url;
+  let host = url;
+  try { host = new URL(url).host; } catch {}
   b.classList.toggle("off", !g.running);
   const s = b.querySelector("span");
   s.textContent = g.running ? t("Gateway") + " " + host : t("Gateway stopped");
@@ -24281,7 +24334,7 @@ function renderSideGw(g) {
   // gateway leaves it no room ("Zugangspunkt") says the address alone, the
   // word kept in its tooltip
   if (g.running && s.scrollWidth > s.clientWidth) s.textContent = host;
-  b.title = g.running ? t("Gateway") + " " + g.url : g.url;
+  b.title = g.running ? t("Gateway") + " " + url : url;
 }
 if (mode === "window") {
   $("#sideGw").onclick = () => { show("gateway"); $("#sideGw").blur(); };

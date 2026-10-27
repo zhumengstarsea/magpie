@@ -95,12 +95,12 @@ func cursorEditorFiles(cli []file) []file {
 			if !safeID.MatchString(id) || seen[id] {
 				continue
 			}
-			f := file{agent: "cursor", key: "cursor:" + id, sid: id, path: path, main: true, readOnly: true, editor: metas[id]}
+			f := file{agent: "cursor", key: "cursor:" + id, path: path, main: true, readOnly: true, more: &fileMore{sid: id, editor: metas[id]}}
 			if !stat(&f) || !cursorEditorHasMessages(path) {
 				continue
 			}
-			if f.editor != nil {
-				f.rev = f.editor.revision
+			if f.m().editor != nil {
+				f.w().rev = f.m().editor.revision
 			}
 			out = append(out, f)
 			seen[id] = true
@@ -111,7 +111,7 @@ func cursorEditorFiles(cli []file) []file {
 			continue
 		}
 		b, _ := json.Marshal(m)
-		out = append(out, file{agent: "cursor", key: "cursor:" + id, sid: id, path: p + "#" + id, main: true, readOnly: true, editor: m, rev: m.revision, size: int64(len(b)), mod: ms(max(m.Created, m.Updated))})
+		out = append(out, file{agent: "cursor", key: "cursor:" + id, path: p + "#" + id, main: true, readOnly: true, size: int64(len(b)), mod: ms(max(m.Created, m.Updated)), more: &fileMore{sid: id, editor: m, rev: m.revision}})
 	}
 	return out
 }
@@ -131,8 +131,8 @@ func cursorEditorHasMessages(path string) bool {
 }
 
 func parseCursorEditor(f file) *state {
-	s := &state{ID: f.sid, Size: f.size, Mod: f.mod.UnixNano(), DBRevision: f.rev}
-	if m := f.editor; m != nil {
+	s := &state{ID: f.m().sid, Size: f.size, Mod: f.mod.UnixNano(), DBRevision: f.m().rev}
+	if m := f.m().editor; m != nil {
 		s.Named = cursorTitle(m.Name)
 		s.Cwd = m.Workspace.URI.Path
 		s.saw(ms(m.Created), false)
@@ -159,8 +159,8 @@ func parseCursorEditor(f file) *state {
 		}
 		return true
 	}
-	if _, _, ok := cursorEditorDatabasePath(f.path); ok && f.editor != nil && f.editor.db != nil {
-		_ = editorMessages(f.editor.db, f.sid, message)
+	if _, _, ok := cursorEditorDatabasePath(f.path); ok && f.m().editor != nil && f.m().editor.db != nil {
+		_ = editorMessages(f.m().editor.db, f.m().sid, message)
 	} else {
 		_ = readCursorEditor(f.path, message)
 	}

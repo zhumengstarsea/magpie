@@ -172,7 +172,7 @@
     <div class="callout"><b>不用手动建的组。</b>再加一个供应商，只要它提供的模型和已有的同名（比如 Claude 订阅和 Copilot 都有 Claude Opus，DeepSeek 官方 API 和 OpenRouter 都有 DeepSeek），magpie 就会自动把它们组成一个路由组：<code>auto/&lt;模型&gt;</code>（模型自己的 id，比如 <code>auto/claude-opus-4.6</code>；以前的 <code>group/auto-…</code> 也照样能用），包含所有提供这个模型的供应商。名字按各家不同的写法匹配（<code>deepseek/deepseek-chat</code> 和 <code>deepseek-chat</code> 算同一个）。给 Agent 选这个组，请求就会分摊到这些供应商上；不想要的可以用 <code>magpie group rm</code> 隐藏。</div>
     <div class="table-wrap"><table>
       <tr><th>路由</th><th>谁排在前面</th></tr>
-      <tr><td>智能 <code>smart</code></td><td>默认。把成员的账号和 Key 放在一起排（组里的路由组算一个，见下文）：还有余量的订阅里，额度最先重置的排第一。看周额度的重置时间；只有 5 小时额度、没有周额度的账号（如 Claude Enterprise）看它的 5 小时重置，所以排在所有更晚重置的周额度前面。没有重置时间的积分（WorkBuddy 的积分包，各自到期）按剩余积分最早过期的时间算，所以积分最先过期的 WorkBuddy 账号排第一。失败后在休息的排最后。</td></tr>
+      <tr><td>智能 <code>smart</code></td><td>默认。把成员的账号和 Key 放在一起排（组里的路由组算一个，见下文）：还有余量的订阅里，额度最先重置的排第一。看周额度的重置时间；只有 5 小时额度、没有周额度的账号（如 Claude Enterprise）看它的 5 小时重置，所以排在所有更晚重置的周额度前面。没有重置时间的积分（WorkBuddy 的积分包，各自到期）按剩余积分最早过期的时间算，所以积分最先过期的 WorkBuddy 账号排第一；同时重置的账号（免费账号都在月底）再看剩余积分哪个先过期。失败后在休息的排最后。</td></tr>
       <tr><td>按顺序 <code>order</code></td><td>先用第一个模型，它答不了再换下一个。</td></tr>
       <tr><td>轮流 <code>rotate</code></td><td>会话的每一轮交给下一个成员的账号或 Key，均摊负载。</td></tr>
       <tr><td>最少使用 <code>usage</code></td><td>剩余额度最多的账号或 Key 排第一。</td></tr>

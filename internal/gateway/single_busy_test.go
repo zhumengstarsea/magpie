@@ -160,6 +160,7 @@ func TestSingleProviderPassesALongLimitThrough(t *testing.T) {
 	}{
 		{"an hour", busyReply{code: 429, retryAfter: "3600", body: rateLimited}},
 		{"quota", busyReply{code: 429, body: `{"type":"error","error":{"type":"rate_limit_error","message":"You exceeded your current quota, please check your plan and billing details"}}`}},
+		{"usage limit back in hours", busyReply{code: 429, body: `{"type":"error","error":{"type":"rate_limit_error","message":"Usage has exceeded the limit. Your usage limit for the original model will reset in 5 hours."}}`}},
 		{"key refused", busyReply{code: 401, body: `{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}`}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -293,6 +294,12 @@ func TestSingleProviderOwnPatienceWins(t *testing.T) {
 			}}
 			s := busyProviderWaiting(t, u, c.patience)
 			scaled(t, c.byDefault)
+			if c.want != 200 {
+				// the 429 is the agent's status, however long a busy
+				// machine takes to have it: past a scaled keepHeldAfter
+				// the stream's 200 went first, and the 429 in it
+				keepHeldAfter = time.Minute
+			}
 			gw := httptest.NewServer(s.Handler())
 			t.Cleanup(gw.Close)
 			// a failure ends the request with the test, not when a pause

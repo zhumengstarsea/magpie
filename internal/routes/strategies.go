@@ -45,7 +45,10 @@ func identity(n int) []int {
 // spends a reset about to run out by itself (auto-use on, its windows used)
 // renews when that is spent, if sooner: what it has left is lost there just
 // the same (#718). Only holding one, or one that runs out after the week
-// renews, changes nothing. Those alike stay in their order, keeping the
+// renews, changes nothing. Renewing in the same hours, the one whose
+// credits left lapse first (Seat.Lapse) goes first: WorkBuddy's free
+// accounts all renew at the month's end, but the credits each was given
+// end on their own days (zhaocai_83020 on Discord). Those alike stay in their order, keeping the
 // vendor's prompt cache warm. Past that, whichever has the most left, and
 // one all but used up only when nothing else can take it, one that goes
 // on on its credits first of those (spentBefore). Only the windows
@@ -89,7 +92,16 @@ var Smart = Strategy{Order: func(_ string, seats []Seat) []int {
 			}
 			return x.Before(y)
 		}
-		return false
+		// renewing in the same hours: the one whose credits left lapse
+		// first, to the hour; one that tells none after those that do
+		x, y := a.Lapse.Truncate(time.Hour), b.Lapse.Truncate(time.Hour)
+		if x.Equal(y) {
+			return false
+		}
+		if x.IsZero() || y.IsZero() {
+			return y.IsZero()
+		}
+		return x.Before(y)
 	})
 	sort.SliceStable(low, func(i, j int) bool { return seats[low[i]].Used < seats[low[j]].Used })
 	sort.SliceStable(spent, func(i, j int) bool { return spentBefore(seats[spent[i]], seats[spent[j]]) })

@@ -33,6 +33,10 @@ type Seat struct {
 	Used float64
 	// Soon is when its windows renew, the biggest first (Allowance.Renewal)
 	Soon []time.Time
+	// Lapse is when the soonest of what it has left is lost, apart from
+	// its windows' renewals (Allowance.Lapse): zero when not told. Smart
+	// goes by it when Soon ties.
+	Lapse time.Time
 	// Pace is its week left per hour until that renews; an account not
 	// known has a whole week (provider.FreshPace), a key none
 	Pace float64

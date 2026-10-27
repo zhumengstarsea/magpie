@@ -174,9 +174,11 @@ type SubscriptionQuota struct {
 	// now (codexHeld): not on a window at 100% alone, which credits get
 	// past.
 	Held bool `json:"held,omitempty"`
-	// Daily is a WorkBuddy account's credits used day by day, as magpie
-	// counted them from its readings (credits_daily.go).
-	Daily *DailyCredits `json:"daily,omitempty"`
+	// Daily is the account's credits used day by day, as magpie counted
+	// them from its readings (credits_daily.go): its first credits
+	// window's, and MoreDaily its other pools', each apart.
+	Daily     *DailyCredits   `json:"daily,omitempty"`
+	MoreDaily []*DailyCredits `json:"moreDaily,omitempty"`
 	// Checkins is set on a WorkBuddy (China) or Trae CN account whose
 	// daily check-in is pressed for, CheckinBy whose ("" WorkBuddy's,
 	// "trae" Trae CN's), and Checkin is how its last one went, nil before

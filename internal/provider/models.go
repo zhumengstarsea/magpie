@@ -1855,6 +1855,13 @@ func (p Provider) ListPrice(model string) (catalog.Price, bool) {
 			return pr, true
 		}
 	}
+	if slices.Contains(cats, "anthropic") {
+		// a gated Claude model models.dev prices nowhere (Claude Mythos
+		// 5.1): Anthropic's price, as it told Claude Code
+		if pr, ok := claudeCodePrice(model); ok {
+			return pr, true
+		}
+	}
 	if pr, ok := p.pluginListPrice(model); ok {
 		return pr, true
 	}

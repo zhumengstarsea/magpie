@@ -17,6 +17,7 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 
+	"github.com/yetone/magpie/internal/claudeseal"
 	"github.com/yetone/magpie/internal/codexsummary"
 	"github.com/yetone/magpie/internal/filelock"
 	"github.com/yetone/magpie/internal/settings"
@@ -32,10 +33,15 @@ import (
 // local compaction keeps, and what the gateway sends for it anyway, so a
 // rollout so written reads the same through magpie and goes on without it.
 //
-// Only magpie's compaction items change, in whichever line holds them (a
-// response_item, a compacted line's replacement_history); every other
-// line keeps its bytes, and the file its line count, mode and time. A
-// rollout is changed as Codex publishes a compressed one
+// A reasoning item magpie gave Codex with Claude's block in its
+// encrypted_content (claudeseal) is refused the same way; it is written
+// as its summary, as the gateway sends it to OpenAI.
+//
+// Only magpie's compaction items and those reasoning items change, in
+// whichever line holds them (a response_item, a compacted line's
+// replacement_history); every other line keeps its bytes, and the file
+// its line count, mode and time. A rollout is changed as Codex publishes
+// a compressed one
 // (codex-rs/rollout/src/writer_lock.rs, try_acquire_for_publication):
 // under its home's coordination lock, and only when no Codex holds the
 // thread's writer lock, so never under a Codex that has the thread open.
@@ -204,6 +210,10 @@ func codexThreadOf(name string) string {
 
 var magpieMark = []byte(codexsummary.Mark)
 
+// claudeMark begins a reasoning item's encrypted_content carrying Claude's
+// block (claudeseal), which only magpie reads.
+var claudeMark = []byte(claudeseal.Mark)
+
 // portRollout writes the rollout at path portable, if it has magpie's
 // compaction item, and says whether it did.
 func portRollout(ctx context.Context, home, path string) (bool, error) {
@@ -321,7 +331,7 @@ func portRollout(ctx context.Context, home, path string) (bool, error) {
 // gateway leaves it out; a line that is one alone stays as it is, as
 // leaving a line out would move every line after it.
 func portLine(line []byte) ([]byte, bool) {
-	if !bytes.Contains(line, magpieMark) {
+	if !bytes.Contains(line, magpieMark) && !bytes.Contains(line, claudeMark) {
 		return line, false
 	}
 	body := bytes.TrimRight(line, "\r\n")
@@ -357,6 +367,16 @@ func portValue(v any) (_ any, changed, drop bool) {
 					return x, false, true
 				}
 				return msg, true, false
+			}
+			return x, false, false
+		}
+		if t, _ := x["type"].(string); t == "reasoning" {
+			// Claude's block magpie gave Codex to carry back: sent to
+			// OpenAI it would be refused as invalid_encrypted_content, so
+			// the item goes as its summary, as magpie sends it to OpenAI
+			if enc, _ := x["encrypted_content"].(string); claudeseal.Is(enc) {
+				delete(x, "encrypted_content")
+				return x, true, false
 			}
 			return x, false, false
 		}

@@ -27,9 +27,15 @@ func TestDecodeBIO(t *testing.T) {
 		tag("I-private_person")}
 	prob := []float64{1, .99, .9, .95, 1, 1, .2, .97, .85, .9, .7}
 	got := decode(toks, lab, prob)
-	want := []Span{{5, 11, "email", .9}, {20, 33, "phone", .85}}
+	want := []Span{{5, 11, "email", .9}, {20, 33, "phone", .85}, {35, 38, "private_person", .7}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("decode = %v, want %v", got, want)
+	}
+	// One under Floor is dropped; masking drops those under the
+	// threshold set, MinScore or the user's, from what is left.
+	prob[10] = Floor - .01
+	if got := decode(toks, lab, prob); !reflect.DeepEqual(got, want[:2]) {
+		t.Fatalf("under Floor: %v", got)
 	}
 	// A B tag right after a span of its kind starts another.
 	lab[3] = tag("B-email")

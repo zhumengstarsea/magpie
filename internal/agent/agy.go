@@ -28,6 +28,8 @@ package agent
 
 import (
 	"encoding/json"
+	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -50,11 +52,16 @@ const agyModels = "customModelsConfig.customModels"
 // (x-goog-api-key) alone. A command copied before, with the plain token,
 // still reaches magpie.
 func AgyLaunch(model string) string {
-	key := agentKey("agy")
-	if runtime.GOOS == "windows" {
-		return `$env:GEMINI_API_KEY="` + key + `"; $env:GOOGLE_GEMINI_BASE_URL="` + gateway.URL() + `"; agy --model '` + strings.ReplaceAll(model, "'", "''") + `'`
+	return agyLaunchAt(gateway.URL(), agentKey("agy"), model, runtime.GOOS == "windows")
+}
+
+// agyLaunchAt is AgyLaunch for agy reaching the gateway at gw with key, in
+// PowerShell or a POSIX shell.
+func agyLaunchAt(gw, key, model string, powershell bool) string {
+	if powershell {
+		return `$env:GEMINI_API_KEY="` + key + `"; $env:GOOGLE_GEMINI_BASE_URL="` + gw + `"; agy --model '` + strings.ReplaceAll(model, "'", "''") + `'`
 	}
-	return "GEMINI_API_KEY=" + key + " GOOGLE_GEMINI_BASE_URL=" + gateway.URL() + " agy --model '" + strings.ReplaceAll(model, "'", `'\''`) + "'"
+	return "GEMINI_API_KEY=" + key + " GOOGLE_GEMINI_BASE_URL=" + gw + " agy --model '" + strings.ReplaceAll(model, "'", `'\''`) + "'"
 }
 
 // AgyStart is what starts agy on magpie, the variables and the model,
@@ -81,14 +88,6 @@ func agyShell(home string, on bool) {
 	} else {
 		update.DropShellFunction("agy")
 	}
-}
-
-// agyTyped is "agy" while a shell's profile has magpie's function for it.
-func agyTyped() string {
-	if len(update.ShellFunctionIn("agy")) > 0 {
-		return "agy"
-	}
-	return ""
 }
 
 // agyFunction is the function agy in a shell of kind, which runs prog
@@ -120,6 +119,75 @@ func agyFunction(kind, prog string) string {
 	return "function agy {\n  if [ -x " + q + " ]; then " + q + ` agy run "$@"; else command agy "$@"; fi` + "\n}"
 }
 
+// agyDistroProfiles are the profiles of a WSL distro's shells the
+// function goes in, as magpie opens them: bash's ~/.bashrc (which the
+// ~/.profile of a login bash reads on Debian and Ubuntu), zsh's ~/.zshrc
+// and fish's config.fish, each where it is already, and the one of the
+// user's login shell in the distro's /etc/passwd (bash when it says
+// nothing) made where it isn't, as fish's is where ~/.config/fish is. The
+// distro's ZDOTDIR and XDG_CONFIG_HOME aren't read.
+func agyDistroProfiles(at place) []update.ShellProfile {
+	login := distroLoginShell(at)
+	fish := filepath.Join(at.home, ".config", "fish", "config.fish")
+	return []update.ShellProfile{
+		{Kind: "posix", Path: filepath.Join(at.home, ".bashrc"), Create: login == "bash"},
+		{Kind: "posix", Path: filepath.Join(at.home, ".zshrc"), Create: login == "zsh"},
+		{Kind: "fish", Path: fish, Create: login == "fish" || at.isDir(filepath.Dir(fish))},
+	}
+}
+
+// distroLoginShell is the name of the login shell /etc/passwd gives the
+// distro's user, the one whose home is at's; "bash" when it can't say.
+func distroLoginShell(at place) string {
+	if at.sys == nil {
+		return "bash"
+	}
+	b, err := os.ReadFile(at.sys("/etc/passwd"))
+	if err != nil {
+		return "bash"
+	}
+	home := at.native(at.home)
+	for _, l := range strings.Split(string(b), "\n") {
+		f := strings.Split(strings.TrimRight(l, "\r"), ":")
+		if len(f) >= 7 && f[5] == home && f[6] != "" {
+			return path.Base(f[6])
+		}
+	}
+	return "bash"
+}
+
+// agyDistroModel is the sed script that prints settings.json's model while
+// it is one of magpie's, for the function in a distro, where no magpie
+// runs to read it. Its model is a line of its own as magpie writes the
+// file; one written on a single line is found too, so long as nothing
+// after it is named "model".
+const agyDistroModel = `s|^.*"model"[[:space:]]*:[[:space:]]*"\(` + magpieID + `/[^"]*\)".*$|\1|p`
+
+// agyDistroFunction is the function agy in a distro's shell of kind:
+// while settings.json's model is magpie's, the agy on PATH started with
+// the gateway at gw, its key and --model (none when one is given), as
+// `magpie agy run` does on this machine; as it is otherwise.
+func agyDistroFunction(kind, key, gw string) string {
+	q := func(v string) string { return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'" }
+	settings := `"$HOME/.gemini/antigravity-cli/settings.json"`
+	if kind == "fish" {
+		fq := func(v string) string { return "'" + strings.NewReplacer(`\`, `\\`, "'", `\'`).Replace(v) + "'" }
+		return "function agy\n" +
+			"    set -l m (sed -n " + fq(agyDistroModel) + " " + settings + " 2>/dev/null | head -n 1)\n" +
+			"    if test -z \"$m\"\n        command agy $argv\n        return\n    end\n" +
+			"    for a in $argv\n        switch $a\n            case '--model' '--model=*' '-model' '-model=*'\n                set m ''\n        end\n    end\n" +
+			"    if test -n \"$m\"\n        set argv --model $m $argv\n    end\n" +
+			"    env GEMINI_API_KEY=" + fq(key) + " GOOGLE_GEMINI_BASE_URL=" + fq(gw) + " agy $argv\nend"
+	}
+	return "function agy {\n" +
+		"  local m a\n" +
+		"  m=$(sed -n " + q(agyDistroModel) + " " + settings + " 2>/dev/null | head -n 1)\n" +
+		`  if [ -z "$m" ]; then command agy "$@"; return; fi` + "\n" +
+		`  for a in "$@"; do case "$a" in --model|--model=*|-model|-model=*) m=;; esac; done` + "\n" +
+		`  if [ -n "$m" ]; then set -- --model "$m" "$@"; fi` + "\n" +
+		"  GEMINI_API_KEY=" + q(key) + " GOOGLE_GEMINI_BASE_URL=" + q(gw) + ` command agy "$@"` + "\n}"
+}
+
 // agyCustom reads customModels as it is, raw JSON by key.
 func agyCustom(path string) map[string]json.RawMessage {
 	out := map[string]json.RawMessage{}
@@ -134,7 +202,12 @@ func agyCustom(path string) map[string]json.RawMessage {
 	return out
 }
 
-func agy(home string) *Agent {
+func agy(home string) *Agent { return agyIn(here(home)) }
+
+// agyIn is agy at a place: this machine's home, or a WSL distro's, whose
+// shells get a function of their own (agyDistroFunction).
+func agyIn(at place) *Agent {
+	home := at.home
 	dir := filepath.Join(home, ".gemini", "antigravity-cli")
 	path := filepath.Join(dir, "settings.json")
 	get := jsonGet(path, "model")
@@ -172,24 +245,51 @@ func agy(home string) *Agent {
 		}
 		return edit.SetJSON(path, edit.KV{Path: key, Value: v})
 	}
+	// the function agy, in this machine's shells or the distro's
+	distro := at.sys != nil
+	gw, key := at.gw, func() string { return agentKeyAt("agy", at.gw()) }
+	shell := func(on bool) {
+		if !distro {
+			agyShell(home, on)
+			return
+		}
+		if on {
+			k, g := key(), gw()
+			update.ShellFunctionAt(agyDistroProfiles(at), "agy", func(kind string) string { return agyDistroFunction(kind, k, g) })
+		} else {
+			update.DropShellFunctionAt(agyDistroProfiles(at), "agy")
+		}
+	}
+	shellIn := func() []string {
+		if !distro {
+			return update.ShellFunctionIn("agy")
+		}
+		return update.ShellFunctionInAt(agyDistroProfiles(at), "agy")
+	}
+	launch := func(model string) string {
+		if !distro {
+			return AgyLaunch(model)
+		}
+		return agyLaunchAt(gw(), key(), model, false)
+	}
 	return &Agent{
 		ID: "agy", Name: "Antigravity CLI", Icon: "antigravity-color", Aliases: []string{"antigravity-cli"}, Spelled: prefixed, NoNames: true,
 		Bin: "agy", Dir: dir, Path: path,
 		Launch: func() string {
 			if v := get(); usesMagpie(v) {
-				return AgyLaunch(v)
+				return launch(v)
 			}
 			return ""
 		},
 		Typed: func() string {
-			if !usesMagpie(get()) {
+			if !usesMagpie(get()) || len(shellIn()) == 0 {
 				return ""
 			}
-			return agyTyped()
+			return "agy"
 		},
 		Sync: func() error {
 			on := usesMagpie(get())
-			agyShell(home, on)
+			shell(on)
 			if !on {
 				return nil
 			}
@@ -200,13 +300,17 @@ func agy(home string) *Agent {
 			if !usesMagpie(v) {
 				return ""
 			}
-			if in := update.ShellFunctionIn("agy"); len(in) > 0 {
+			if in := shellIn(); len(in) > 0 {
 				for i := range in {
-					in[i] = update.TildeHome(in[i])
+					if distro {
+						in[i] = at.native(in[i])
+					} else {
+						in[i] = update.TildeHome(in[i])
+					}
 				}
-				return noticeAgyTyped.say("profiles", strings.Join(in, ", "), "command", AgyLaunch(v))
+				return noticeAgyTyped.say("profiles", strings.Join(in, ", "), "command", launch(v))
 			}
-			return noticeAgy.say("command", AgyLaunch(v))
+			return noticeAgy.say("command", launch(v))
 		},
 		Check: func() string {
 			v := get()
@@ -218,6 +322,15 @@ func agy(home string) *Agent {
 			}
 			if p := provider(); p != "gemini" {
 				return "Antigravity CLI's modelProvider (settings.json) is " + orDefault(p) + ", not gemini, so it asks Google directly"
+			}
+			// a distro's function names the gateway's address: one WSL
+			// changed on a restart (NAT) no longer reaches it
+			if distro {
+				for _, p := range shellIn() {
+					if b, err := os.ReadFile(p); err == nil && !strings.Contains(string(b), "GOOGLE_GEMINI_BASE_URL='"+gw()+"'") {
+						return "Antigravity CLI's function agy in " + at.native(p) + " names magpie at an address it no longer has"
+					}
+				}
 			}
 			return ""
 		},
@@ -236,7 +349,7 @@ func agy(home string) *Agent {
 					if err := edit.SetJSON(path, edit.KV{Path: "modelProvider", Value: "gemini"}, edit.KV{Path: "model", Value: v}); err != nil {
 						return err
 					}
-					agyShell(home, true)
+					shell(true)
 					return nil
 				}
 				if usesMagpie(cur) {
@@ -254,7 +367,7 @@ func agy(home string) *Agent {
 					return err
 				}
 				if usesMagpie(cur) {
-					agyShell(home, false)
+					shell(false)
 				}
 				return setModels(false)
 			},

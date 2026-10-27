@@ -33,8 +33,8 @@ import (
 // "fish" or "powershell"; prog is this magpie, by a path that stays put.
 type ShellBody func(kind, prog string) string
 
-// fnProfile is one shell's profile a function goes in.
-type fnProfile struct {
+// ShellProfile is one shell's profile a function goes in.
+type ShellProfile struct {
 	Kind   string // posix, fish, powershell
 	Path   string
 	Create bool // made when it isn't there: the shell a terminal opens
@@ -65,15 +65,40 @@ func ShellFunction(name string, body ShellBody) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	return ShellFunctionAt(homeProfiles(), name, func(kind string) string { return body(kind, prog) })
+}
+
+// DropShellFunction takes the function name out of every profile magpie
+// put it in.
+func DropShellFunction(name string) error { return DropShellFunctionAt(homeProfiles(), name) }
+
+// ShellFunctionIn says the profiles that hold the function name.
+func ShellFunctionIn(name string) []string { return ShellFunctionInAt(homeProfiles(), name) }
+
+// homeProfiles are this machine's shells' profiles inside the user's home.
+func homeProfiles() []ShellProfile {
+	var out []ShellProfile
+	for _, p := range fnProfiles() {
+		if fnInHome(p.Path) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// ShellFunctionAt is ShellFunction for the profiles ps of another home,
+// which the caller names: a WSL distro's, opened from Windows, whose
+// shells this magpie doesn't run in. body takes the shell's kind alone.
+func ShellFunctionAt(ps []ShellProfile, name string, body func(kind string) string) ([]string, error) {
 	fnMu.Lock()
 	defer fnMu.Unlock()
 	var in []string
 	var errs []error
-	for _, p := range fnProfiles() {
-		if !fnInHome(p.Path) {
+	for _, p := range ps {
+		if !filepath.IsAbs(p.Path) {
 			continue
 		}
-		ok, err := setFnBlock(p, name, strings.TrimRight(body(p.Kind, prog), "\n"))
+		ok, err := setFnBlock(p, name, strings.TrimRight(body(p.Kind), "\n"))
 		if err != nil {
 			errs = append(errs, err)
 		}
@@ -84,14 +109,13 @@ func ShellFunction(name string, body ShellBody) ([]string, error) {
 	return in, errors.Join(errs...)
 }
 
-// DropShellFunction takes the function name out of every profile magpie
-// put it in.
-func DropShellFunction(name string) error {
+// DropShellFunctionAt takes the function name out of the profiles ps.
+func DropShellFunctionAt(ps []ShellProfile, name string) error {
 	fnMu.Lock()
 	defer fnMu.Unlock()
 	var errs []error
-	for _, p := range fnProfiles() {
-		if !fnInHome(p.Path) {
+	for _, p := range ps {
+		if !filepath.IsAbs(p.Path) {
 			continue
 		}
 		if _, err := setFnBlock(p, name, ""); err != nil {
@@ -101,13 +125,10 @@ func DropShellFunction(name string) error {
 	return errors.Join(errs...)
 }
 
-// ShellFunctionIn says the profiles that hold the function name.
-func ShellFunctionIn(name string) []string {
+// ShellFunctionInAt says which of the profiles ps hold the function name.
+func ShellFunctionInAt(ps []ShellProfile, name string) []string {
 	var in []string
-	for _, p := range fnProfiles() {
-		if !fnInHome(p.Path) {
-			continue
-		}
+	for _, p := range ps {
 		b, err := os.ReadFile(p.Path)
 		if err == nil && fnFind(lines(string(edit.TrimBOM(b))), name) >= 0 {
 			in = append(in, p.Path)
@@ -128,7 +149,7 @@ func fnInHome(p string) bool {
 
 // setFnBlock writes the function name's block in the profile p as body,
 // or takes it out for ""; it says whether the block is there after.
-func setFnBlock(p fnProfile, name, body string) (bool, error) {
+func setFnBlock(p ShellProfile, name, body string) (bool, error) {
 	b, err := os.ReadFile(p.Path)
 	if errors.Is(err, fs.ErrNotExist) {
 		if body == "" || !p.Create {

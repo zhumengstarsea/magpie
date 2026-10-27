@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -47,6 +48,9 @@ func TestStatsAsLstat(t *testing.T) {
 			}
 			return
 		}
+		if !slices.IsSortedFunc(got, func(a, b Entry) int { return strings.Compare(a.Name, b.Name) }) {
+			t.Errorf("%s: Stats isn't in name order", dir)
+		}
 		if len(got) != want {
 			t.Errorf("%s: Stats has %d entries, want %d", dir, len(got), want)
 		}
@@ -59,7 +63,7 @@ func TestStatsAsLstat(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			s, ok := got[e.Name()]
+			s, ok := got.Get(e.Name())
 			if !ok {
 				t.Errorf("%q: not in Stats", e.Name())
 				continue

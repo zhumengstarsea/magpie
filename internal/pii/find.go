@@ -206,7 +206,7 @@ func (b *backend) known(texts []string, got map[[32]byte][]redact.Found) (out []
 				break
 			}
 			for _, f := range fs {
-				all = append(all, redact.Found{Start: f.Start + p.at, End: f.End + p.at, Label: f.Label})
+				all = append(all, redact.Found{Start: f.Start + p.at, End: f.End + p.at, Label: f.Label, Score: f.Score})
 			}
 		}
 		if !ok {
@@ -312,6 +312,8 @@ func merge(fs []redact.Found) []redact.Found {
 					last.Label = f.Label
 				}
 				last.End = max(last.End, f.End)
+				// as sure as the surer: what either would mask is masked
+				last.Score = max(last.Score, f.Score)
 				continue
 			}
 		}
@@ -396,7 +398,7 @@ func within(fs []redact.Found, a, b int) []redact.Found {
 	for _, f := range fs {
 		s, e := max(f.Start, a), min(f.End, b)
 		if s < e {
-			out = append(out, redact.Found{Start: s - a, End: e - a, Label: f.Label})
+			out = append(out, redact.Found{Start: s - a, End: e - a, Label: f.Label, Score: f.Score})
 		}
 	}
 	return out

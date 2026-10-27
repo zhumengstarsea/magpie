@@ -469,6 +469,9 @@ var (
 	// listed are the bare ids of every model models.dev lists, whatever it
 	// says of them: an id listed is never taken for another (renamed)
 	listed map[string]bool
+	// labs are the models models.dev lists under their lab alone
+	// (models.json), by bare id: none of its providers lists them
+	labs map[string]mdModel
 	// canonical are the bare ids of every model models.dev says an entry is
 	// (canonical_model_id, #1520): DeepSeek's deepseek-flash is
 	// deepseek/deepseek-v4.1-flash, the id WorkBuddy and the relays serve it
@@ -602,6 +605,31 @@ func loadGen() (map[string]mdProvider, int) {
 							}
 						}
 					}
+					// and a model no provider lists at all, only its lab
+					// (models.dev's models.json): a gated one, as Claude
+					// Mythos 5.1 is since models.dev took it out of
+					// anthropic's list, that a vendor's own list or the
+					// account's still serves (iebb on Discord). Its lab
+					// file holds what is the model's on every host — name,
+					// window, reply limit, thinking, images — and no
+					// price. One a provider lists keeps its answers.
+					labs = map[string]mdModel{}
+					for id, x := range readLabs() {
+						b := bareID(id)
+						if listed[b] || canonical[b] {
+							continue
+						}
+						if x.ID == "" {
+							x.ID = id
+						}
+						if _, ok := labs[b]; !ok || id < labs[b].ID {
+							labs[b] = x
+						}
+						vote(b, b, "lab:"+id, x)
+					}
+					for b := range labs {
+						listed[b] = true
+					}
 					windows = map[string]int{}
 					for id, by := range sizes {
 						windows[id] = mostGiven(by)
@@ -630,6 +658,7 @@ func loadGen() (map[string]mdProvider, int) {
 							images[id] = true
 						}
 					}
+					labKinEfforts(m)
 					return
 				}
 			}
@@ -647,7 +676,7 @@ func Reset() {
 	loaded = false
 	built = nil
 	gen++
-	mdev, images, windows, outputs, efforts, thinks, names, listed, canonical = nil, nil, nil, nil, nil, nil, nil, nil, nil
+	mdev, images, windows, outputs, efforts, thinks, names, listed, canonical, labs = nil, nil, nil, nil, nil, nil, nil, nil, nil, nil
 	loadMu.Unlock()
 	if Forget != nil {
 		Forget()
@@ -704,16 +733,19 @@ func syncLock(ctx context.Context, onlyIfMissing bool) error {
 	if err := os.WriteFile(p, b, 0o644); err != nil {
 		return err
 	}
+	// the lab catalog beside it is best effort: without it the provider
+	// catalog answers alone, and one kept before is kept
+	_ = syncLabs(ctx)
 	Reset()
 	Touched() // names, reasoning levels and context windows may be others
 	return nil
 }
 
 // Stale reports whether no catalog exists or the cache is older than a day
-// (fresh.go).
+// (fresh.go), or magpie's has no lab catalog beside it yet (labs.go).
 func Stale() bool {
 	src := Source()
-	if src == "" {
+	if src == "" || labsMissing() {
 		return true
 	}
 	st, err := os.Stat(src)

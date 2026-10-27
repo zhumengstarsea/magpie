@@ -1,8 +1,10 @@
 package pii
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"os"
 	"reflect"
@@ -213,6 +215,33 @@ func TestBadCacheFileIsReadAsEmpty(t *testing.T) {
 		if len(fakeLines(t, log, "request")) != before+1 {
 			t.Fatalf("file %d: a bad file's answers were used", i)
 		}
+	}
+}
+
+// A file written before a span kept its score (cacheMagic1) is read, its
+// spans as sure: masked at any threshold, as they were before, and not
+// asked about again.
+func TestOldCacheFileIsReadAsSure(t *testing.T) {
+	log := fakeInstall(t, "ok", false)
+	var b bytes.Buffer
+	b.WriteString(cacheMagic1)
+	k := sumOf("hi Alice")
+	binary.Write(&b, binary.LittleEndian, uint32(1))
+	b.Write(k[:])
+	binary.Write(&b, binary.LittleEndian, uint16(1))
+	binary.Write(&b, binary.LittleEndian, [2]uint32{3, 8})
+	b.WriteByte(byte(len("private_person")))
+	b.WriteString("private_person")
+	if err := os.WriteFile(cachePath(), b.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	restart(t)
+	got, err := Find([]string{"hi Alice"})
+	if err != nil || !reflect.DeepEqual(got, [][]redact.Found{{{Start: 3, End: 8, Label: "private_person", Score: 1}}}) {
+		t.Fatalf("Find = %v, %v", got, err)
+	}
+	if reqs := fakeLines(t, log, "request"); len(reqs) != 0 {
+		t.Fatalf("asked again: %q", reqs)
 	}
 }
 

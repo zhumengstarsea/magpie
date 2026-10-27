@@ -2506,7 +2506,7 @@ func (r *subscriptionRun) readOutput(rd io.Reader) {
 						r.emit(Event{Kind: KThink, Text: c.Thinking})
 					}
 					if c.Signature != "" {
-						r.emit(Event{Kind: KSig, Text: c.Signature})
+						r.emit(Event{Kind: KSig, Name: sealAnthropic, Text: c.Signature})
 					}
 				case "text":
 					said(c.Text)
@@ -2585,7 +2585,7 @@ func (r *subscriptionRun) readOutput(rd io.Reader) {
 			case "thinking_delta":
 				r.emit(Event{Kind: KThink, Text: e.Delta.Thinking})
 			case "signature_delta":
-				r.emit(Event{Kind: KSig, Text: e.Delta.Signature})
+				r.emit(Event{Kind: KSig, Name: sealAnthropic, Text: e.Delta.Signature})
 			case "input_json_delta":
 				if !own[e.Index] {
 					r.emit(Event{Kind: KToolArgs, Text: e.Delta.PartialJSON})

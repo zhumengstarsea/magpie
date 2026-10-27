@@ -242,6 +242,13 @@ func (a *Account) Lists(model string) bool {
 	if a.plugin != nil {
 		return a.pluginLists(model)
 	}
+	if a.Agent == "claude" {
+		// what the account's Claude Code was told it has: a gated model
+		// (Claude Mythos 5.1) goes to the accounts entitled to it
+		if has, ok := claudeLists(a.User, model); ok {
+			return has
+		}
+	}
 	live, _, ok := catalog.Live(accountModels(a.Agent, a.User))
 	if !ok {
 		return true

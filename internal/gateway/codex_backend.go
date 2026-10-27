@@ -20,6 +20,7 @@ import (
 
 	"github.com/yetone/magpie/internal/access"
 	"github.com/yetone/magpie/internal/catalog"
+	"github.com/yetone/magpie/internal/claudeseal"
 	"github.com/yetone/magpie/internal/codexcat"
 	"github.com/yetone/magpie/internal/codexsummary"
 	"github.com/yetone/magpie/internal/provider"
@@ -936,6 +937,9 @@ func (s *Server) codexUpstreamOn(w http.ResponseWriter, r *http.Request, rest st
 	start := time.Now()
 	usage.Saw(agentOf(r))
 	w0, body0 := w, body // as they came, for the fallbacks (codexFallBack)
+	// Claude's blocks magpie gave Codex (claudeseal) are Claude's alone:
+	// to OpenAI each item is its summary, as before magpie carried them
+	body = withoutClaudeSeals(body)
 	var maskedHits maskHits
 	if r.Method == http.MethodPost {
 		var unmask func()
@@ -2141,7 +2145,10 @@ func codexInputAs(body []byte, magpieModel, native bool) (_ []byte, compact bool
 				// Nor reasoning with nothing sealed in it — another vendor's,
 				// only an id (rs_…): OpenAI, which keeps nothing (store is
 				// false), looks the id up and answers 404 "Item … not found".
-				if enc, _ := it["encrypted_content"].(string); enc == "" {
+				// Nor Claude's block magpie carried in one (claudeseal),
+				// which OpenAI would refuse as invalid_encrypted_content:
+				// before magpie carried it, the item had nothing sealed
+				if enc, _ := it["encrypted_content"].(string); enc == "" || claudeseal.Is(enc) {
 					changed = true
 					continue
 				}
@@ -2218,7 +2225,7 @@ func codexInputItemChanges(it []byte, magpieModel, native bool) bool {
 			}
 		}
 		enc, _ := stringBytes(memberOrNil(it, "encrypted_content"))
-		return len(enc) == 0
+		return len(enc) == 0 || hasPrefix(enc, claudeseal.Mark)
 	}
 	return false
 }

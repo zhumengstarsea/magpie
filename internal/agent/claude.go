@@ -1662,7 +1662,7 @@ func claudeIn(at place) *Agent {
 				}
 				return env(tierEnv(t))
 			}
-			own := claudeOwn(cur["model"], tier)
+			own := claudeOwn(cur["model"], tier, provider.ClaudeCodeModels())
 			for i := range own {
 				own[i].Direct = direct
 			}
@@ -2268,14 +2268,15 @@ func claudeDropModelEffort(path, n string) error {
 	return nil
 }
 
-// claudeOwn is Anthropic's models as Claude Code takes them: only the
-// catalog's; Claude Code's own short aliases are not something any API
-// lists, and a compiled-in copy would just go stale. One the user's
+// claudeOwn is Anthropic's models as Claude Code takes them, ms: the
+// catalog's, and on this computer the ones Anthropic told Claude Code
+// its account has beyond them (provider.ClaudeCodeModels: Claude Mythos
+// 5.1); Claude Code's own short aliases are not something any API lists,
+// and a compiled-in copy would just go stale. One the user's
 // settings.json names (cur: "model": "sonnet") comes first, said as the
 // model it stands for, so the row doesn't show a bare word; tier is the
 // model the user's env gives a tier, "" for none.
-func claudeOwn(cur string, tier func(string) string) []Option {
-	ms := catalog.Provider("anthropic")
+func claudeOwn(cur string, tier func(string) string, ms []catalog.Model) []Option {
 	var own []Option
 	if o, ok := claudeAliasOption(cur, ms, tier); ok {
 		own = append(own, o)

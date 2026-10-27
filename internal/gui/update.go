@@ -177,8 +177,9 @@ func (u *updater) placeExe(exe string) {
 	}
 	u.exe = exe
 	u.self, _ = os.Stat(exe)
-	update.RemoveOld(exe)      // what the last updates on Windows moved aside
-	update.RemoveStaleNew(exe) // what a magpie left running downloaded again
+	update.RemoveOld(exe)       // what the last updates on Windows moved aside
+	update.RemoveStaleNew(exe)  // what a magpie left running downloaded again
+	update.EnsureCompanion(exe) // Windows: the magpie.com a terminal runs, of this version (#3737)
 	u.blocked = update.ReadBlocked(Version)
 }
 

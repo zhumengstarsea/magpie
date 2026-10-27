@@ -144,6 +144,7 @@ line; agents connected to magpie lose it when it quits.
 | Raycast      | `~/.config/raycast/ai/providers.yaml` in the user's folder, on Mac and Windows | provider (a `magpie` entry in Raycast AI's Custom Providers, magpie's models in its model picker; Raycast Pro; the user's providers, `tools` and comments kept) |
 | Kiro Crew    | `~/.kiro/crew/config.json` (`$KIROCREW_HOME`; `config.local.json` over it is left alone) | provider, harness (`agent.acp_backend`, and `agent.member_acp_backend` for a harness that can dispatch: an agent connected to magpie, so its models are magpie's: the one Crew is set to is connected along with it when it isn't yet, and disconnected with it again; the user's value is put back on Disconnect) |
 | OpenPencil   | `openpencil/settings.json` in the config folder: `~/Library/Application Support` (macOS), `$XDG_CONFIG_HOME` or `~/.config` (Linux), `%APPDATA%` (Windows) | provider (a `magpie` entry in its `builtin_agents`, magpie's models in its chat's model picker; the user's entries and settings kept; refused while OpenPencil runs, as it writes the file back when it quits) |
+| NewMax       | `newmax.db` (SQLite, the row `app` of its `settings` table) in `$NEWMAX_USER_DATA_DIR`, else `~/.newmax` (every OS) | provider (a `magpie-gateway` entry in its `providers` and `providerOrder`, magpie's models in its model picker; the rest of the row kept byte for byte; refused while NewMax runs, as it writes its settings back whenever one changes) |
 | T3 Code      | `~/.t3/userdata/settings.json` (`$T3CODE_HOME/userdata`) | provider (a `magpie` provider instance on Claude Code, magpie's models as its custom models) |
 | OpenHanako   | `~/.hanako/provider-catalog.json` + `agents/<id>/config.yaml` (`$HANA_HOME`; its local API while it runs) | model (the primary agent's; magpie's models as a provider) |
 | AtomCode     | `~/.atomcode/config.toml` (`$ATOMCODE_HOME`) | model, effort (a `magpie` provider account, one model table per catalog model as its own sign-in writes) |
@@ -1627,7 +1628,11 @@ each of these groups ordered by the share used.
   (WorkBuddy's packages, each ending on its own day), count as renewing
   when they run out: of several WorkBuddy accounts, the one whose credits
   left end first goes first. The daily Free Plan credits aren't counted,
-  since they end at the same midnight on every account. A Claude account
+  since they end at the same midnight on every account. Accounts that
+  renew in the same hours (WorkBuddy's free accounts all at the month's
+  end) go by when their credits left run out after that: the one whose
+  credits are lost first goes first, and one with none that run out
+  after those whose do. A Claude account
   magpie knows nothing of yet goes first once, to learn what it has left
   from the answer; any other unknown account goes after those known,
   and is still tried when they fail, ahead of any at 90% or more.
@@ -1873,7 +1878,8 @@ URL shown in the console and CLI, including connection examples. While
 other machines are let in (Share on local network, or a `MAGPIE_ADDR` on
 the network), the Gateway page's Connect starts at it until you pick
 another address there, Settings › About lists it beside the local URL, and
-`magpie web` shows it as the gateway's address. Local agent configs still
+`magpie web` shows it as the gateway's address: on the Gateway page, in
+About's Gateway URL and at the sidebar's foot. Local agent configs still
 use the local gateway address.
 
 Building an app or agent that should use magpie, or get a row on the
@@ -2334,6 +2340,16 @@ gateway, the key and `--model` (yours wins when you give one); off magpie
 it starts agy untouched. A terminal open already takes the command the
 Launch row copies. Stepping out (`magpie agy default`) takes the block out
 again. `magpie agy env` prints what `agy run` adds.
+
+agy installed in a WSL distro is listed as Antigravity CLI · WSL
+<distro>, found by `~/.gemini/antigravity-cli` or the `agy` command there.
+A catalog model puts the same marked `agy` function in the distro's
+`~/.bashrc`, `~/.zshrc` and `~/.config/fish/config.fish` (each one that is
+there, plus the one for your login shell in the distro's `/etc/passwd`).
+There is no magpie inside the distro, so this function reads the model
+from `settings.json` itself. It names the gateway at the address the
+distro reaches it on: Windows' address under NAT, which a sync rewrites
+when WSL comes back on another one.
 
 ### Import links
 

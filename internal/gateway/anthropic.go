@@ -1295,7 +1295,7 @@ func decodeAnthropic(data string, emit func(Event)) error {
 				emit(Event{Kind: KThink, Text: ev.ContentBlock.Thinking})
 			}
 			if ev.ContentBlock.Signature != "" {
-				emit(Event{Kind: KSig, Text: ev.ContentBlock.Signature})
+				emit(Event{Kind: KSig, Name: sealAnthropic, Text: ev.ContentBlock.Signature})
 			}
 		case "redacted_thinking":
 			// sealed whole: it goes on as it came, to Messages only
@@ -1315,7 +1315,7 @@ func decodeAnthropic(data string, emit func(Event)) error {
 		case "thinking_delta":
 			emit(Event{Kind: KThink, Text: ev.Delta.Thinking})
 		case "signature_delta":
-			emit(Event{Kind: KSig, Text: ev.Delta.Signature})
+			emit(Event{Kind: KSig, Name: sealAnthropic, Text: ev.Delta.Signature})
 		}
 	case "message_delta":
 		if ev.Delta.StopReason != "" {

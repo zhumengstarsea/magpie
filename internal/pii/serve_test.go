@@ -14,7 +14,10 @@ import (
 	"github.com/yetone/magpie/internal/redact"
 )
 
-func person(s, e int) redact.Found { return redact.Found{Start: s, End: e, Label: "private_person"} }
+// person is a name at [s, e), as sure as the fake pf-serve says (main_test.go).
+func person(s, e int) redact.Found {
+	return redact.Found{Start: s, End: e, Label: "private_person", Score: float64(float32(0.98))}
+}
 
 // Short texts go to pf-serve joined, in one request, and what it finds
 // comes back to each text at that text's own offsets; a text seen before

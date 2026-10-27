@@ -366,6 +366,24 @@ func (a Allowance) Renewal(model string, now time.Time) []time.Time {
 	return out
 }
 
+// Lapse is the soonest moment credits left in a window that counts model
+// are lost (Limit.RunsOut), zero when none is told or all have passed.
+// Smart goes by it when the renewals tie: two WorkBuddy free accounts
+// renew together, at the end of the month every one shares, but the
+// credits one was given lapse before the other's, and spent first they
+// aren't lost (zhaocai_83020 on Discord). Renewal already takes it when it
+// comes before the window renews; this tells apart those that come after.
+func (a Allowance) Lapse(model string, now time.Time) time.Time {
+	model = strings.ToLower(model)
+	var t time.Time
+	for _, l := range a {
+		if l.applies(model) && l.RunsOut.After(now) && (t.IsZero() || l.RunsOut.Before(t)) {
+			t = l.RunsOut
+		}
+	}
+	return t
+}
+
 // Full is when an account used up for model can take it again: the last
 // reset of its windows that are full, zero when none is or it isn't known.
 func (a Allowance) Full(model string, share float64, now time.Time) time.Time {

@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/yetone/magpie/internal/claudeseal"
 )
 
 const (
@@ -204,6 +206,21 @@ func TestMaskJSONSignedGoesBackAsWritten(t *testing.T) {
 	out, _ := MaskJSON([]byte(`{"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"call 13800138000 now","signature":""}]}]}`), o)
 	if strings.Contains(string(out), "13800138000") {
 		t.Errorf("unsigned thinking left unmasked: %s", out)
+	}
+}
+
+// Claude's block magpie gave a Responses client to carry back
+// (claudeseal) goes back byte for byte: Claude's own text in it, with the
+// placeholders Claude was sent, is what its signature is checked against.
+func TestMaskJSONKeepsClaudeBlocks(t *testing.T) {
+	o := Options{Secrets: true, Personal: true}
+	const email = "jeremy.zhou@gmail.com"
+	pe, _ := Mask(email, o)
+	sealed := claudeseal.Seal([]byte(`{"type":"thinking","thinking":"Write to ` + pe + `, or call 13800138000.","signature":"Eqk1"}`))
+	body := `{"input":[{"role":"user","content":"I am ` + email + `"},{"type":"reasoning","summary":[{"type":"summary_text","text":"Write to ` + email + `"}],"encrypted_content":"` + sealed + `"}]}`
+	out, _ := MaskJSON([]byte(body), o)
+	if !strings.Contains(string(out), `"`+sealed+`"`) || strings.Contains(string(out), email) {
+		t.Errorf("Claude's block not as it was sent, or a value went out:\n%s", out)
 	}
 }
 

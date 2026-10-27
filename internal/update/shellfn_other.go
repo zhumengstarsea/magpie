@@ -12,8 +12,8 @@ import (
 // function goes in: zsh's, bash's and fish's (cliProfile), the one a
 // terminal opens made when it isn't there yet. A Mac's login bash reads
 // the first of .bash_profile, .bash_login and .profile there is.
-func shellProfiles() []fnProfile {
-	var out []fnProfile
+func shellProfiles() []ShellProfile {
+	var out []ShellProfile
 	for _, sh := range cliShells() {
 		p := cliProfile(sh.Name)
 		if p == "" {
@@ -42,7 +42,7 @@ func shellProfiles() []fnProfile {
 				}
 			}
 		}
-		out = append(out, fnProfile{Kind: kind, Path: p, Create: create})
+		out = append(out, ShellProfile{Kind: kind, Path: p, Create: create})
 	}
 	return out
 }

@@ -78,10 +78,11 @@ type fakeModel struct {
 	did       *[]string
 }
 
-func (f *fakeModel) ID() string      { return f.id }
-func (f *fakeModel) Supported() bool { return true }
-func (f *fakeModel) Installed() bool { return f.installed }
-func (f *fakeModel) Size() int64     { return 1 }
+func (f *fakeModel) ID() string        { return f.id }
+func (f *fakeModel) Supported() bool   { return true }
+func (f *fakeModel) Installed() bool   { return f.installed }
+func (f *fakeModel) MinScore() float64 { return 0.5 }
+func (f *fakeModel) Size() int64       { return 1 }
 func (f *fakeModel) Find(context.Context, []string) ([][]redact.Found, error) {
 	return nil, nil
 }
@@ -151,6 +152,28 @@ func TestPrivacyModelPick(t *testing.T) {
 	}
 	if strings.Join(did, ", ") != "download astrlink-guard, stop privacy-filter, warm astrlink-guard" {
 		t.Fatalf("did %v", did)
+	}
+	// the threshold: the model's own until one is set, for the model
+	// masking uses with none named; 0 goes back to its own, and one out
+	// of range is refused
+	if st := do(""); st.MinScore != 0.5 || st.DefaultScore != 0.5 {
+		t.Fatalf("threshold before one is set: %+v", st)
+	}
+	if st := do(`{"do":"score","score":0.9}`); st.MinScore != 0.9 || st.DefaultScore != 0.5 || settings.Load().RedactModelScore[pii.AstrLinkGuard] != 0.9 {
+		t.Fatalf("threshold set: %+v, %v", st, settings.Load().RedactModelScore)
+	}
+	if st := do(`{"do":"score","model":"privacy-filter","score":0.6}`); st.MinScore != 0.9 || settings.Load().RedactModelScore[pii.PrivacyFilter] != 0.6 {
+		t.Fatalf("another model's threshold: %+v, %v", st, settings.Load().RedactModelScore)
+	}
+	for _, bad := range []string{`0.3`, `1`, `-1`} {
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, httptest.NewRequest("POST", "/api/privacy-model", strings.NewReader(`{"do":"score","score":`+bad+`}`)))
+		if rec.Code == http.StatusOK || settings.Load().RedactModelScore[pii.AstrLinkGuard] != 0.9 {
+			t.Fatalf("threshold %s: %d", bad, rec.Code)
+		}
+	}
+	if st := do(`{"do":"score","score":0}`); st.MinScore != 0.5 || len(settings.Load().RedactModelScore) != 1 {
+		t.Fatalf("back to the default: %+v, %v", st, settings.Load().RedactModelScore)
 	}
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest("POST", "/api/privacy-model", strings.NewReader(`{"do":"pick","model":"gpt"}`)))

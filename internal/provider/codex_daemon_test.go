@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -251,6 +252,47 @@ func TestRestartCodexDaemonFails(t *testing.T) {
 	codexExecutable = func() string { return "" }
 	if err := RestartCodexDaemon(context.Background()); err == nil {
 		t.Fatal("no codex: no error")
+	}
+}
+
+// The daemon a restart leaves running answers for itself to macOS's
+// privacy prompts, not to magpie: every codex attached to it works in its
+// own folder, and the first one in ~/Desktop had macOS say magpie wants
+// the Desktop folder (reformed9448 on Discord).
+func TestRestartedCodexDaemonIsNotMagpies(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS's responsibility for a process")
+	}
+	self := proc.Responsible(os.Getpid())
+	if self == 0 {
+		t.Skip("macOS doesn't say who is responsible for this process")
+	}
+	fakeCodex(t, 0)
+	// a codex whose restart leaves a daemon (a sleep) running, and says
+	// its pid
+	dir := t.TempDir()
+	left := filepath.Join(dir, "daemon.pid")
+	exe := filepath.Join(dir, "codex")
+	testenv.Program(t, exe, "#!/bin/sh\nsleep 30 >/dev/null 2>&1 </dev/null &\necho $! > '"+left+"'\n")
+	codexExecutable = func() string { return exe }
+	if err := RestartCodexDaemon(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(left)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil {
+		t.Fatalf("pid %q", b)
+	}
+	t.Cleanup(func() {
+		if p, err := os.FindProcess(pid); err == nil {
+			p.Kill()
+		}
+	})
+	if got := proc.Responsible(pid); got == 0 || got == self {
+		t.Fatalf("the daemon answers to %d, magpie to %d: want one of its own", got, self)
 	}
 }
 

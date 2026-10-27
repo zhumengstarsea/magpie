@@ -1031,7 +1031,7 @@ func codexIn(at place) *Agent {
 		if p != "" && p != magpieID && !isCCSwitchMirror(p) {
 			own = say(group(p, options(catalog.Codex(), "")))
 		} else {
-			own = say(group("OpenAI", options(ownCodex(), "")))
+			own = codexInMagpie(say(group("OpenAI", options(ownCodex(), ""))))
 			// with magpie Codex's provider (magpie API, or a magpie model
 			// picked with no ChatGPT sign-in beside it), Codex's own models
 			// are reached through magpie on a ChatGPT account there: picked
@@ -1884,6 +1884,27 @@ func ownCodex() []catalog.Model {
 		return ms
 	}
 	return out
+}
+
+// codexInMagpie marks Served those of Codex's own models that magpie's list
+// shows Codex on a ChatGPT account of the user's (codex/gpt-5.5): its
+// pickers leave out magpie's codex/… as only a hop (viaMagpieFor), so these
+// are how they are offered, and the agent's own models switched off
+// (provider.OwnModelsHidden) never takes them out. It did once a routing
+// group gave the picker a catalog entry, and Codex's picker was the group
+// alone (shiqi_40904 on Discord).
+func codexInMagpie(own []Option) []Option {
+	shown, _ := provider.CatalogFor("codex")
+	on := map[string]bool{}
+	for _, e := range shown {
+		if provider.CodexOwn(e) {
+			on[e.Model] = true
+		}
+	}
+	for i := range own {
+		own[i].Served = on[own[i].Value]
+	}
+	return own
 }
 
 // codexOwnViaMagpie is the catalog id magpie serves one of Codex's own

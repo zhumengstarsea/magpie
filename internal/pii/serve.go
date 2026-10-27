@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"regexp"
@@ -638,9 +639,10 @@ func (h *helper) classify(texts []string) ([][]redact.Found, error) {
 		}
 		for j := 0; j < n && r.err == nil; j++ {
 			start, end := int32(r.u32()), int32(r.u32())
-			r.u32() // the score: pf-serve sends only those over its threshold
+			// pf-serve sends only those over its default threshold, 0.5: Floor
+			score := math.Float32frombits(r.u32())
 			label := string(r.bytes(int(r.u8())))
-			out[i] = append(out[i], redact.Found{Start: int(start), End: int(end), Label: label})
+			out[i] = append(out[i], redact.Found{Start: int(start), End: int(end), Label: label, Score: float64(score)})
 		}
 	}
 	if status != 0 && r.err == nil {

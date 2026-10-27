@@ -305,7 +305,11 @@ func restartCodexDaemon(ctx context.Context, home string) error {
 	if err != nil {
 		return err
 	}
-	if out, err := cmd.CombinedOutput(); err != nil {
+	// run as its own responsible process: the daemon it leaves running
+	// works in the folder of every codex attached to it, and macOS would
+	// otherwise ask for ~/Desktop and the like in magpie's name
+	// (reformed9448 on Discord)
+	if out, err := proc.CombinedOutputOwn(ctx, cmd); err != nil {
 		if msg := lastLine(out); msg != "" {
 			return errors.New("codex app-server daemon restart: " + msg)
 		}

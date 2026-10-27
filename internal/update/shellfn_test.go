@@ -27,7 +27,7 @@ func TestShellFunction(t *testing.T) {
 	crlf := filepath.Join(h, "Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1")
 	broken := filepath.Join(h, ".bashrc")
 	outside := filepath.Join(t.TempDir(), ".zshrc")
-	profiles := []fnProfile{
+	profiles := []ShellProfile{
 		{Kind: "posix", Path: rc},
 		{Kind: "fish", Path: fish},
 		{Kind: "powershell", Path: crlf},
@@ -37,7 +37,7 @@ func TestShellFunction(t *testing.T) {
 	oldExe, oldProfiles := cliExe, fnProfiles
 	t.Cleanup(func() { cliExe, fnProfiles = oldExe, oldProfiles })
 	cliExe = func() (string, error) { return exe, nil }
-	fnProfiles = func() []fnProfile { return profiles }
+	fnProfiles = func() []ShellProfile { return profiles }
 
 	mine := "export PATH=$HOME/bin:$PATH\nalias ll='ls -l'" // no newline at the end
 	write(t, rc, mine)

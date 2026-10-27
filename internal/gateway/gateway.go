@@ -648,6 +648,8 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	// and fetches the partner list every hour, asked for or not
 	go provider.KeepPartnersFresh(ctx)
 	go provider.KeepPluginsListed(ctx) // models a plugin's vendor drops or adds, while magpie runs
+	// and those a signed-in account's vendor adds (a ChatGPT plan's new GPT)
+	go provider.KeepAccountsListed(ctx)
 	// and fetches the lists of the providers the user asked to keep fresh (#2135)
 	go provider.KeepListsFresh(ctx)
 	// and keeps the community's plugins up to date, noting others' updates, and the Bun they run on
@@ -4264,6 +4266,10 @@ func (s *Server) forwardOnce(ctx context.Context, p provider.Provider, to provid
 	body = kimiLockedSampling(p, to, body)
 	body = clinePin(p, to, body)
 	body = codexImagesFit(p, to, body)
+	if to == provider.Responses {
+		// whatever the route, Claude's blocks never reach a Responses API
+		body = withoutClaudeSeals(body)
+	}
 	if to == provider.Responses && !keepsAccessPrograms(p, in) {
 		// Codex's Cyber program, relayed or built, goes to OpenAI alone
 		// (#3172); before the user's own fields, which may name one
@@ -4543,6 +4549,11 @@ func codexClientHeader(k string) bool {
 func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.Provider, proto provider.Protocol, model string, body []byte, u *Usage) (status int, msg string, done bool) {
 	upstream := provider.UpstreamNameIn(wiresOf(r.Context()), p.ID, model)
 	body = rewriteModel(body, upstream)
+	if proto == provider.Responses {
+		// Claude's blocks magpie gave a Responses client go back to Claude
+		// alone; to this API the item is its summary, as before
+		body = withoutClaudeSeals(body)
+	}
 	// a client that asked for one body, of an account that only streams:
 	// asked streamed, the stream read here (gathered)
 	var gather *gathered

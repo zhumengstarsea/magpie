@@ -34,7 +34,7 @@ type attrList struct {
 // stats reads dir's entries with getattrlistbulk: a Sessions read stats
 // each of ~21k session files on every 15 s poll, ~10 µs a file on APFS,
 // and this is one call for every few hundred.
-func stats(dir string) (map[string]Stat, bool) {
+func stats(dir string) (Listing, bool) {
 	fd, err := unix.Open(dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, false
@@ -42,7 +42,7 @@ func stats(dir string) (map[string]Stat, bool) {
 	defer unix.Close(fd)
 	al := attrList{bitmapCount: attrBitMapCount, common: attrCmnReturned | attrCmnName | attrCmnObjType | attrCmnModTime, file: attrFileDataLen}
 	buf := make([]byte, 64<<10)
-	out := map[string]Stat{}
+	var out Listing
 	for {
 		n, _, errno := syscall.Syscall6(unix.SYS_GETATTRLISTBULK, uintptr(fd), uintptr(unsafe.Pointer(&al)), uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)), 0, 0)
 		if errno == syscall.EINTR {
@@ -56,7 +56,7 @@ func stats(dir string) (map[string]Stat, bool) {
 		}
 		b := buf
 		for range int(n) {
-			if !entry(b, out) {
+			if !entry(b, &out) {
 				return nil, false
 			}
 			b = b[binary.NativeEndian.Uint32(b):]
@@ -67,7 +67,7 @@ func stats(dir string) (map[string]Stat, bool) {
 // entry reads one entry of getattrlistbulk's answer into out: its length,
 // the attributes it returned, then each in the order of their bits, a
 // file's data length after the common ones.
-func entry(b []byte, out map[string]Stat) bool {
+func entry(b []byte, out *Listing) bool {
 	if len(b) < 4 {
 		return false
 	}
@@ -126,6 +126,6 @@ func entry(b []byte, out map[string]Stat) bool {
 	if name == "" || common&attrCmnName == 0 || common&attrCmnObjType == 0 || common&attrCmnModTime == 0 || typ == vReg && file&attrFileDataLen == 0 {
 		return false
 	}
-	out[name] = s
+	*out = append(*out, Entry{name, s})
 	return true
 }

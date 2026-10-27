@@ -58,6 +58,12 @@ type Option struct {
 	// signed in to itself, so the agent reaches it on its own too: the
 	// picker folds these into one row a click opens (Claude Code, #496)
 	Same bool `json:"same,omitempty"`
+	// Served is a model of the agent's own that magpie's list shows it
+	// too, on the very account it is signed in to (Codex's ChatGPT
+	// models, its list's Codex section): not left out with the agent's
+	// own models (Picks), as the list's tick decides it (shiqi_40904: a
+	// routing group switched on took every one out of Codex's picker)
+	Served bool `json:"served,omitempty"`
 	// Alias is the value of the option a dated id is another name of
 	// (claude-opus-4-5-20251101 → claude-opus-4-5): the picker shows one
 	// row for the two, the alias, unless the dated one is the value set
@@ -559,8 +565,9 @@ func (a *Agent) Picks(f Field, cur map[string]string) []Option {
 }
 
 // Own reports whether o is a model the agent reaches on its own, not one of
-// magpie's catalog: what Picks leaves out on the user's word.
-func Own(o Option) bool { return o.Ref == "" && o.Value != "" }
+// magpie's catalog: what Picks leaves out on the user's word. One magpie's
+// list shows the agent too (Served) is the list's to show or not.
+func Own(o Option) bool { return o.Ref == "" && o.Value != "" && !o.Served }
 
 // OwnModels reports whether one of a's pickers that picks among magpie's
 // catalog offers models of the agent's own too, which Picks can leave out.

@@ -13,10 +13,13 @@ import (
 // rules', under the same switches: a name, an address, a phone number, an
 // email or an account number is personal data, a secret is a secret.
 
-// Found is a span the model found in a text: byte offsets, and its label.
+// Found is a span the model found in a text: byte offsets, its label,
+// and how sure the model is of it (0 to 1; masking drops what is under
+// the threshold the user set, internal/masking).
 type Found struct {
 	Start, End int
 	Label      string
+	Score      float64 `json:"score,omitempty"`
 }
 
 // Model finds spans in each of texts, in order. It never fails: one that

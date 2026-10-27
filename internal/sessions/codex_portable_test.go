@@ -13,6 +13,7 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 
+	"github.com/yetone/magpie/internal/claudeseal"
 	"github.com/yetone/magpie/internal/codexsummary"
 	"github.com/yetone/magpie/internal/filelock"
 )
@@ -235,5 +236,30 @@ func TestPortLineLeavesOthers(t *testing.T) {
 	got, ok := portLine([]byte(l))
 	if !ok || !bytes.HasSuffix(got, []byte("}\r\n")) || bytes.Contains(got, []byte("magpie1:")) {
 		t.Errorf("compaction_summary: %q", got)
+	}
+}
+
+// A reasoning item carrying Claude's block (claudeseal) is written as its
+// summary, as the gateway sends it to OpenAI, in a response_item and in a
+// compacted line's replacement_history; OpenAI's own encrypted_content and
+// a mention of the mark in text keep their bytes.
+func TestPortLineDropsClaudeBlocks(t *testing.T) {
+	sealed := claudeseal.Seal([]byte(`{"type":"thinking","thinking":"hm","signature":"sig"}`))
+	for _, l := range []string{
+		`{"type":"response_item","payload":{"type":"reasoning","summary":[],"encrypted_content":"gAAAAopenai"}}` + "\n",
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"` + sealed + `"}]}}` + "\n",
+	} {
+		if got, ok := portLine([]byte(l)); ok || string(got) != l {
+			t.Errorf("%q became %q", l, got)
+		}
+	}
+	for _, l := range []string{
+		`{"type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"hm"}],"encrypted_content":"` + sealed + `"}}` + "\n",
+		`{"type":"compacted","payload":{"message":"","replacement_history":[{"type":"reasoning","summary":[],"encrypted_content":"` + sealed + `"}]}}` + "\n",
+	} {
+		got, ok := portLine([]byte(l))
+		if !ok || bytes.Contains(got, []byte(claudeseal.Mark)) || bytes.Contains(got, []byte("encrypted_content")) || !bytes.Contains(got, []byte(`"reasoning"`)) {
+			t.Errorf("%q became %q", l, got)
+		}
 	}
 }

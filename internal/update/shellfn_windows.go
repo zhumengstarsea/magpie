@@ -15,18 +15,18 @@ import (
 // only where its execution policy runs a profile: Windows PowerShell's is
 // Restricted until the user changes it, and a profile it may not run
 // would put an error in each terminal it opens. cmd has no profile.
-func shellProfiles() []fnProfile {
+func shellProfiles() []ShellProfile {
 	docs := documents()
 	if docs == "" {
 		return nil
 	}
 	gpo := policy(registry.LOCAL_MACHINE, `SOFTWARE\Policies\Microsoft\Windows\PowerShell`)
-	var out []fnProfile
+	var out []ShellProfile
 	seven := filepath.Join(docs, "PowerShell")
 	if _, err := os.Stat(seven); err == nil || pwshInstalled() {
 		// RemoteSigned unless a policy says otherwise
 		if gpo == "" || runsProfile(gpo) {
-			out = append(out, fnProfile{Kind: "powershell", Path: filepath.Join(seven, "Microsoft.PowerShell_profile.ps1"), Create: true})
+			out = append(out, ShellProfile{Kind: "powershell", Path: filepath.Join(seven, "Microsoft.PowerShell_profile.ps1"), Create: true})
 		}
 	}
 	p := gpo
@@ -37,7 +37,7 @@ func shellProfiles() []fnProfile {
 		p = policy(registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell`)
 	}
 	if runsProfile(p) {
-		out = append(out, fnProfile{Kind: "powershell", Path: filepath.Join(docs, "WindowsPowerShell", "Microsoft.PowerShell_profile.ps1"), Create: true})
+		out = append(out, ShellProfile{Kind: "powershell", Path: filepath.Join(docs, "WindowsPowerShell", "Microsoft.PowerShell_profile.ps1"), Create: true})
 	}
 	return out
 }

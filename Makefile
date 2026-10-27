@@ -104,7 +104,9 @@ release-cli:
 
 # The desktop app for Windows: the system WebView2 needs no cgo, so both
 # arches cross-compile. Linked as a GUI program (no console window), with
-# the icon, version and a DPI-aware manifest from build/windows.
+# the icon, version and a DPI-aware manifest from build/windows. It carries
+# magpie.com, the console program a terminal runs for `magpie` and waits
+# for, which it writes beside itself (internal/update/com.go, #3737).
 WINVER = $(shell echo $(VERSION) | sed -E 's/^v//; s/[^0-9.].*//')
 release-windows:
 	@mkdir -p dist
@@ -112,8 +114,9 @@ release-windows:
 		--file-version "$(or $(WINVER),0.0.0)" --product-version "$(or $(WINVER),0.0.0)"
 	@for arch in amd64 arm64; do \
 		echo "  windows/$$arch (app)"; \
-		CGO_ENABLED=0 GOOS=windows GOARCH=$$arch go build -tags production -trimpath -ldflags="$(LDFLAGS) -H windowsgui" -o dist/magpie-windows-$$arch.exe . || exit 1; \
-	done; rm -f rsrc_windows_*.syso
+		CGO_ENABLED=0 GOOS=windows GOARCH=$$arch go build -trimpath -ldflags="-s -w" -o internal/update/launcher-$$arch.com ./internal/update/launcher || exit 1; \
+		CGO_ENABLED=0 GOOS=windows GOARCH=$$arch go build -tags production,comlauncher -trimpath -ldflags="$(LDFLAGS) -H windowsgui" -o dist/magpie-windows-$$arch.exe . || exit 1; \
+	done; rm -f rsrc_windows_*.syso internal/update/launcher-*.com
 
 # The desktop app for Linux links GTK 3 and WebKitGTK 4.1 through cgo, so it
 # is built natively, one arch per machine.
@@ -123,7 +126,7 @@ release-linux:
 	@go build -tags "$(TAGS)" -trimpath -ldflags="$(LDFLAGS)" -o dist/magpie-linux-$(shell go env GOARCH) .
 
 clean:
-	rm -rf magpie magpie.exe magpie.app dist rsrc_windows_*.syso
+	rm -rf magpie magpie.exe magpie.app dist rsrc_windows_*.syso internal/update/launcher-*.com
 
 # Development: the UI is served from internal/gui/assets and the window
 # reloads itself when a file there is saved. With fswatch installed, the

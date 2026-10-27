@@ -106,14 +106,19 @@ type Settings struct {
 	// (redact.Options.Shape; Charles Cao on X). RedactModelName is the
 	// local model picked (pii.PrivacyFilter, pii.AstrLinkGuard); "" for
 	// none picked, which pii.Choose reads. It is this computer's, as
-	// RedactModel is.
-	Redact          bool            `json:"redact,omitempty"`
-	RedactShape     bool            `json:"redactShape,omitempty"`
-	RedactModel     bool            `json:"redactModel,omitempty"`
-	RedactModelName string          `json:"redactModelName,omitempty"`
-	RedactPersonal  bool            `json:"redactPersonal,omitempty"`
-	RedactKinds     map[string]bool `json:"redactKinds,omitempty"`
-	RedactWords     []string        `json:"redactWords,omitempty"`
+	// RedactModel is. RedactModelScore is each model's threshold the user
+	// set, by its id: masking drops what the model is less sure of (an
+	// AstrLink Guard user on X found 0.85 to 0.95 right for it). A model
+	// not in it has its own default (pii.Model.MinScore); this
+	// computer's too.
+	Redact           bool               `json:"redact,omitempty"`
+	RedactModelScore map[string]float64 `json:"redactModelScore,omitempty"`
+	RedactShape      bool               `json:"redactShape,omitempty"`
+	RedactModel      bool               `json:"redactModel,omitempty"`
+	RedactModelName  string             `json:"redactModelName,omitempty"`
+	RedactPersonal   bool               `json:"redactPersonal,omitempty"`
+	RedactKinds      map[string]bool    `json:"redactKinds,omitempty"`
+	RedactWords      []string           `json:"redactWords,omitempty"`
 	// RedactWordsAnyCase matches RedactWords in any case (ZoeCats on
 	// Discord); off, the default, a word is matched as written.
 	RedactWordsAnyCase bool          `json:"redactWordsAnyCase,omitempty"`
@@ -1116,7 +1121,7 @@ func (s *Settings) KeepOwn(cur Settings) {
 	s.LAN, s.AllowIPs = cur.LAN, cur.AllowIPs
 	s.FetchPrivate = cur.FetchPrivate
 	s.SessionTerminal = cur.SessionTerminal
-	s.RedactModel, s.RedactModelName = cur.RedactModel, cur.RedactModelName
+	s.RedactModel, s.RedactModelName, s.RedactModelScore = cur.RedactModel, cur.RedactModelName, cur.RedactModelScore
 	s.ClaudeRunsMost = cur.ClaudeRunsMost
 	s.RequestArchiveLocal, s.RequestArchiveLocalMB = cur.RequestArchiveLocal, cur.RequestArchiveLocalMB
 }
@@ -1446,6 +1451,28 @@ func SetRedactModelName(name string) error {
 	defer fileMu.Unlock()
 	s := load()
 	s.RedactModelName = name
+	return save(s, false)
+}
+
+// SetRedactModelScore keeps score as the local model id's threshold; 0
+// is back to the model's own.
+func SetRedactModelScore(id string, score float64) error {
+	fileMu.Lock()
+	defer fileMu.Unlock()
+	s := load()
+	m := maps.Clone(s.RedactModelScore)
+	if m == nil {
+		m = map[string]float64{}
+	}
+	if score == 0 {
+		delete(m, id)
+	} else {
+		m[id] = score
+	}
+	if len(m) == 0 {
+		m = nil
+	}
+	s.RedactModelScore = m
 	return save(s, false)
 }
 

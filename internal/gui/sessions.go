@@ -151,6 +151,7 @@ func sessionRoutes(mux *http.ServeMux, w Windows) {
 	// (every day when 0 or none), cut by agent, folder and model for the
 	// page to filter; names are the agents' as the page shows them.
 	mux.HandleFunc("GET /api/sessions/stats", func(rw http.ResponseWriter, r *http.Request) {
+		defer sessions.ShareListing()()
 		n, _ := strconv.Atoi(r.URL.Query().Get("days"))
 		st := statsFor(n)
 		names := map[string]string{}
@@ -175,6 +176,7 @@ func sessionRoutes(mux *http.ServeMux, w Windows) {
 	// how many, what the middle one spent, how many each day, and the ones
 	// that spent the most.
 	mux.HandleFunc("GET /api/sessions/overview", func(rw http.ResponseWriter, r *http.Request) {
+		defer sessions.ShareListing()()
 		q := r.URL.Query()
 		n, _ := strconv.Atoi(q.Get("days"))
 		st := statsFor(n)
@@ -470,7 +472,12 @@ func statsFor(days int) sessions.Stats {
 		k.used = statsMemo.asks
 		if !k.busy && time.Since(k.at) > 10*time.Second {
 			k.busy = true
+			// read beside the page's own reads: with their listing of
+			// the session files, and handed back once they all rest
+			shared, rest := sessions.ShareListing(), readingPage()
 			go func() {
+				defer rest()
+				defer shared()
 				st := combinedSessionStats(days)
 				statsMemo.Lock()
 				k.at, k.st, k.busy = time.Now(), st, false

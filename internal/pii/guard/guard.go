@@ -38,9 +38,13 @@ type Span struct {
 	Score      float64
 }
 
-// MinScore is the probability under which a span is dropped: the
-// publisher's default.
+// MinScore is the publisher's default threshold, under which masking
+// drops a span unless the user set another (internal/masking).
 const MinScore = 0.8
+
+// Floor is the probability under which Find drops a span: the lowest
+// threshold a user can set.
+const Floor = 0.5
 
 // window is how many tokens the model reads at once, besides <s> and
 // </s>; a longer text is read in windows overlapping by overlap, each
@@ -66,7 +70,7 @@ func Load(dir string) (*Model, error) {
 	return &Model{tok, nt}, nil
 }
 
-// Find is what the model finds in text, at MinScore.
+// Find is what the model finds in text, at Floor, each span with its score.
 func (m *Model) Find(text string) []Span {
 	toks := m.tok.encode(text)
 	n := len(toks)
@@ -118,7 +122,7 @@ func (m *Model) Find(text string) []Span {
 // decode reads the tokens' BIO tags (lab, by index into labels) into
 // spans: a B tag, or an I tag of another kind than the span before it,
 // starts one; an I tag of the same kind extends it; O ends it. A span's
-// score is its least token's, and those under MinScore are dropped.
+// score is its least token's, and those under Floor are dropped.
 // Tokens of no text (a lone "▁") neither start nor end a span.
 func decode(toks []token, lab []int, prob []float64) []Span {
 	var spans []Span
@@ -143,7 +147,7 @@ func decode(toks []token, lab []int, prob []float64) []Span {
 	}
 	out := spans[:0]
 	for _, s := range spans {
-		if s.Score >= MinScore {
+		if s.Score >= Floor {
 			out = append(out, s)
 		}
 	}

@@ -298,7 +298,7 @@ var wslKinds = []wslKind{
 					if codexFailover() {
 						return append(group("OpenAI", options(ownCodex(), "")), viaMagpie("codex", "")...)
 					}
-					return append(group("OpenAI", options(ownCodex(), "")), viaMagpieFor("codex", "")...)
+					return append(codexInMagpie(group("OpenAI", options(ownCodex(), ""))), viaMagpieFor("codex", "")...)
 				}
 			case "effort":
 				return func(cur map[string]string) []Option {
@@ -349,7 +349,7 @@ var wslKinds = []wslKind{
 			case "model":
 				// whether it has a base URL of its own is the distro's file
 				return func(cur map[string]string) []Option {
-					return append(group("Claude Code", claudeOwn(cur["model"], nil)), claudeViaMagpie(false)...)
+					return append(group("Claude Code", claudeOwn(cur["model"], nil, catalog.Provider("anthropic"))), claudeViaMagpie(false)...)
 				}
 			case "effort":
 				return nil
@@ -524,6 +524,25 @@ var wslKinds = []wslKind{
 					out = append(out, Option{Value: v})
 				}
 				return out
+			}
+		}},
+	// Antigravity CLI, by its own folder under ~/.gemini or its command
+	// (mimi001234 on Discord: magpie didn't find agy in WSL); it takes the
+	// gateway only from how it is started, so the distro's shells get the
+	// function agy (agyDistroFunction)
+	{id: "agy", name: "Antigravity CLI", dir: ".gemini/antigravity-cli", bin: "agy", in: agyIn,
+		restart: newNotice("{agent} in WSL {distro} takes magpie's gateway and model only from how it is started — type agy in a new terminal there: magpie put it in the shell's profile."),
+		asleep: func(key string) func(map[string]string) []Option {
+			if key != "model" {
+				return nil
+			}
+			// its custom models are the distro's settings.json
+			return func(cur map[string]string) []Option {
+				var own []Option
+				if c := cur["model"]; c != "" && !usesMagpie(c) {
+					own = append(own, Option{Value: c, Icon: modelIcon("", c), Direct: "Google"})
+				}
+				return append(group("Antigravity CLI", own), viaMagpie("agy", magpieID+"/")...)
 			}
 		}},
 	// Block's goose, by its folder alone: a goose command may be pressly's

@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/yetone/magpie/internal/appdir"
+	"github.com/yetone/magpie/internal/pii/guard"
 	"github.com/yetone/magpie/internal/redact"
 )
 
@@ -185,6 +186,9 @@ type Model interface {
 	Installed() bool
 	// Size is how much turning it on downloads.
 	Size() int64
+	// MinScore is its default threshold: masking drops what it is less
+	// sure of, unless the user set another.
+	MinScore() float64
 	Find(ctx context.Context, texts []string) ([][]redact.Found, error)
 	Now() Status
 	// Download fetches it in the background and calls done once it is on
@@ -200,6 +204,21 @@ type Model interface {
 
 // Models are the local models, Privacy Filter first.
 func Models() []Model { return []Model{pfModel{}, guardModel{}} }
+
+// Floor is the lowest threshold a user can set (settings.RedactModelScore):
+// what either model sends is at least this sure. pf-serve's default
+// threshold is 0.5, and AstrLink Guard's Find keeps what is (guard.Floor).
+const Floor = guard.Floor
+
+// Threshold is model m's threshold of those the user set (by model id,
+// settings.RedactModelScore), or its own where none is, or one is out of
+// [Floor, 1).
+func Threshold(set map[string]float64, m Model) float64 {
+	if v, ok := set[m.ID()]; ok && v >= Floor && v < 1 {
+		return v
+	}
+	return m.MinScore()
+}
 
 // Of is the model id names; AstrLink Guard's for an id there's none of.
 func Of(id string) Model {
@@ -233,6 +252,7 @@ func (pfModel) ID() string                 { return PrivacyFilter }
 func (pfModel) Supported() bool            { return Supported() }
 func (pfModel) Installed() bool            { return Installed() }
 func (pfModel) Size() int64                { return Size() }
+func (pfModel) MinScore() float64          { return 0.5 }
 func (pfModel) Now() Status                { return Now() }
 func (pfModel) Download(done func()) error { return Download(done) }
 func (pfModel) Cancel()                    { Cancel() }
