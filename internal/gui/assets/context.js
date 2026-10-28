@@ -1484,7 +1484,7 @@
     const note = el("div", "ctx-tune-src");
     title.after(note);
     if (set.locked) note.textContent = t("{name} is set and comes first", { name: set.locked });
-    else if (set.source == "long") note.textContent = t("Long conversations, shared by Codex and Claude Code");
+    else if (set.source == "long") note.textContent = t("Long conversations, shared by Codex, Claude Code and Grok Build");
     else if (set.ours) note.textContent = t("Set by magpie");
     else if (set.value && a.compact && +set.value > a.compact.window && a.compact.window) note.textContent = t("You set {value}; the model's {window} comes first", { value: show(set.value), window: fmtK(a.compact.window) });
     else if (set.value) note.textContent = t("You set {value}", { value: show(set.value) });
