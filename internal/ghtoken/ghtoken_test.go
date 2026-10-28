@@ -233,3 +233,34 @@ func TestSettingsTokenRefusedGoesWithoutEnvToken(t *testing.T) {
 		t.Errorf("Token() = %q from %q, want none", tok, from)
 	}
 }
+
+// A mirror answers a request sent it without the token (source.Do,
+// #3923): that answer didn't carry the token, and a 401 from it isn't
+// GitHub refusing the token, which goes on being sent.
+func TestMirrorAnswerIsNotTheToken(t *testing.T) {
+	setToken(t, "ghp_settings_good", "", "")
+	for _, status := range []int{200, 401} {
+		var asked []string
+		send := func(r *http.Request) (*http.Response, error) {
+			asked = append(asked, r.Header.Get("Authorization"))
+			bare := r.Clone(r.Context())
+			bare.Header.Del("Authorization")
+			return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("{}")), Request: bare}, nil
+		}
+		req, _ := http.NewRequest("GET", "https://api.github.com/repos/o/r", nil)
+		resp, token, err := Do(req, "https://api.github.com", send)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if token || resp.StatusCode != status || len(asked) != 1 {
+			t.Fatalf("%d from a mirror: token=%v, status %d, asked %q", status, token, resp.StatusCode, asked)
+		}
+		if _, ok := SettingsRefused(); ok {
+			t.Fatalf("%d from a mirror: the Settings token counted refused", status)
+		}
+		if tok, _ := Token(); tok != "ghp_settings_good" {
+			t.Fatalf("%d from a mirror: Token() = %q", status, tok)
+		}
+	}
+}

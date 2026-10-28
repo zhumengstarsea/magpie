@@ -21,14 +21,16 @@ func fontSettingsJS(s settings.Settings) string {
 	return "window.receiveFonts?.(" + string(b) + ");"
 }
 
-// Font discovery belongs to the desktop, never to a remote browser's
-// server. A failed refresh leaves the last successful collection intact.
-func fontRoutes(mux *http.ServeMux, web bool, discover func() ([]fonts.Family, error)) {
+// The fonts installed on the computer magpie runs on, for its windows and
+// for a browser tab (which keeps the families it draws itself, fonts.js);
+// off where they can't be read (a nogui build). A failed refresh leaves
+// the last successful collection intact.
+func fontRoutes(mux *http.ServeMux, off bool, discover func() ([]fonts.Family, error)) {
 	var mu sync.Mutex
 	var cached []fonts.Family
 	mux.HandleFunc("GET /api/fonts", func(rw http.ResponseWriter, r *http.Request) {
-		if web {
-			http.Error(rw, "installed fonts are available only in the desktop app", http.StatusNotFound)
+		if off {
+			http.Error(rw, "installed fonts can't be read by this magpie", http.StatusNotFound)
 			return
 		}
 		mu.Lock()

@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"os"
@@ -239,6 +240,7 @@ func TestCodexAppHomeHelper(t *testing.T) {
 	if os.Getenv("MAGPIE_CODEX_HOME_HELPER") != "1" {
 		return
 	}
+	os.Stdout.WriteString("running\n")
 	time.Sleep(30 * time.Second)
 }
 
@@ -251,11 +253,20 @@ func TestCodexAppServersOnHome(t *testing.T) {
 	start := func(env ...string) int {
 		ctx, cancel := context.WithCancel(context.Background())
 		cmd := proc.CommandContext(ctx, os.Args[0], "-test.run=^TestCodexAppHomeHelper$")
-		cmd.Env = append([]string{"MAGPIE_CODEX_HOME_HELPER=1"}, env...)
+		// TMPDIR is this test's: given no testenv.Marker, the helper makes
+		// a test home of its own there, which it never removes once killed
+		cmd.Env = append([]string{"MAGPIE_CODEX_HOME_HELPER=1", "TMPDIR=" + t.TempDir()}, env...)
+		out, _ := cmd.StdoutPipe()
 		if err := cmd.Start(); err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { cancel(); _ = cmd.Wait() })
+		// running, so its exec is done: Start returns before Linux has
+		// written the new program's environment, and /proc/<pid>/environ
+		// read then is empty (#3906)
+		if line, _ := bufio.NewReader(out).ReadString('\n'); line != "running\n" {
+			t.Fatalf("the helper: %q", line)
+		}
 		return cmd.Process.Pid
 	}
 	ctx := context.Background()

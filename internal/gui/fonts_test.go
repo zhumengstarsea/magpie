@@ -58,11 +58,11 @@ func TestFontDiscoveryCacheAndFailure(t *testing.T) {
 		t.Fatalf("refresh did not re-read fonts: %d", calls)
 	}
 	web := http.NewServeMux()
-	fontRoutes(web, true, func() ([]fonts.Family, error) { t.Fatal("browser enumerated server fonts"); return nil, nil })
+	fontRoutes(web, true, func() ([]fonts.Family, error) { t.Fatal("fonts read where they can't be"); return nil, nil })
 	r = httptest.NewRecorder()
 	web.ServeHTTP(r, httptest.NewRequest("GET", "/api/fonts", nil))
 	if r.Code != 404 {
-		t.Fatalf("web font discovery returned %d", r.Code)
+		t.Fatalf("font discovery turned off returned %d", r.Code)
 	}
 }
 
@@ -110,8 +110,13 @@ func TestFontSettingsAPIAndBoot(t *testing.T) {
 	if !reflect.DeepEqual(settings.Load().UIFont, face) {
 		t.Fatal("browser save replaced a desktop font")
 	}
-	if _, ok := boot(web)["uiFont"]; ok {
+	webBoot := boot(web)
+	if _, ok := webBoot["uiFont"]; ok {
 		t.Fatal("browser received a desktop font override")
+	}
+	// a browser tab is offered the font list wherever magpie can read one
+	if _, ok := webBoot["fonts"]; ok != fonts.Available {
+		t.Fatalf("browser boot fonts = %v, want %v", ok, fonts.Available)
 	}
 	post(h, map[string]any{"uiFont": map[string]any{"family": "bad", "name": "Regular", "weight": 1001}}, 400)
 	if !reflect.DeepEqual(settings.Load().UIFont, face) {

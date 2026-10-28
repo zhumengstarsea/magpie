@@ -117,6 +117,11 @@ func SettingsRefused() (time.Time, bool) {
 func Do(req *http.Request, api string, send func(*http.Request) (*http.Response, error)) (*http.Response, bool, error) {
 	t, from := authorize(req, api)
 	resp, err := send(req)
+	// a mirror answers a request sent it without the token
+	// (source.Do), and its 401 isn't GitHub refusing the token
+	if t != "" && err == nil && resp.Request != nil && resp.Request.Header.Get("Authorization") == "" {
+		t = ""
+	}
 	if err != nil || t == "" || resp.StatusCode != http.StatusUnauthorized {
 		return resp, t != "" && err == nil, err
 	}

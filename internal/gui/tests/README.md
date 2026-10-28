@@ -21,7 +21,8 @@ five languages on Chromium and WebKit.
 family/style fixtures: independent traits, literal names, search and keyboard
 selection, rapid queued saves and rollback, reload, unavailable faces,
 discovery failure and refresh, empty collections, platform fallback,
-Omarchy precedence and browser-mode isolation. It checks narrow windows and
+Omarchy precedence, and a browser tab's own choice (kept in the browser,
+from the families it draws, never the app's). It checks narrow windows and
 no scroll on click in Chromium and WebKit, in English and Chinese.
 `ARTIFACT_DIR` retains screenshots; `MAGPIE_FONT_ASSETS` can point to an older
 asset directory to verify that the test fails on the missing picker.

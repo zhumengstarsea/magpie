@@ -26,7 +26,7 @@ async function open(browser, lang = "en", options = {}) {
   await page.route("**/*", async route => {
     const req = route.request(), url = new URL(req.url());
     const json = data => route.fulfill({ json: data });
-    if (url.pathname === "/boot.js") return route.fulfill({ contentType: "text/javascript", body: `window.bootPrefs=${JSON.stringify({ ...api.cur, web: !!options.web, ...(options.omarchy ? { omarchy: { mode: "dark", stamp: "one", name: "Test theme", vars: { "--font": '"Theme Font", sans-serif', "--code": '"Theme Mono", monospace' } } } : {}) })};` });
+    if (url.pathname === "/boot.js") return route.fulfill({ contentType: "text/javascript", body: `window.bootPrefs=${JSON.stringify({ ...api.cur, web: !!options.web, ...(options.fonts ? { fonts: true } : {}), ...(options.omarchy ? { omarchy: { mode: "dark", stamp: "one", name: "Test theme", vars: { "--font": '"Theme Font", sans-serif', "--code": '"Theme Mono", monospace' } } } : {}) })};` });
     if (url.pathname === "/wails/runtime.js") return route.fulfill({ contentType: "text/javascript", body: "export const Window = {};" });
     if (url.pathname === "/api/fonts") {
       api.reads++;
@@ -60,7 +60,7 @@ async function open(browser, lang = "en", options = {}) {
   // A real assertion, also usable against the original assets, rather than
   // a timeout or a compile error as the negative-control result.
   assert.equal(await page.locator("#uiFontRow").count(), 1, "Settings must offer an interface font picker");
-  if (!options.web) await page.waitForFunction(() => fontList !== null || fontListError);
+  if (!options.web || options.fonts) await page.waitForFunction(() => fontList !== null || fontListError);
   await page.evaluate(async () => {
     await document.fonts.ready;
     await Promise.all(document.getAnimations().map(a => a.finished.catch(() => {})));
@@ -272,11 +272,52 @@ for (const [engine, runtime] of engines) {
       assert.match((await css(page, "body")).family, /Theme Font/);
       assert.match((await css(page, "#codeFontRow .font-preview")).family, /Consolas/);
       assert.deepEqual(errors, []);
+      // a magpie that can't read its fonts (nogui) offers none to a browser
       const web = await open(browser, "en", { web: true, settings: { uiFont: harmony[1] } });
       assert.equal(await web.page.locator("#uiFontRow").isVisible(), false);
       assert.equal(web.api.reads, 0);
       assert.doesNotMatch((await css(web.page, "body")).family, /HarmonyOS/);
       assert.deepEqual(web.errors, []);
+    } finally { await browser.close(); }
+  });
+
+  // Norcleeh on Discord: a browser tab had no font rows. It has them now,
+  // with the families this browser draws, and its choice is its own.
+  for (const lang of ["en", "zh"]) test(`${engine} ${lang}: a browser tab picks its own font from the ones it draws`, async () => {
+    const browser = await runtime.launch();
+    try {
+      const real = ["Georgia", "Courier New", "DejaVu Serif", "Liberation Serif"];
+      const list = [{ name: "No Such Family Here", styles: [face("No Such Family Here")] }, ...real.map(n => ({ name: n, styles: [face(n), face(n, "Bold", 700)] }))];
+      const { page, api, errors } = await open(browser, lang, { web: true, fonts: true, settings: { uiFont: harmony[1] } });
+      api.fonts = list;
+      assert.equal(await page.locator("#uiFontRow").isVisible(), true, "a browser tab offers the interface font");
+      assert.equal(await page.locator("#codeFontRow").isVisible(), true, "and the code font");
+      assert.doesNotMatch((await css(page, "body")).family, /HarmonyOS/, "the app's own choice stays the app's");
+      await page.locator("#uiFontRow .font-family").click();
+      await page.locator(".font-menu .pm-item").last().click(); // Refresh fonts
+      await page.waitForFunction(() => !fontFlight);
+      const shown = await page.evaluate(() => fontList.map(f => f.name));
+      assert(!shown.includes("No Such Family Here"), "a family this browser doesn't draw isn't offered: " + shown);
+      const pick = shown[0];
+      assert(real.includes(pick), "an installed family is offered: " + shown);
+      await family(page, "uiFontRow", pick);
+      await style(page, "uiFontRow", "Bold");
+      assert.match((await css(page, "body")).family, new RegExp("^\"?" + pick));
+      assert.equal((await css(page, "body")).weight, "700");
+      await family(page, "codeFontRow", pick);
+      assert.match((await css(page, "#codeFontRow .font-preview")).family, new RegExp("^\"?" + pick));
+      assert.equal(api.posts.filter(p => "uiFont" in p || "codeFont" in p).length, 0, "the browser's choice isn't sent as the app's");
+      assert.equal(api.cur.uiFont.family, harmony[1].family);
+      await page.reload();
+      await page.locator("#uiFontRow .font-family").waitFor();
+      await page.waitForFunction(() => fontList !== null && !fontFlight);
+      assert.match((await css(page, "body")).family, new RegExp("^\"?" + pick), "kept across a reload");
+      assert.equal((await css(page, "body")).weight, "700");
+      assert.equal(await page.locator("#uiFontRow .font-family span").textContent(), pick);
+      await reset(page, "uiFontRow");
+      assert.doesNotMatch((await css(page, "body")).family, new RegExp(pick));
+      assert.match((await css(page, "#codeFontRow .font-preview")).family, new RegExp("^\"?" + pick));
+      assert.deepEqual(errors, []);
     } finally { await browser.close(); }
   });
 

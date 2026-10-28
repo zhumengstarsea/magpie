@@ -1824,21 +1824,37 @@ func MagpieAdded(etag, slug, description string) bool {
 // first.
 var EffortRank = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
 
+// EffortAliases are levels some vendors name in words of their own, each
+// with the level of EffortRank's it is: Trae's light and extra_high (its 轻
+// and 极高), which a plugin serving Trae's models (Our Free Model's) lists
+// as they are (nianshou5 on Discord).
+var EffortAliases = map[string]string{"light": "low", "extra_high": "xhigh"}
+
+// EffortLevel is the level of EffortRank's that e names: e itself, or the
+// one a vendor's word for it is (EffortAliases).
+func EffortLevel(e string) string {
+	if l, ok := EffortAliases[strings.ToLower(e)]; ok {
+		return l
+	}
+	return e
+}
+
 // NearestEffort is the level of levels nearest want in EffortRank's order,
 // a tie going up, never "none" unless it is want; want itself when levels
 // are none, hold it, or want is no level EffortRank knows. The gateway
 // fits an effort to a model's levels by it on the way out (fitEffort), and
 // Codex's catalog gives a model the effort set for new sessions by it
 // (codexcat.ModelDefault), so the level a model starts at is the one it
-// would be sent at.
+// would be sent at. A level is placed by the one it names (EffortLevel),
+// so low is a model's light, and a model's levels go in its own words.
 func NearestEffort(want string, levels []string) string {
-	at := slices.Index(EffortRank, want)
+	at := slices.Index(EffortRank, EffortLevel(want))
 	if len(levels) == 0 || at < 0 || slices.Contains(levels, want) {
 		return want
 	}
 	best, dist := want, len(EffortRank)
 	for _, l := range levels {
-		i := slices.Index(EffortRank, l)
+		i := slices.Index(EffortRank, EffortLevel(l))
 		if i < 0 || l == "none" {
 			continue
 		}

@@ -6,6 +6,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -365,10 +366,40 @@ func loginQuota(ctx context.Context, l Login) SubscriptionQuota {
 			q.Until = codexUntil(codexLoginAuth(l), time.Now())
 		}
 	}
+	if l.Agent == "codex" {
+		err = codexSignInRead(l, tok, err)
+	}
 	if err != nil {
 		q.Error = err.Error()
 	}
 	return q
+}
+
+// codexSignInRead keeps what a ChatGPT account's usage read, made with
+// access token tok, said of its sign-in (charliepu on Discord: an account
+// showing no allowance, OpenAI having signed it out, till it was signed in
+// again). Turned away for the sign-in itself with a refresh tried, or the
+// refresh of the one Codex is signed in to refused, the account is marked
+// signed out as a revoked one is (signin_revoked.go): its row says Sign in
+// again, which runs magpie's sign-in for it and replaces its tokens, and
+// the gateway passes over it till then. A saved account's refused refresh
+// is marked lapsed already (savedRefreshFailed). A read that went through
+// clears a mark it had. Anything else is unknown and marks nothing.
+func codexSignInRead(l Login, tok string, err error) error {
+	if err == nil {
+		ServedSignIn(&Account{Agent: l.Agent, User: l.User})
+		return nil
+	}
+	var refused refreshRefused
+	if !l.Active && errors.As(err, &refused) {
+		return err
+	}
+	m := bearerMark(codexGoneFor(err, tok, func() []byte { return codexLoginAuth(l) }))
+	if m == "" {
+		return err
+	}
+	markRevoked(l.Agent, l.User, m)
+	return errors.New(revokedText(l.User))
 }
 
 // CodexUsedUp reports whether the ChatGPT account Codex is signed in to is

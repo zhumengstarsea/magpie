@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -222,5 +223,52 @@ func TestProbesOfAProviderOnAnotherHostOfItsSiteListIt(t *testing.T) {
 	}
 	if p := QueryPage(All, Filter{Provider: id}, 0, 50); p.Total != 4 {
 		t.Fatalf("deleted %s's rows: total %d", id, p.Total)
+	}
+}
+
+// cybercaius on Discord: a provider deleted and another added under its
+// id were one on the Usage page, the new one with the old one's calls.
+// The deleted one's calls stay its own, under an id of their own, named
+// as it was and marked deleted; the new one has only its own.
+func TestDeletedProviderKeepsItsCallsFromOneAddedUnderItsID(t *testing.T) {
+	reportedHome(t)
+	if err := provider.Save(provider.Provider{ID: "relay", Name: "Old relay", Key: "k", Chat: "http://127.0.0.1:1/v1", Models: []string{"gpt-9"}}); err != nil {
+		t.Fatal(err)
+	}
+	then := time.Now().Add(-time.Hour)
+	Append(Record{Time: then, Agent: "codex", Session: "s1", Provider: "relay", Model: "gpt-9", Input: 100, Output: 10, Status: 200})
+	Append(Record{Time: then.Add(time.Second), Agent: "codex", Session: "s1", Provider: "relay", Model: "gpt-9", Input: 100, Output: 10, Status: 200})
+	if err := provider.Delete("relay"); err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.Save(provider.Provider{ID: "relay", Name: "New relay", Key: "k2", Chat: "http://127.0.0.1:2/v1", Models: []string{"gpt-9"}}); err != nil {
+		t.Fatal(err)
+	}
+	Append(Record{Time: time.Now().Add(time.Second), Agent: "codex", Session: "s2", Provider: "relay", Model: "gpt-9", Input: 100, Output: 10, Status: 200})
+
+	page := QueryPage(All, Filter{}, 0, 50)
+	if len(page.Providers) != 2 || page.Providers[0] != "relay" || !strings.HasPrefix(page.Providers[1], "relay~") {
+		t.Fatalf("providers %v", page.Providers)
+	}
+	old := page.Providers[1]
+	d, ok := provider.UsageRenames().Gone(old)
+	if !ok || d.ID != "relay" || d.Name != "Old relay" {
+		t.Fatalf("gone %q: %+v %v", old, d, ok)
+	}
+	if p := QueryPage(All, Filter{Provider: "relay"}, 0, 50); p.Sum.Calls != 1 {
+		t.Fatalf("the new one's: %+v", p.Sum)
+	}
+	if p := QueryPage(All, Filter{Provider: old}, 0, 50); p.Sum.Calls != 2 {
+		t.Fatalf("the deleted one's: %+v", p.Sum)
+	}
+	if vs := Vias(time.Time{}).Of("codex|s1"); len(vs) != 1 || vs[0].Provider != old {
+		t.Fatalf("vias of the deleted one %+v", vs)
+	}
+	calls := map[string]int{}
+	for _, g := range Summarize(All).Models {
+		calls[g.ID] += g.Calls
+	}
+	if calls["relay/gpt-9"] != 1 || calls[old+"/gpt-9"] != 2 {
+		t.Fatalf("summary %v", calls)
 	}
 }

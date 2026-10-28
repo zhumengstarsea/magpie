@@ -1461,16 +1461,19 @@ type dshPiLevels struct {
 var dshThinking = []string{"off", "minimal", "low", "medium", "high", "xhigh", "max"}
 
 // dshModelLevels are the levels of dsh's a catalog model takes, each with
-// the effort sent for it: its own, and off for its none.
+// the effort sent for it: the model's own name for it (modelEffort), so a
+// plugin's light and extra_high are dsh's low and xhigh and are sent as
+// light and extra_high, and off for its none.
 func dshModelLevels(efforts []string) ([]string, *dshPiLevels) {
 	var levels []string
 	var out dshPiLevels
 	for _, l := range dshThinking {
-		e := l
+		w := l
 		if l == "off" {
-			e = "none"
+			w = "none"
 		}
-		if !contains(efforts, e) {
+		e := modelEffort(efforts, w)
+		if e == "" {
 			continue
 		}
 		levels = append(levels, l)

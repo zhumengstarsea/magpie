@@ -296,7 +296,17 @@ CoreText on macOS and Fontconfig on Linux. Discovery is lazy, cached in the
 handler, and refreshed by the menu. It returns names and CSS traits, never
 font files or paths. A failed refresh answers 503 and preserves the previous
 collection; an empty successful collection is distinct from failure.
-`magpie web` and `nogui` do not expose this desktop catalogue.
+A `nogui` build can't read the catalogue and answers 404.
+
+A browser tab (`magpie web`, or the app's page opened in a browser) has the
+same rows when boot says `fonts` (Norcleeh on Discord). Its choice is the
+browser's own, kept in `localStorage` under `magpie.fonts` and applied by
+`fonts.js` before the first paint: the tab can be on another computer, so
+it neither changes nor takes the app's `settings.UIFont`/`CodeFont`. Its
+list is `/api/fonts` less the families the browser doesn't draw
+(`desktopFonts.here`: text in the family measures apart from a generic
+family's on a canvas), so another computer's fonts, and Safari's
+user-installed ones, aren't offered. In a nogui build the rows stay hidden.
 
 `settings.UIFont` and `settings.CodeFont` keep the family, style name,
 OpenType weight, CSS slope and width percentage. A missing choice keeps the

@@ -142,10 +142,17 @@ func providerFaces(all []provider.Provider) func(id string) Named {
 	for _, p := range all {
 		set[p.ID] = p
 	}
+	renames := provider.UsageRenames()
 	return func(id string) Named {
 		a := Named{ID: id}
 		if p, ok := set[id]; ok && p.Name != "" {
 			a.Name, a.Icon = p.Name, p.Icon
+		} else if d, ok := renames.Gone(id); ok {
+			at := d.At
+			a.Name, a.Icon, a.Deleted = d.Name, d.Icon, &at
+			if a.Name == "" {
+				a.Name = d.ID
+			}
 		} else if id == usage.UnknownProvider {
 			a.Name = "Local session"
 		} else {
@@ -275,6 +282,9 @@ type Named struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	Icon string `json:"icon"`
+	// Deleted is when the provider was deleted, for one whose calls are
+	// kept apart from a provider's added under its id since
+	Deleted *time.Time `json:"deleted,omitempty"`
 }
 
 // LedgerPage is one page of the ledger: limit rows (100 when none is

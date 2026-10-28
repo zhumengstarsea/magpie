@@ -350,14 +350,6 @@ ok except gateway" stops being a normal run record.
   `tee` the log to a file of your own and grep it.
 - Seen 1× (2026-10-17).
 
-**A mover's min is npm's version when the change lands, not when the
-work started.**
-- 19e9fc47f (10-16) raised Cursor's min to 0.2.17 while npm already had
-  0.2.18, bumped an hour before it landed. 53009f81a then raised six mins
-  to `npm view --prefer-online` at landing, and left Factory a version
-  behind (#2557).
-- Seen 1× (2026-10-16).
-
 **Windows CI only compiles the tests, so a Windows-only red shows
 nowhere.** Run the package on the Windows box before calling a Windows
 failure "the same on main".
@@ -504,6 +496,23 @@ cause:
     subtest of the same test. 27 issues titled "under load" were opened
     on 10-16 and 10-17. Fix the class (wait on state, room on both sides) instead
     of filing one a test.
+- 10-27: the #1794 pattern on a third day. internal/provider has died
+  on main since 10-25 in TestUnreadLoginsWriteErrorsKeepCredentials
+  (#3632, a synctest fatal, 2 of 2 on mote at 4b0a32e0f). The issue has
+  two complete patches (JoeyWu-tech's and skygunner's) and nine
+  comments, no owner. #3919 and #3924 have had JoeyWu-tech's patches
+  since 10-27 15:37 and 16:24, and #3854 has three TestFetch* reds.
+  Every tag since, to v0.1.1780, went out over them, and a provider
+  change can only pass its package with those tests skipped.
+  - A patch on a red issue is reviewed and merged, or answered with
+    why not, the day it is posted.
+  - A red that kills its package hides every new red behind it.
+    6eb510f78 (10-26) made a Codex ask of the models list that three
+    TestFetch* tests counted as a second ask; its provider run died at
+    #3632 first, it then ran `-run Codex`, and the three were filed
+    only later as #3854. With #3632 fixed (4842f69be), #3854 and #3906
+    merged too (759b3b8c4, ed49d1b38), internal/provider passed whole
+    on 10-28 for the first time since 10-25.
 - A cancelled run tests nothing. On 10-14 nine pushes in ten minutes
   cancelled each other's runs, and 3c4b4dc97 never had a run of its own;
   its red showed first at 84f14e555.
@@ -608,6 +617,14 @@ standards since 10-18, widened to a worktree and its logs. See
 
 ## Moved to the code standards
 
+- **A mover's min is npm's version when the change lands** (10-16,
+  10-18, 10-24). On 10-16 19e9fc47f raised Cursor's min a version behind
+  npm, and 53009f81a left Factory one behind (#2557). On 10-18 zed 0.1.9
+  was published with no min raised until the review's ccb2eea15.
+  On 10-24 factory 0.1.38 (plugins #349, an option a user asked for)
+  was published and the min stayed 0.1.37 for four days, until
+  490c0a4ad. The rule now also says a plugin version raises the min the
+  same day.
 These were seen on three or more days. The rules and their evidence are in
 [docs/code-standards.md](docs/code-standards.md); a review still checks
 each one.

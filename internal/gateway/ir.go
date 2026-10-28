@@ -818,6 +818,12 @@ func effortOf(s string) string {
 	case "ultra": // Codex's max, with its own agents to hand work to
 		return "max"
 	}
+	// a vendor's own word for a level (Trae's light, extra_high), which
+	// an agent sends for a model listing it; fitted back to the model's
+	// own word on the way out (fitEffort)
+	if l, ok := catalog.EffortAliases[strings.ToLower(strings.TrimSpace(s))]; ok {
+		return l
+	}
 	return ""
 }
 

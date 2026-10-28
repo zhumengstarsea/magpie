@@ -163,6 +163,25 @@ type Gave struct {
 	Until time.Time `json:"until"`
 }
 
+// Deleted is a provider the user deleted (Delete): the calls recorded
+// under its id, and under the ids it had (Was, Gave), until it was
+// deleted are its own, under its id while no other has taken it and
+// under UsageID once one has, never a provider's added later under the
+// same id. cybercaius on Discord: a provider deleted and
+// another added under its id showed as one on the Usage page.
+type Deleted struct {
+	ID   string    `json:"id"`
+	Name string    `json:"name,omitempty"`
+	Icon string    `json:"icon,omitempty"`
+	At   time.Time `json:"at"`
+	Was  []string  `json:"was,omitempty"`
+	Gave []Gave    `json:"gave,omitempty"`
+}
+
+// UsageID is the id its calls are counted under: its id and when it was
+// deleted, which no provider can take ("~" is never in one, Slug).
+func (d Deleted) UsageID() string { return d.ID + "~" + d.At.UTC().Format("20060102T150405") }
+
 // Renames say which provider a call recorded under a provider id was
 // made to, as its id is now: a provider renamed takes the calls recorded
 // under the ids it had (Was), and an id another provider took since
@@ -178,6 +197,8 @@ type Renames struct {
 	// on, "" for a site two are on: a model list asked at a provider's
 	// bare domain before it was saved on its api. subdomain (OnSite)
 	sites map[string]string
+	// gone are the deleted providers by UsageID
+	gone map[string]Deleted
 }
 
 type gaveTo struct {
@@ -255,6 +276,13 @@ func SiteOf(host string) string {
 	return site
 }
 
+// Gone is the deleted provider whose calls are counted under id: its
+// own id while no provider has it, or its UsageID.
+func (r Renames) Gone(id string) (Deleted, bool) {
+	d, ok := r.gone[id]
+	return d, ok
+}
+
 // Timed is whether the id's calls go to more than one provider by when
 // they were made, so Of needs each call's time.
 func (r Renames) Timed(id string) bool { return len(r.gave[id]) > 0 }
@@ -298,16 +326,46 @@ func UsageRenames() Renames {
 		}
 		return Renames{now: map[string]string{}}
 	}
-	r := renamesOf(f.Providers)
+	r := renamesOf(f.Providers, f.Deleted)
 	lastRenames.Store(&r)
 	return r
 }
 
-func renamesOf(ps []Provider) Renames {
+func renamesOf(ps []Provider, deleted []Deleted) Renames {
 	r := Renames{now: map[string]string{}}
 	held := map[string]bool{}
 	for _, p := range ps {
 		held[p.ID] = true
+	}
+	give := func(id string, until time.Time, to string) {
+		if r.gave == nil {
+			r.gave = map[string][]gaveTo{}
+		}
+		r.gave[id] = append(r.gave[id], gaveTo{until, to})
+	}
+	for i, d := range deleted {
+		// its calls stay under its id until a provider is added under it,
+		// deleted since or there now
+		to := d.ID
+		if held[d.ID] || slices.ContainsFunc(deleted[i+1:], func(l Deleted) bool { return l.ID == d.ID || slices.Contains(l.Was, d.ID) }) {
+			to = d.UsageID()
+		}
+		if r.gone == nil {
+			r.gone = map[string]Deleted{}
+		}
+		r.gone[to] = d
+		if to != d.ID {
+			give(d.ID, d.At, to)
+		}
+		for _, w := range d.Was {
+			// the subscription's id is the subscription's (Rename)
+			if !subscriptionID(w) {
+				give(w, d.At, to)
+			}
+		}
+		for _, g := range d.Gave {
+			give(g.ID, g.Until, to)
+		}
 	}
 	for _, p := range ps {
 		for _, w := range p.Was {
@@ -317,10 +375,7 @@ func renamesOf(ps []Provider) Renames {
 			}
 		}
 		for _, g := range p.Gave {
-			if r.gave == nil {
-				r.gave = map[string][]gaveTo{}
-			}
-			r.gave[g.ID] = append(r.gave[g.ID], gaveTo{g.Until, p.ID})
+			give(g.ID, g.Until, p.ID)
 		}
 	}
 	for _, gs := range r.gave {

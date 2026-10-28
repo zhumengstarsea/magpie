@@ -2950,6 +2950,27 @@ function dragAgent(e, handle, row) {
     });
 }
 
+// dragScroll: the box a drag in list scrolls, where it was, and how fast a
+// pointer at y scrolls it (near its top or foot)
+function dragScroll(list) {
+  let scroll = list.parentElement;
+  while (scroll && !/(auto|scroll)/.test(getComputedStyle(scroll).overflowY)) scroll = scroll.parentElement;
+  scroll ||= document.scrollingElement;
+  const bounds = scroll.getBoundingClientRect(), edge = 36;
+  return { scroll, scroll0: scroll.scrollTop, speedAt: (y) => y < bounds.top + edge ? -Math.min(1, (bounds.top + edge - y) / edge)
+    : y > bounds.bottom - edge ? Math.min(1, (y - bounds.bottom + edge) / edge) : 0 };
+}
+// dragListen: a drag's listeners (letting go saves, Escape, a lost capture,
+// blur or resize cancels), and what takes them off
+function dragListen(handle, move, finish) {
+  const cancel = (ev) => finish(false, ev);
+  const on = [[document, "pointermove", move, { passive: false }], [document, "pointerup", (ev) => finish(true, ev)],
+    [document, "pointercancel", cancel], [handle, "lostpointercapture", cancel], [window, "blur", cancel], [window, "resize", cancel],
+    [document, "keydown", (ev) => { if (ev.key === "Escape") { ev.preventDefault(); ev.stopImmediatePropagation(); finish(false); } }, true]];
+  for (const [t, n, f, o] of on) t.addEventListener(n, f, o);
+  return () => { for (const [t, n, f, o] of on) t.removeEventListener(n, f, o); };
+}
+
 // Shared pointer sorter. Measure once, move only transforms on animation frames,
 // and commit once on release. No DOM rebuilds or network calls during a drag.
 // The same primitive serves agent handles and handle-free account rows.
@@ -2959,10 +2980,7 @@ function dragRows(e, handle, row, list, rows, commit, start = () => {}, idle = (
   if (from < 0) return false;
   const rects = rows.map((r) => r.getBoundingClientRect());
   const tops = rects.map((r) => r.top), heights = rects.map((r) => r.height), h = heights[from];
-  let scroll = list.parentElement;
-  while (scroll && !/(auto|scroll)/.test(getComputedStyle(scroll).overflowY)) scroll = scroll.parentElement;
-  scroll ||= document.scrollingElement;
-  const bounds = scroll.getBoundingClientRect(), scroll0 = scroll.scrollTop;
+  const { scroll, scroll0, speedAt } = dragScroll(list);
   let dragging = false, ended = false, to = from, y = e.clientY, frame = 0, lastTime = 0;
   const y0 = y, pointer = e.pointerId;
   const paint = (time) => {
@@ -2971,9 +2989,7 @@ function dragRows(e, handle, row, list, rows, commit, start = () => {}, idle = (
     if (!dragging) return;
     const dt = Math.min(32, lastTime ? time - lastTime : 16);
     lastTime = time;
-    const edge = 36;
-    const speed = y < bounds.top + edge ? -Math.min(1, (bounds.top + edge - y) / edge)
-      : y > bounds.bottom - edge ? Math.min(1, (y - bounds.bottom + edge) / edge) : 0;
+    const speed = speedAt(y);
     if (speed) scroll.scrollTop += speed * dt * .6;
     const dy = y - y0 + scroll.scrollTop - scroll0;
     const lo = tops[0] - tops[from], hi = tops.at(-1) + heights.at(-1) - h - tops[from];
@@ -3022,13 +3038,7 @@ function dragRows(e, handle, row, list, rows, commit, start = () => {}, idle = (
     if (ended) return;
     ended = true;
     cancelAnimationFrame(frame);
-    document.removeEventListener("pointermove", move);
-    document.removeEventListener("pointerup", up);
-    document.removeEventListener("pointercancel", cancel);
-    document.removeEventListener("keydown", keys, true);
-    handle.removeEventListener("lostpointercapture", cancel);
-    removeEventListener("blur", cancel);
-    removeEventListener("resize", cancel);
+    off();
     if (handle.hasPointerCapture(pointer)) handle.releasePointerCapture(pointer);
     list.classList.remove("sorting");
     row.classList.remove("dragging");
@@ -3038,16 +3048,7 @@ function dragRows(e, handle, row, list, rows, commit, start = () => {}, idle = (
     // The click dispatched after pointerup must not rename, toggle or remove.
     setTimeout(() => delete handle.dataset.dragged, 0);
   };
-  const up = (ev) => finish(true, ev);
-  const cancel = (ev) => finish(false, ev);
-  const keys = (ev) => { if (ev.key === "Escape") { ev.preventDefault(); ev.stopImmediatePropagation(); finish(false); } };
-  document.addEventListener("pointermove", move, { passive: false });
-  document.addEventListener("pointerup", up);
-  document.addEventListener("pointercancel", cancel);
-  document.addEventListener("keydown", keys, true);
-  handle.addEventListener("lostpointercapture", cancel);
-  addEventListener("blur", cancel);
-  addEventListener("resize", cancel);
+  const off = dragListen(handle, move, finish);
   return true;
 }
 
@@ -3059,10 +3060,7 @@ function dragCards(e, handle, card, list, cards, commit, idle = () => {}) {
   const from = cards.indexOf(card);
   if (from < 0) return false;
   const rects = cards.map((c) => c.getBoundingClientRect());
-  let scroll = list.parentElement;
-  while (scroll && !/(auto|scroll)/.test(getComputedStyle(scroll).overflowY)) scroll = scroll.parentElement;
-  scroll ||= document.scrollingElement;
-  const bounds = scroll.getBoundingClientRect(), scroll0 = scroll.scrollTop;
+  const { scroll, scroll0, speedAt } = dragScroll(list);
   let dragging = false, ended = false, to = from, x = e.clientX, y = e.clientY, frame = 0, lastTime = 0;
   const x0 = x, y0 = y, pointer = e.pointerId;
   const r0 = rects[from];
@@ -3072,9 +3070,7 @@ function dragCards(e, handle, card, list, cards, commit, idle = () => {}) {
     if (!dragging) return;
     const dt = Math.min(32, lastTime ? time - lastTime : 16);
     lastTime = time;
-    const edge = 36;
-    const speed = y < bounds.top + edge ? -Math.min(1, (bounds.top + edge - y) / edge)
-      : y > bounds.bottom - edge ? Math.min(1, (y - bounds.bottom + edge) / edge) : 0;
+    const speed = speedAt(y);
     if (speed) scroll.scrollTop += speed * dt * .6;
     const dx = x - x0, dy = y - y0 + scroll.scrollTop - scroll0;
     card.style.transform = `translate(${dx}px, ${dy}px)`;
@@ -3119,13 +3115,7 @@ function dragCards(e, handle, card, list, cards, commit, idle = () => {}) {
     if (ended) return;
     ended = true;
     cancelAnimationFrame(frame);
-    document.removeEventListener("pointermove", move);
-    document.removeEventListener("pointerup", up);
-    document.removeEventListener("pointercancel", cancel);
-    document.removeEventListener("keydown", keys, true);
-    handle.removeEventListener("lostpointercapture", cancel);
-    removeEventListener("blur", cancel);
-    removeEventListener("resize", cancel);
+    off();
     if (handle.hasPointerCapture(pointer)) handle.releasePointerCapture(pointer);
     list.classList.remove("sorting");
     card.classList.remove("dragging");
@@ -3134,16 +3124,7 @@ function dragCards(e, handle, card, list, cards, commit, idle = () => {}) {
     idle();
     setTimeout(() => delete handle.dataset.dragged, 0);
   };
-  const up = (ev) => finish(true, ev);
-  const cancel = (ev) => finish(false, ev);
-  const keys = (ev) => { if (ev.key === "Escape") { ev.preventDefault(); ev.stopImmediatePropagation(); finish(false); } };
-  document.addEventListener("pointermove", move, { passive: false });
-  document.addEventListener("pointerup", up);
-  document.addEventListener("pointercancel", cancel);
-  document.addEventListener("keydown", keys, true);
-  handle.addEventListener("lostpointercapture", cancel);
-  addEventListener("blur", cancel);
-  addEventListener("resize", cancel);
+  const off = dragListen(handle, move, finish);
   return true;
 }
 
@@ -18881,7 +18862,9 @@ if (!web) addEventListener("keydown", (e) => {
 // keep the family/style controls usable while the shared save queue drains.
 let fontList = null, fontListError = false, fontFlight = null, fontRevision = 0;
 const fontDrafts = {};
+const fontsOn = !web || window.bootPrefs?.fonts;
 function fontChoices(s) {
+  if (web) return { ...s, ...window.desktopFonts.own() };
   return { ...s, ...Object.fromEntries(Object.entries(fontDrafts).map(([k, d]) => [k, d.value])) };
 }
 // The native host notifies both existing webviews after a successful save.
@@ -18895,13 +18878,12 @@ window.receiveFonts = (s) => {
   if (prefs && view === "settings") renderFonts(prefs);
 };
 async function loadFonts(refresh = false) {
-  if (web || fontFlight || (fontList !== null && !refresh)) return fontFlight;
+  if (!fontsOn || fontFlight || (fontList !== null && !refresh)) return fontFlight;
   fontListError = false;
   fontFlight = api("fonts" + (refresh ? "?refresh=1" : ""))
     .then((list) => {
       if (!Array.isArray(list)) throw new Error("invalid font collection");
-      fontList = list;
-      window.desktopFonts.catalogue(list);
+      window.desktopFonts.catalogue(fontList = web ? window.desktopFonts.here(list) : list);
       window.desktopFonts.apply(fontChoices(prefs || window.bootPrefs));
     })
     .catch(() => { fontListError = true; })
@@ -18910,6 +18892,7 @@ async function loadFonts(refresh = false) {
   return fontFlight;
 }
 function chooseFont(key, value) {
+  if (web) return window.desktopFonts.keep(key, value), renderFonts(prefs);
   const revision = ++fontRevision;
   fontDrafts[key] = { value, revision };
   window.desktopFonts.apply(fontChoices(prefs));
@@ -18933,8 +18916,7 @@ function renderFonts(s) {
   const current = fontChoices(s);
   for (const [key, id, label] of [["uiFont", "uiFontRow", "Interface font"], ["codeFont", "codeFontRow", "Code font"]]) {
     const row = $("#" + id);
-    row.hidden = web;
-    if (web) continue;
+    if (row.hidden = !fontsOn) continue;
     const chosen = current[key], family = fontList?.find((f) => f.name === chosen?.family);
     const missing = chosen && !window.desktopFonts.available(chosen);
     const note = row.querySelector(".font-note");
@@ -19077,7 +19059,7 @@ function renderLoginAllow(s) {
 
 async function loadSettings() {
   const since = prefsWrites;
-  if (!web && fontList === null && !fontListError) loadFonts();
+  if (fontsOn && fontList === null && !fontListError) loadFonts();
   if (window.bootPrefs?.omarchy && !barIcon) api("omarchy/widget").then((b) => { barIcon = b; renderBarIcon(); }).catch(() => {});
   const s = await api("settings");
   if (!prefsSettled(since) && prefs) return; // the save draws the page when it's in

@@ -2,6 +2,7 @@
 // kernel adds them to i18n.js's (magpie.strings).
 magpie.strings({
   zh: {
+    "Deleted {date}": "{date} 已删除",
     "Bar chart": "柱状图",
     "Line chart": "折线图",
     "Chart style": "图表样式",
@@ -204,6 +205,7 @@ magpie.strings({
     "Sent upstream as {to}, as the agent spoke it": "以 {to} 协议发往上游，与 agent 所用协议相同",
   },
   "zh-TW": {
+    "Deleted {date}": "{date} 已刪除",
     "Bar chart": "長條圖",
     "Line chart": "折線圖",
     "Chart style": "圖表樣式",
@@ -406,6 +408,7 @@ magpie.strings({
     "Sent upstream as {to}, as the agent spoke it": "以 {to} 協議發往上游，與 agent 所用協議相同",
   },
   ja: {
+    "Deleted {date}": "{date} に削除",
     "Bar chart": "棒グラフ",
     "Line chart": "折れ線グラフ",
     "Chart style": "グラフの種類",
@@ -608,6 +611,7 @@ magpie.strings({
     "Sent upstream as {to}, as the agent spoke it": "エージェントと同じ {to} で上流へ送信",
   },
   de: {
+    "Deleted {date}": "Gelöscht am {date}",
     "Bar chart": "Balkendiagramm",
     "Line chart": "Liniendiagramm",
     "Chart style": "Diagrammart",

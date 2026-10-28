@@ -135,8 +135,12 @@ tag cover it. v0.1.1213 (hdiutil "Resource busy") and v0.1.1218 (notarising
 lost the network) were never published, and nobody noticed the first for
 1.5 hours (#1846). The same holds for a plugin version: `npm view
 <package>@<version> --prefer-online` before a mover's `min` or a reply
-names it. A PR that only adds tests doesn't get a
-release of its own.
+names it. A plugin version published for a moved subscription
+raises its mover's `min` to that version the same day, since
+`keepMovedCurrent` installs only `min`: zed 0.1.9 (10-18) and factory
+0.1.38 (10-24, raised 10-28 in 490c0a4ad) reached nobody until a review
+compared every mover with `npm view --prefer-online`. A PR that
+only adds tests doesn't get a release of its own.
 
 ## Reviewing a PR
 

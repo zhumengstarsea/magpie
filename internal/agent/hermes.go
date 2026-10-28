@@ -343,7 +343,12 @@ var hermesProfileID = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 // HERMES_HOME under it is a profile of; a HERMES_HOME elsewhere is the root itself, or, as
 // <root>/profiles/<name>, a profile of <root> (get_default_hermes_root).
 // A profile with no config.yaml yet is left out: magpie doesn't make one.
+// None at a stopped distro's place, whose folder is never listed: that
+// starts it (#3896).
 func hermesProfiles(at place) []string {
+	if at.cold {
+		return nil
+	}
 	root := hermesRoot(at)
 	paths := []string{filepath.Join(root, "config.yaml")}
 	ps := filepath.Join(root, "profiles")

@@ -9864,7 +9864,7 @@ const I18N = {
     "{user}'s ChatGPT allowance is used up, so magpie serves {agent}'s turns until it resets.": "{user} の ChatGPT の利用枠を使い切ったため、リセットまで magpie が {agent} のターンを処理します。",
     "{agent}'s ChatGPT allowance is used up, so magpie serves its turns until it resets.": "{agent} の ChatGPT の利用枠を使い切ったため、リセットまで magpie がそのターンを処理します。",
     "Till then the {agent} app's ChatGPT side is off: browser use (its Chrome control), cloud tasks, its usage meter and Log out. It all comes back on its own at the reset.": "それまで {agent} アプリの ChatGPT 機能（ブラウザ操作（Chrome の操作）、クラウドタスク、使用量の表示、ログアウト）はオフになります。リセット時にすべて自動で戻ります。",
-    "Keep on ChatGPT (its sign-in's Always ChatGPT) leaves {agent} on its ChatGPT account instead: it shows its own limit message till the reset, and magpie no longer takes it over.": "「ChatGPT のまま」（サインインの「常に ChatGPT」）を選ぶと {agent} は ChatGPT アカウントのままになります。リセットまでは {agent} 自身の上限メッセージが表示され、magpie は引き継ぎません。",
+    "Keep on ChatGPT (its sign-in's Always ChatGPT) leaves {agent} on its ChatGPT account instead: it shows its own limit message till the reset, and magpie no longer takes it over.": "「ChatGPT のまま」（サインインの「常に ChatGPT」）を選ぶと {agent} は ChatGPT アカウントのままになります。リセットまではそのアプリ自身の上限メッセージが表示され、magpie は引き継ぎません。",
     "Keep on ChatGPT": "ChatGPT のまま",
     "magpie couldn't restart the {agent} app's app-server: quit the app and open it again to send.": "magpie は {agent} アプリの app-server を再起動できませんでした。送信するには、アプリを終了して開き直してください。",
     "Restart it to use the new account. Running Codex sessions will be interrupted.": "新しいアカウントを使うには再起動してください。実行中の Codex セッションは中断されます。",

@@ -487,6 +487,9 @@ type file struct {
 	// when it was removed and put back when it is added again (#2057; see
 	// plugin_left.go).
 	PluginLeft []LeftRecord `json:"pluginLeft,omitempty"`
+	// Deleted are the providers the user deleted, so the calls made to
+	// one stay its own when another is added under its id (Renames).
+	Deleted []Deleted `json:"deleted,omitempty"`
 }
 
 // Path is the file the user's providers live in.
@@ -1248,6 +1251,9 @@ func Delete(id string) error {
 	for _, p := range f.Providers {
 		if p.ID == id {
 			found = true
+			// its calls stay its own, not a provider's added later under
+			// its id (cybercaius on Discord)
+			f.Deleted = append(f.Deleted, Deleted{ID: p.ID, Name: p.Name, Icon: p.Icon, At: time.Now(), Was: slices.Clone(p.Was), Gave: slices.Clone(p.Gave)})
 			continue
 		}
 		keep = append(keep, p)
