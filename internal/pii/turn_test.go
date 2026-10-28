@@ -7,8 +7,10 @@ import (
 	"encoding/binary"
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -264,3 +266,55 @@ func TestCachedSpanOutsideItsTextIsAskedAgain(t *testing.T) {
 }
 
 func sumOf(s string) [32]byte { return sha256.Sum256([]byte(s)) }
+
+// A request that stopped waiting leaves the chunks after the one the
+// model is on: the model isn't kept reading for no one, holding the turn
+// every later request (each waiting a short while on by default) needs.
+// The old code took the turn again on a select that could pick either.
+func TestStoppedRequestLeavesTheRestOfItsChunks(t *testing.T) {
+	dir := t.TempDir()
+	var calls atomic.Int32
+	first, release := make(chan struct{}), make(chan struct{})
+	b := &backend{turn: make(chan struct{}, 1), waiting: new(atomic.Int32), cache: newLRU(100), disk: new(diskState),
+		path:     func() string { return filepath.Join(dir, "found.bin") },
+		heldBack: func() error { return nil },
+		classify: func(texts []string) ([][]redact.Found, error) {
+			if calls.Add(1) == 1 {
+				close(first)
+				<-release
+			}
+			return make([][]redact.Found, len(texts)), nil
+		}}
+	t.Cleanup(func() {
+		b.disk.mu.Lock()
+		if b.disk.timer != nil && b.disk.timer.Stop() {
+			b.disk.saves.Done() // the write that won't run now
+		}
+		b.disk.timer = nil
+		b.disk.mu.Unlock()
+		b.disk.saves.Wait()
+	})
+	// three texts of a chunk each
+	texts := []string{strings.Repeat("a ", chunkSize/2-8), strings.Repeat("b ", chunkSize/2-8), strings.Repeat("c ", chunkSize/2-8)}
+	ctx, cancel := context.WithCancel(context.Background())
+	got := make(chan error, 1)
+	go func() { _, err := b.find(ctx, texts); got <- err }()
+	<-first
+	cancel()
+	if err := <-got; err == nil {
+		t.Fatal("a stopped request answered")
+	}
+	close(release)
+	// the chunk under way is finished and its turn given back. Nothing
+	// here waits to send on the turn: a waiting sender would be handed
+	// it first, and the old code's select would never see it free
+	waitFor(t, "the turn given back", func() bool { return len(b.turn) == 0 && calls.Load() >= 1 })
+	// a chunk read after it would be read at once: watch for one a while
+	for range 40 {
+		if n := calls.Load(); n != 1 {
+			t.Fatalf("%d chunks read for a request that stopped after the first", n)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	waitFor(t, "the turn free", func() bool { return len(b.turn) == 0 })
+}

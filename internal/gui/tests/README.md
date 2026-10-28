@@ -874,7 +874,10 @@ node --test --test-concurrency=1 internal/gui/tests/settings-sections.test.cjs i
 (`renderSettings()`, as a save's answer does) while the button is held and
 lets go on the same spot: Lightweight mode → On is posted once and shown on.
 Dragged off to the other option, or to the same option of another control,
-nothing is posted, and a plain click is posted once, not twice. It then
+nothing is posted, and a plain click is posted once, not twice. Drawn
+again once more after it is let go and before the click that sets off,
+as Browser access is when the answer to its state comes then (#3922),
+On is posted once. It then
 presses every option control on every Settings tab (49 in English, the
 warm-up, check-in, sync and local network ones included) the same way and
 checks that the control drawn in its place is clicked once on the same
@@ -2044,9 +2047,10 @@ from `make test` (which is Go only) and from the UI preview workflow (which
 only records screenshots).
 The Test workflow does not run this suite.
 
-`usage-stale-answer.test.cjs` and `providers-fetching-retry.test.cjs` use Node's
-VM and need no browser. Set `MAGPIE_APP_JS` to another revision's `app.js` to
-run their behavior checks against that source.
+`quota-refresh-order.test.cjs`, `usage-stale-answer.test.cjs` and
+`providers-fetching-retry.test.cjs` use Node's VM and need no browser. Set
+`MAGPIE_APP_JS` to another revision's `app.js` to run their behavior checks
+against that source.
 
 The request-ledger review regressions also cover the explicit data-source notes
 (including the exclusion of local rejections), the local-session label, and native
@@ -2092,6 +2096,13 @@ Chromium and WebKit with an isolated API fixture:
 ```sh
 node --test internal/gui/tests/account-arrange.test.cjs
 ```
+
+`key-rename-once.test.cjs` renames a provider's key in its editor and counts
+the page's own keys/rename requests (#3944): Escape keeps the name, typed over
+or not, and draws the editor once; Enter saves it with one request, and Enter
+again before the save answers sends no other. Chromium blurred the input as
+the redraw took it out, and the blur saved the name after Escape and sent
+Enter's twice. In Chromium and WebKit, English and Chinese.
 
 `routing-account-order.test.cjs` checks that Routing's live stage seats each
 provider's accounts and keys in the order its page lists them and a drag sets
@@ -2557,4 +2568,8 @@ and zh, two sizes), and boxes of each kind added to the same page (calls'
 bodies, Sessions' talk, model lists, Library picks, diffs, and a new box
 naming no rule). A list too short to scroll and boxes that scroll only
 sideways still let the wheel move the page, and the model chips in a short
-window still pass it on (#833). Chromium and WebKit.
+window still pass it on (#833). Every rule in every stylesheet under assets
+that scrolls a box vertically is built from its selector, filled and pointed
+at, and has to hold the wheel; one that doesn't is named by file and
+selector. With the engine made to lack overscroll-behavior (Safari 15),
+compat.js still keeps Requests' list's wheel. Chromium and WebKit.

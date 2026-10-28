@@ -925,10 +925,13 @@ func apiError(b []byte, fallback string) string {
 		return fallback
 	}
 	// a body in no shape known is shown as it is, cut short, so what the
-	// vendor said isn't lost; other markup says nothing worth showing
+	// vendor said isn't lost; other markup (an XML error, a page's
+	// fragment) by its words, its tags taken out
 	s := strings.Join(strings.Fields(string(b)), " ")
 	if strings.HasPrefix(s, "<") {
-		return fallback
+		if s = MarkupText(b); s == "" {
+			return fallback
+		}
 	}
 	if r := []rune(s); len(r) > 300 {
 		s = string(r[:300]) + "…"
@@ -1001,5 +1004,29 @@ func WebPage(b []byte) (string, bool) {
 	if title := PageTitle(t); title != "" {
 		return "a web page, not an API reply: “" + title + "”", true
 	}
+	// one with no title by its words, which may say why (a relay's "only
+	// … clients are allowed"), cut as a title is
+	if said := MarkupText(t); said != "" {
+		if r := []rune(said); len(r) > 120 {
+			said = string(r[:120]) + "…"
+		}
+		return "a web page, not an API reply: “" + said + "”", true
+	}
 	return "a web page, not an API reply", true
+}
+
+// unshown is markup whose words aren't a reader's: a script, a style
+// sheet, a comment, an XML declaration.
+var unshown = regexp.MustCompile(`(?is)<script[^>]*>.*?</script\s*>|<style[^>]*>.*?</style\s*>|<!--.*?-->|<\?.*?\?>|<!doctype[^>]*>`)
+
+// MarkupText is the words markup holds, as plain words: scripts, styles
+// and comments out, then every tag, entities read, whitespace folded, cut
+// to 300 runes. "" when it holds none.
+func MarkupText(b []byte) string {
+	s := unshown.ReplaceAllString(string(b), " ")
+	s = strings.Join(strings.Fields(html.UnescapeString(tagRe.ReplaceAllString(s, " "))), " ")
+	if r := []rune(s); len(r) > 300 {
+		s = string(r[:300]) + "…"
+	}
+	return s
 }

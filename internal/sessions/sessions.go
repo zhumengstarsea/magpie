@@ -936,7 +936,8 @@ func CachePath() string { return filepath.Join(filepath.Dir(catalog.CachePath())
 // 22: dsh's gateway conversation ids (Convs).
 // 23: Claude Code's first and last message uuids (Root, Leaf).
 // 24: Claude Code's compact summaries' uuids (Compacts).
-const cacheVersion = 24
+// 25: the skills Codex calls up by reading their SKILL.md.
+const cacheVersion = 25
 
 type cacheFile struct {
 	Version int               `json:"version"`

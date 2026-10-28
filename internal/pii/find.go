@@ -91,6 +91,13 @@ func (b *backend) find(ctx context.Context, texts []string) ([][]redact.Found, e
 		out, miss := b.known(texts, got)
 		for c := 0; len(miss) > 0; c++ {
 			if c > 0 {
+				// a caller that stopped waiting leaves the chunks after
+				// this one: the turn isn't taken again for them (a
+				// select on a free turn and an ended ctx picks either)
+				if ctx.Err() != nil {
+					done <- result{nil, waitErr(ctx)}
+					return
+				}
 				// give way to a request waiting for the turn: it goes
 				// before the next chunk
 				<-b.turn

@@ -129,7 +129,7 @@ func carefulOf(p provider.Provider, model string, ms []provider.Member) ([]provi
 	}
 	ps, models = append(ps, p), append(models, model)
 	for _, id := range p.Fallback {
-		if fp, fm, ok := provider.Resolve(id); ok {
+		if fp, fm, ok := provider.ResolveRoute(id); ok {
 			ps, models = append(ps, fp), append(models, fm)
 		}
 	}

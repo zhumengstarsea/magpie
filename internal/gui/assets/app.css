@@ -174,7 +174,7 @@ code { font: var(--code-style, normal) var(--code-weight, 400) 11.5px var(--code
    they read a size bigger than a line logo beside them, so they are drawn at
    the size Alma's and Cindy's tiles have of their own. icon-tile.test.cjs
    measures every file in icons/ and keeps this list whole. */
-.ic:is([data-icon="aihubmix-color"], [data-icon="atomcode"], [data-icon="cherryin-color"], [data-icon="codebuddy-color"], [data-icon="codex-color"], [data-icon="crush"], [data-icon="geminicli-color"], [data-icon="hanako"], [data-icon="hunyuan-color"], [data-icon="kilo"], [data-icon="kiro-color"], [data-icon="lody"], [data-icon="mistermorph-color"], [data-icon="mlx-serve"], [data-icon="monica-color"], [data-icon="phala-color"], [data-icon="pipellm-color"], [data-icon="qoder"], [data-icon="snow"], [data-icon="targon-color"], [data-icon="typesafe"], [data-icon="workbuddy-color"], [data-icon="yuanbao-color"], [data-icon="zcode"], [data-icon="zoo-code"]) > * { width: 82%; height: 82%; }
+.ic:is([data-icon="aihubmix-color"], [data-icon="atomcode"], [data-icon="cherryin-color"], [data-icon="codebuddy-color"], [data-icon="codex-color"], [data-icon="crush"], [data-icon="geminicli-color"], [data-icon="hanako"], [data-icon="hunyuan-color"], [data-icon="kilo"], [data-icon="kiro-color"], [data-icon="lody"], [data-icon="mistermorph-color"], [data-icon="mlx-serve"], [data-icon="monica-color"], [data-icon="penguin-color"], [data-icon="phala-color"], [data-icon="pipellm-color"], [data-icon="qoder"], [data-icon="snow"], [data-icon="targon-color"], [data-icon="typesafe"], [data-icon="workbuddy-color"], [data-icon="yuanbao-color"], [data-icon="zcode"], [data-icon="zoo-code"]) > * { width: 82%; height: 82%; }
 .ic.generic { color: var(--muted); }
 /* maskSpan's shelf: a hidden user of every mask picture loaded, so a logo drawn again paints at once (#1847) */
 .mask-shelf { position: fixed; top: 0; left: 0; width: 0; height: 0; overflow: hidden; visibility: hidden; pointer-events: none; }
@@ -2695,10 +2695,13 @@ body.window .ag-sk-icon { width: 22px; height: 22px; border-radius: 6px; }
 .proto-menu .pm-head { padding: 6px 8px 5px; font-size: 11px; color: var(--muted); }
 .proto-menu .pm-item { display: flex; align-items: flex-start; gap: 7px; width: 100%; padding: 6px 8px 7px; border: 0; border-radius: 7px; background: none; color: var(--fg); font: inherit; text-align: left; cursor: default; outline: none; }
 .proto-menu .pm-item:hover, .proto-menu .pm-item:focus { background: var(--pill); }
+/* a font typed in a browser tab that it can't draw (webfonts.js) */
+.proto-menu .pm-item:disabled { background: none; }
+.proto-menu .pm-item:disabled .pm-name { color: var(--muted); }
 .proto-menu .pm-tick { width: 14px; height: 16px; flex: none; display: grid; place-items: center; color: var(--fg); }
 /* a menu of actions, where nothing is or can be ticked, keeps no room for
    a tick: its items line up with its heading */
-.proto-menu:not(:has(.pm-item.on, [role=menuitemcheckbox])) .pm-tick { display: none; }
+.proto-menu.pm-bare .pm-tick { display: none; }
 .proto-menu .pm-words { display: grid; gap: 1px; min-width: 0; }
 .proto-menu .pm-name { font-size: 12.5px; font-weight: 500; line-height: 16px; }
 .proto-menu .pm-note { font-size: 11px; color: var(--muted); line-height: 15px; }
@@ -2870,6 +2873,18 @@ body.window .ag-sk-icon { width: 22px; height: 22px; border-radius: 6px; }
 .sheet .kind { display: flex; align-items: baseline; gap: 8px; padding: 22px 8px 6px; font-size: 12px; }
 .sheet .kind b { font-size: 13px; font-weight: 600; color: var(--fg); }
 .sheet .kind span { color: var(--faint); }
+/* Partners' light (shinePartners): a hairline runs once round the heading
+   and fades, over a breath of the accent; nothing with reduced motion */
+@property --shine-a { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+.sheet .kind.shine { position: relative; width: fit-content; }
+.sheet .kind.shine i { position: absolute; inset: 17px 0 1px; border-radius: 8px; opacity: 0; pointer-events: none; }
+.sheet .kind.shine .glow { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.sheet .kind.shine .ring { padding: 1px; background: conic-gradient(from var(--shine-a), transparent 0deg 250deg, color-mix(in srgb, var(--accent) 35%, transparent) 300deg, var(--accent) 345deg, transparent 360deg); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
+.sheet .kind.lit .ring { animation: shine-trace 1.8s cubic-bezier(.5, 0, .3, 1); }
+.sheet .kind.lit .glow { animation: shine-glow 1.8s ease-out; }
+@keyframes shine-trace { 0% { --shine-a: 0deg; opacity: 0; } 15%, 70% { opacity: 1; } 100% { --shine-a: 360deg; opacity: 0; } }
+@keyframes shine-glow { 35% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .sheet .kind.shine i { display: none; } }
 /* a removed account: its name, then Add it back and Sign out… side by
    side, across the row (#694) */
 .sheet .tile.removed { grid-column: 1 / -1; }
@@ -4382,3 +4397,5 @@ body .row.agent .ag-prefs .row.pref .who { display: block; }
 .sess-pick.led-more { padding: 0 6px; }
 .sess-pick.led-more svg { transform: none; }
 .sess-tools .led-rename { flex: none; width: 180px; height: 26px; padding: 0 8px; border-radius: 7px; font-size: 12px; }
+/* Settings › About › Open-source licenses: the notices, as written */
+.notices-text { margin: 0; font: 11px/1.5 var(--code); white-space: pre-wrap; overflow-wrap: anywhere; }

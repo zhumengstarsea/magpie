@@ -116,7 +116,7 @@ func (s *Server) nativeCompactionFor(asked string) bool {
 	}
 	seen := map[string]bool{p.ID + "/" + model: true}
 	for _, id := range p.Fallback {
-		fp, fm, ok := provider.Resolve(id)
+		fp, fm, ok := provider.ResolveRoute(id)
 		if !ok || seen[fp.ID+"/"+fm] {
 			continue
 		}

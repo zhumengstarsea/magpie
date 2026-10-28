@@ -2308,8 +2308,8 @@ func CodexSideModel() string {
 }
 
 // CodexSideSet says whether this machine's Codex config names the model
-// for a side call itself: "subagent" for [agents] default_subagent_model,
-// "memories" for [memories] extract_model or consolidation_model. A config
+// for a side call itself: "memories" for [memories] extract_model or
+// consolidation_model. A config
 // that can't be read counts as set, so the gateway leaves the call as Codex
 // sent it (gateway.CodexSideSet).
 func CodexSideSet(which string) bool {
@@ -2319,9 +2319,6 @@ func CodexSideSet(which string) bool {
 	}
 	path := filepath.Join(here(home).codexHome(), "config.toml")
 	switch which {
-	case "subagent":
-		t, err := edit.GetTOMLTable(path, "agents")
-		return err != nil || t["default_subagent_model"] != ""
 	case "memories":
 		t, err := edit.GetTOMLTable(path, "memories")
 		return err != nil || t["extract_model"] != "" || t["consolidation_model"] != ""

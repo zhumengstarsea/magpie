@@ -354,7 +354,13 @@ ok except gateway" stops being a normal run record.
 - 5b12407e8 (10-17) piped a full run through tail, lost which
   internal/gateway test failed at 2559s, and shipped with an unnamed red.
   `tee` the log to a file of your own and grep it.
-- Seen 1× (2026-10-17).
+- 10-28: ca9b5048e (#3764) recorded "531 ok and 5 red when this was
+  written (the run goes on)". Its 200px steps box, which scrolls on its
+  own, took reader.cjs's wheel, and routing-model-rest went 20 of 20 red,
+  which isn't among the five it names (a8098a886). Write the record once
+  the run has ended. A change that adds a box that scrolls on its own
+  runs every GUI file that wheels the page (`reach`, `wheelTo`).
+- Seen 2× (2026-10-17, 2026-10-28).
 
 **Windows CI only compiles the tests, so a Windows-only red shows
 nowhere.** Run the package on the Windows box before calling a Windows
@@ -531,6 +537,14 @@ cause:
     (#3956, fafce6545). A test that bounds bytes runs once under
     -race before it lands: sync.Pool drops a quarter of what is put in
     it there, and regexp and zstd take their state from one.
+  - A red assertion hides every assertion after it. #3410 (routing-pause)
+    was filed on 10-23 and failed at its first press, from 91b0be836's
+    motion. On 10-25 c888ef272 saved a rule's hours with a zone, and the
+    fixture's later expectation, without a zone, stayed wrong unseen
+    until 7b007e986 fixed the press on 10-28. #3408 to #3411 sat five
+    days with no owner, and #3104 (usage-ledger) has had none since
+    10-20. A filed red is still a test that checks nothing after its
+    first failure.
 - A cancelled run tests nothing. On 10-14 nine pushes in ten minutes
   cancelled each other's runs, and 3c4b4dc97 never had a run of its own;
   its red showed first at 84f14e555.
@@ -597,14 +611,8 @@ it doesn't.**
   open for the reporter.
 - Seen 1× (2026-10-05).
 
-**One commit, one goal.**
-- 653cb8ee bundled ZCode sign-in with WSL session deletion.
-- 5464a362 capped six pages at 1200px when #860 asked for a speed display.
-- A fix found on the way goes in its own commit. 1e0829b1 hid the ja/de fix
-  inside a Usage change, beside two issues (#925, #928).
-- 76dc5aed bundled a Routing animation fix, a scrollbar fix and bringing the
-  GUI tests up to date.
-- Seen 2× (2026-10-05, 2026-10-06).
+**One commit, one goal** is in the code standards since 10-28. See
+[Moved to the code standards](#moved-to-the-code-standards).
 
 **A squash merge's message is written, not GitHub's default.** Give
 `gh pr merge --squash` a `--subject` and a `--body-file` holding the PR's
@@ -650,6 +658,10 @@ These were seen on three or more days. The rules and their evidence are in
 [docs/code-standards.md](docs/code-standards.md); a review still checks
 each one.
 
+- **One commit, one goal** (10-05, 10-06, 10-28). On 10-28 6e080ca04
+  answered psikent (/v1/models says every model takes tools) and windy
+  (a group's Context hint names the member a longer conversation skips)
+  under one subject that names only the first.
 - **Never let magpie's default override a value the user set themselves**
   (10-05, 10-10, 10-17). On 10-17 5a2414acd brought every plugins.yml
   without `settled` up once, Essentials to All. A user who had run

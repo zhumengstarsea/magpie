@@ -45,9 +45,13 @@ type Settings struct {
 	// Colorblind switches chart series (--c1…--c7) to an Okabe–Ito palette
 	// and gives each quota curve window, and its legend key, a dash of its
 	// own (#2073).
-	Colorblind bool   `json:"colorblind,omitempty"`
-	Lang       string `json:"lang,omitempty"` // system | en | zh
-	Tray       string `json:"tray,omitempty"` // what clicking the tray icon opens: panel | window
+	Colorblind bool `json:"colorblind,omitempty"`
+	// ReduceMotion stills magpie's animations as the system's Reduce
+	// Motion does, for a computer or phone that the moving Routing page
+	// keeps busy (#3813).
+	ReduceMotion bool   `json:"reduceMotion,omitempty"`
+	Lang         string `json:"lang,omitempty"` // system | en | zh
+	Tray         string `json:"tray,omitempty"` // what clicking the tray icon opens: panel | window
 	// SessionTerminal is the Mac app that opens a resumed session, by bundle
 	// id. "" and "system" follow the .command file association. This
 	// computer's own (KeepOwn): another Mac may not have that app.
@@ -110,12 +114,20 @@ type Settings struct {
 	// set, by its id: masking drops what the model is less sure of (an
 	// AstrLink Guard user on X found 0.85 to 0.95 right for it). A model
 	// not in it has its own default (pii.Model.MinScore); this
-	// computer's too.
+	// computer's too. RedactModelOff is the user turning the model off
+	// (Settings → Privacy's Off, a download cancelled, the model deleted):
+	// since 2026-10-28 it is on by default (masking.ModelWanted), and
+	// RedactModel says the user turned it on. RedactModelAuto says the
+	// default downloaded AstrLink Guard: a user who had a model on disk
+	// with RedactModel off before then had turned it off, and this one
+	// hasn't.
 	Redact           bool               `json:"redact,omitempty"`
 	RedactModelScore map[string]float64 `json:"redactModelScore,omitempty"`
 	RedactShape      bool               `json:"redactShape,omitempty"`
 	RedactModel      bool               `json:"redactModel,omitempty"`
 	RedactModelName  string             `json:"redactModelName,omitempty"`
+	RedactModelOff   bool               `json:"redactModelOff,omitempty"`
+	RedactModelAuto  bool               `json:"redactModelAuto,omitempty"`
 	RedactPersonal   bool               `json:"redactPersonal,omitempty"`
 	RedactKinds      map[string]bool    `json:"redactKinds,omitempty"`
 	RedactWords      []string           `json:"redactWords,omitempty"`
@@ -1126,6 +1138,7 @@ func (s *Settings) KeepOwn(cur Settings) {
 	s.FetchPrivate = cur.FetchPrivate
 	s.SessionTerminal = cur.SessionTerminal
 	s.RedactModel, s.RedactModelName, s.RedactModelScore = cur.RedactModel, cur.RedactModelName, cur.RedactModelScore
+	s.RedactModelOff, s.RedactModelAuto = cur.RedactModelOff, cur.RedactModelAuto
 	s.ClaudeRunsMost = cur.ClaudeRunsMost
 	s.RequestArchiveLocal, s.RequestArchiveLocalMB = cur.RequestArchiveLocal, cur.RequestArchiveLocalMB
 }
@@ -1455,12 +1468,26 @@ func EditUsageAliases(edit func(map[string]string) (map[string]string, error)) e
 }
 
 // SetRedactModel turns the local masking model on or off, on its own, as
-// Settings → Privacy does once the model is downloaded.
+// Settings → Privacy does once the model is downloaded; off is the
+// user's own (RedactModelOff), which the default never turns on again.
 func SetRedactModel(on bool) error {
 	defer lockFile()()
 	s := load()
-	s.RedactModel = on
+	s.RedactModel, s.RedactModelOff = on, !on
 	return save(s, false)
+}
+
+// UseDefaultRedactModel saves name as the model on by default once it is
+// downloaded (RedactModelAuto), unless the user picked one or turned it
+// off in between: it says whether it did.
+func UseDefaultRedactModel(name string) (bool, error) {
+	defer lockFile()()
+	s := load()
+	if s.RedactModelName != "" || s.RedactModelOff || s.RedactModel {
+		return false, nil
+	}
+	s.RedactModelName, s.RedactModelAuto = name, true
+	return true, save(s, false)
 }
 
 // SetRedactModelName keeps the local model the user picked while it is
@@ -1498,7 +1525,7 @@ func SetRedactModelScore(id string, score float64) error {
 func UseRedactModel(name string) error {
 	defer lockFile()()
 	s := load()
-	s.RedactModel, s.RedactModelName = true, name
+	s.RedactModel, s.RedactModelName, s.RedactModelOff = true, name, false
 	return save(s, false)
 }
 

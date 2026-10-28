@@ -1285,13 +1285,40 @@ func Delete(id string) error {
 	return forgetStepFun(id)
 }
 
-// keyOptional is true for local servers, which usually have no key.
+// keyOptional is true for a server on this computer or on the user's own
+// network — a local model, a company's internal relay at a LAN address —
+// which often takes no key. A keyless Codex relay at 192.168.x.x:8080 was
+// left out of a CC Switch import ("it has no API key") and couldn't be
+// saved by hand, while the same server at 127.0.0.1 could.
 func keyOptional(p Provider) bool {
 	if pr := Preset(p.Preset); pr != nil && pr.NoKey {
 		return true
 	}
 	h := p.Host()
-	return strings.HasPrefix(h, "localhost") || strings.HasPrefix(h, "127.0.0.1") || strings.HasPrefix(h, "0.0.0.0")
+	if strings.HasPrefix(h, "localhost") || strings.HasPrefix(h, "127.0.0.1") || strings.HasPrefix(h, "0.0.0.0") {
+		return true
+	}
+	return ownNetwork(h)
+}
+
+// cgnat is carrier-grade NAT's 100.64/10, where Tailscale puts its peers.
+var cgnat = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
+
+// ownNetwork is a host[:port] on the user's own network, read from the
+// name alone (no lookup: Ready asks it often): a private, link-local,
+// loopback or carrier-grade NAT address, or a .local name — what
+// netproxy's onLAN sends around a proxy, without resolving names.
+func ownNetwork(hostport string) bool {
+	h := hostport
+	if host, _, err := net.SplitHostPort(hostport); err == nil {
+		h = host
+	}
+	h = strings.ToLower(strings.TrimSuffix(strings.Trim(h, "[]"), "."))
+	if strings.HasSuffix(h, ".local") {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && (ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || cgnat.Contains(ip))
 }
 
 func normalize(p Provider) Provider {

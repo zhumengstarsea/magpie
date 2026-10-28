@@ -306,7 +306,7 @@ func ruleFor(key string, g provider.Group, ms []provider.Member, req *Request, a
 		case g.Classifier == "":
 			c.Error = "the group has no classifier"
 		case ask == nil:
-			c.Error = "nothing to ask the classifier with: this is a classifier's own call"
+			c.Error = "nothing to ask the classifier with: this is a classifier's own call, or Claude Desktop's connection check"
 		case text == "":
 			c.Error = "the message has no words to classify"
 		default:
