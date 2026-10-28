@@ -60,7 +60,7 @@ function maskDemoStage() {
   const stage = el("div", "xq-stage");
   const at = (node, k) => { node.dataset.k = k; return node; };
   const box = (k, icon, title, sub) => {
-    const b = at(el("div", "xq-box"), k), h = el("div", "xq-bh"), ic = el("div", "xq-ic" + (icon === "book" ? " acc" : ""));
+    const b = at(el("div", "xq-box"), k), h = el("div", "xq-bh"), ic = el("div", "xq-ic" + (icon === "book" ? " xq-acc" : ""));
     ic.innerHTML = xqdIcon[icon];
     const words = el("div");
     words.append(xqdSay("xq-h", title));
@@ -78,12 +78,14 @@ function maskDemoStage() {
 
   const ledger = box("ledger", "book", "Little Magpie's notebook", "Kept on your computer only");
   ledger.append(at(xqdSay("xq-lempty", "Nothing in it yet"), "lempty"));
-  [[XQD_PM, XQD_MAIL, 40], [XQD_PP, XQD_PASS, 81]].forEach(([code, real, top], i) => {
+  // the entries follow the header, so a taller font moves them down with it
+  const entries = el("div", "xq-llist");
+  [[XQD_PM, XQD_MAIL], [XQD_PP, XQD_PASS]].forEach(([code, real], i) => {
     const r = at(el("div", "xq-lrow xq-mv"), "row" + i);
-    r.style.top = top + "px";
     r.append(el("span", "xq-lc xq-pillc", code), el("span", "xq-lv", real));
-    ledger.append(r);
+    entries.append(r);
   });
+  ledger.append(entries);
 
   const browser = at(el("div", "xq-box"), "browser"), bar = el("div", "xq-bbar");
   bar.innerHTML = `<i></i><i></i><i></i><div class="xq-url">${xqdIcon.lock}github.com/login</div>`;

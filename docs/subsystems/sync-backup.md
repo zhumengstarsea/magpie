@@ -47,6 +47,14 @@ session resumes in (`SessionTerminal`) and what the menu bar shows. Launch at
 login is the system's own setting (`internal/autostart`) and the listen
 address is `MAGPIE_ADDR`, so neither is in a bundle.
 
+The providers part works the same way for which account an agent is kept
+signed in to (`KeepLogin`, `KeepLoginAs`, `SwitchOnly`): one person keeps a
+personal account at home and a work account at the office, and sync set
+each computer to the other's every day (YsiCing on X). `provider.Mirror` keeps
+this computer's values for a provider it has, and brings a new one without
+`KeepLoginAs`, an account signed in on the other computer; `hashes` blanks
+all three (`TestMirrorKeepsKeepLogin`, `TestKeepLoginIsNoChange`).
+
 Sharing turned on at one computer never turns it on or off at another
 (Lullaby on Discord). A backup restored onto a new computer leaves sharing as
 that computer has it, off on a fresh one: sharing opens the gateway to the

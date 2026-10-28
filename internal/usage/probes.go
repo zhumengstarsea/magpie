@@ -34,10 +34,27 @@ type probeRow struct {
 
 func init() {
 	probelog.Sink = func(p probelog.Row) {
-		Append(Record{Time: p.Time, Agent: "magpie", Provider: p.Provider, ProviderAccount: p.Account,
+		r := Record{Time: p.Time, Agent: "magpie", Provider: p.Provider, ProviderAccount: p.Account,
 			Host: p.Host, Model: p.Model, Requested: p.Model, Status: p.Status, Millis: p.Millis,
-			Error: clipProbeError(p.Error), Endpoint: p.Endpoint, Kind: p.Kind, Source: SourceProbe})
+			Error: clipProbeError(p.Error), Endpoint: p.Endpoint, Kind: p.Kind, Source: SourceProbe}
+		if quietProbe(r) {
+			return
+		}
+		Append(r)
 	}
+}
+
+// quietProbe is a request of magpie's own the request log leaves out: a
+// model list that was answered. magpie asks for one by itself, at start-up,
+// behind the panel and the Providers page, and on a schedule (a Remote
+// magpie's every 10 minutes, RemoteMagpieEvery), so the Requests page
+// filled with rows of 0 tokens that no agent sent (ferock on Discord). One
+// that failed is listed, as is every Test and Detect APIs: a list that
+// couldn't be fetched is why models are missing, and the row says why.
+// Rows written before this are left out the same way as the log is read
+// (logSnapshot.probes); the lines stay in the file, counted nowhere.
+func quietProbe(r Record) bool {
+	return r.Kind == probelog.KindList && r.Status >= 200 && r.Status < 400 && r.Error == ""
 }
 
 // clipProbeError keeps an error's first 500 bytes, as a vendor's answer can

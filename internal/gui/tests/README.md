@@ -1,5 +1,10 @@
 # Dropdown browser regression
 
+`modal-backdrop.test.cjs` checks the modal's computed backdrop filter using
+the real stylesheet and platform marker: Windows desktop windows and panels
+keep the dimming veil without filtering, while browser pages, macOS and Linux
+keep the existing effect. Both Chromium and WebKit; no network or live config.
+
 `plugin-gateway.test.cjs` checks gateway-only plugin identification, the existing
 JSON options editor and aggregate diagnostics in all five languages on Chromium
 and WebKit. It uses local API fixtures, saves options through the real page, and
@@ -1116,6 +1121,14 @@ folds them again without moving the page, and is remembered across a
 reload; DeepSeek's keys fold too, four keys aren't folded, a subscription's
 accounts aren't keys, an unread key leaves the sum out, and at 440px nothing
 is cut; in Chromium and WebKit, English and Chinese.
+
+`usage-shared-balance.test.cjs` checks that keys found to read one account's
+balance (`sharedBalance`, mimi on Discord: a site's three keys each showed
+the account's $8.39 and its curve) show it once: one row with one balance
+and one curve, "+2 keys" beside the key with the keys on hover, and the
+head's sum counting the account once; a key with the same amount not found
+to be that account's, and another provider's keys, stay their own rows, and
+at 440px nothing is cut; in Chromium and WebKit, English and Chinese.
 
 `upstream-status.test.cjs` checks the vendors' status pages on the
 Providers and Usage pages (#971): with Anthropic's page saying its API is
@@ -2534,3 +2547,14 @@ reason, the "Not encrypted" row on the local network, no native select or
 left border, nothing wider or cut off at 360px, and no such section (nor a
 read of it) in a browser on the page. Every language, Chromium and WebKit,
 with the API faked.
+
+## Inner scroll boxes keep the wheel
+
+`inner-scroll-contain.test.cjs` wheels a box that scrolls inside a page past
+its foot and its top and checks the page's scrollTop didn't move: Routing's
+requests list grouped by session (the reporter's "No session ID" rows, en
+and zh, two sizes), and boxes of each kind added to the same page (calls'
+bodies, Sessions' talk, model lists, Library picks, diffs, and a new box
+naming no rule). A list too short to scroll and boxes that scroll only
+sideways still let the wheel move the page, and the model chips in a short
+window still pass it on (#833). Chromium and WebKit.

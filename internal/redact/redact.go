@@ -141,7 +141,7 @@ const (
 
 var rules = append([]rule{
 	{kind: "PRIVATE_KEY", re: regexp.MustCompile(`-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----[\s\S]+?-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----`), markers: []string{"PRIVATE KEY"}},
-	{kind: "API_KEY", re: regexp.MustCompile(`sk-(?:ant-|proj-|or-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}`), markers: []string{"sk-"}, bound: tokenCh},
+	{kind: "API_KEY", re: regexp.MustCompile(`sk-(?:ant-|proj-|or-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}`), markers: []string{"sk-"}, bound: tokenCh, ok: notASlug},
 	// a gateway's or a relay's own: oc_sk_…, or_sk_… (#195)
 	{kind: "API_KEY", re: regexp.MustCompile(`[a-z]{2,4}_sk_[A-Za-z0-9_-]{20,}`), markers: []string{"_sk_"}, bound: tokenCh, ok: secretValue},
 	{kind: "API_KEY", re: regexp.MustCompile(`(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|glpat-[A-Za-z0-9_-]{20,})`), markers: []string{"gh", "github_pat_", "glpat-"}, bound: tokenCh},
@@ -399,6 +399,30 @@ func inUserinfo(s string, a int) bool {
 // the user every git host is reached by over SSH (git@github.com:o/r.git,
 // git@gitee.com, a company's own git@git.corp.com), no one's mailbox, and
 // was masked so a remote no longer read as one (jumy on Discord).
+// notASlug is false for words in lower case joined by hyphens, as a
+// page's address names an article about SK hynix
+// (cnbc.com/…/sk-hynix-third-quarter-profit.html), which went to the model
+// as a key. A key's characters are random: it has a capital, or a run of
+// 16 or more with no hyphen (DeepSeek's sk- and 32 hex digits, OpenRouter's
+// sk-or-v1- and 64), or hex digits alone, as a UUID's groups (sk- and a
+// UUID in lower case) are, which no word but a few like "face" is.
+func notASlug(v string) bool {
+	if strings.ContainsFunc(v, func(r rune) bool { return r >= 'A' && r <= 'Z' }) {
+		return true
+	}
+	if !strings.ContainsFunc(strings.TrimPrefix(v, "sk-"), func(r rune) bool {
+		return r != '-' && r != '_' && (r < '0' || r > '9') && (r < 'a' || r > 'f')
+	}) {
+		return true
+	}
+	for _, w := range strings.FieldsFunc(v, func(r rune) bool { return r == '-' || r == '_' }) {
+		if len(w) >= 16 {
+			return true
+		}
+	}
+	return false
+}
+
 func realEmail(v string) bool {
 	at := strings.LastIndexByte(v, '@')
 	if strings.EqualFold(v[:at], "git") {

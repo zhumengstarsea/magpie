@@ -343,7 +343,7 @@ magpie.strings({
     "The tool signs in with the real password on your computer. The password never left it.": "Das Tool meldet sich auf Ihrem Computer mit dem echten Passwort an. Das Passwort hat ihn nie verlassen.",
     "Over the network": "Netzwerk",
     "You tell the agent": "Sie sagen dem Agenten",
-    "Little Magpie's notebook": "Notizbuch der kleinen Elster",
+    "Little Magpie's notebook": "Notizbuch der Elster",
     "Kept on your computer only": "Nur auf Ihrem Computer",
     "Nothing in it yet": "Noch leer",
     "Signed in to github.com": "Bei github.com angemeldet",

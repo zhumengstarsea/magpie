@@ -179,7 +179,9 @@ func readLogSnapshot() *logSnapshot {
 		}
 		next.sawHost(r)
 		if r.IsProbe() {
-			next.probes = append(next.probes, probeRow{r, next.off})
+			if !quietProbe(r) { // a model list answered is no row (ferock)
+				next.probes = append(next.probes, probeRow{r, next.off})
+			}
 			continue
 		}
 		if tail == nil {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/yetone/magpie/internal/probelog"
 	"github.com/yetone/magpie/internal/provider"
+	"github.com/yetone/magpie/internal/settings"
 )
 
 // A provider renamed is shown by the id it has now everywhere usage names
@@ -25,7 +26,7 @@ func TestRenamedProviderShownOnce(t *testing.T) {
 	}
 	then := time.Now().Add(-time.Hour)
 	Append(Record{Time: then, Agent: "codex", Session: "s1", Provider: "myrelay", Model: "gpt-9", Input: 100, Output: 10, Status: 200})
-	probelog.Sink(probelog.Row{Time: then.Add(time.Second), Kind: probelog.KindList, Provider: "myrelay", Host: "relay.example", Endpoint: "GET /v1/models", Status: 200, Millis: 30})
+	probelog.Sink(probelog.Row{Time: then.Add(time.Second), Kind: probelog.KindList, Provider: "myrelay", Host: "relay.example", Endpoint: "GET /v1/models", Status: 502, Millis: 30, Error: "bad gateway"})
 	// read once under the old id, so what is kept of it is built again
 	if p := QueryPage(All, Filter{}, 0, 50); !slices.Equal(p.Providers, []string{"myrelay"}) {
 		t.Fatalf("before: %v", p.Providers)
@@ -183,7 +184,7 @@ func TestProbesOfAProviderOnAnotherHostOfItsSiteListIt(t *testing.T) {
 		"https://leee.baby/v1/models", "https://Leee.Baby/v1/models", "https://www.leee.baby:443/v1/models",
 		"https://two.example/v1/models", "https://mine.vercel.app/v1/models", "http://127.0.0.1:7/v1/models",
 	} {
-		probelog.Note(adding, u, http.MethodGet, then, 200, nil)
+		probelog.Note(adding, u, http.MethodGet, then, 401, nil) // an answered list is no row (quietProbe)
 	}
 	id, err := provider.Add(provider.Provider{Name: "Leee", Key: "k", Chat: "https://api.leee.baby/v1", Models: []string{"gpt-9"}})
 	if err != nil {
@@ -270,5 +271,145 @@ func TestDeletedProviderKeepsItsCallsFromOneAddedUnderItsID(t *testing.T) {
 	}
 	if calls["relay/gpt-9"] != 1 || calls[old+"/gpt-9"] != 2 {
 		t.Fatalf("summary %v", calls)
+	}
+}
+
+// CyberCaius on Discord: a deleted provider's calls can be merged into a
+// provider there is now, from the Usage page, without renaming either:
+// they are listed, filtered and summed as that one's, each still costing
+// what it did (priced as the deleted provider's), and parted again on
+// undo. A provider added later under the deleted one's id keeps its own
+// calls; renaming the provider merged into keeps the merge, and deleting
+// it ends it.
+func TestDeletedProviderMergedIntoAnother(t *testing.T) {
+	reportedHome(t)
+	s := settings.Load()
+	s.ModelPrices = map[string]settings.ModelPrice{
+		"relay/gpt-9": {Input: new(1.0), Output: new(2.0), CacheRead: new(0.0), CacheWrite: new(0.0)},
+		"main/gpt-9":  {Input: new(100.0), Output: new(200.0), CacheRead: new(0.0), CacheWrite: new(0.0)},
+	}
+	if err := settings.Save(s); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []provider.Provider{
+		{ID: "relay", Name: "Old relay", Key: "k", Chat: "http://127.0.0.1:1/v1", Models: []string{"gpt-9"}},
+		{ID: "main", Name: "Main", Key: "k2", Chat: "http://127.0.0.1:2/v1", Models: []string{"gpt-9"}},
+	} {
+		if err := provider.Save(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	then := time.Now().Add(-time.Hour)
+	Append(Record{Time: then, Agent: "codex", Session: "s1", Provider: "relay", Model: "gpt-9", Input: 1e6, Output: 1e6, Status: 200})
+	Append(Record{Time: then.Add(time.Second), Agent: "codex", Session: "s1", Provider: "relay", Model: "gpt-9", Input: 1e6, Output: 1e6, Status: 200})
+	Append(Record{Time: then.Add(2 * time.Second), Agent: "codex", Session: "s2", Provider: "main", Model: "gpt-9", Input: 1e6, Output: 1e6, Status: 200})
+	if err := provider.Delete("relay"); err != nil {
+		t.Fatal(err)
+	}
+	before := QueryPage(All, Filter{}, 0, 50)
+	if !slices.Equal(before.Providers, []string{"main", "relay"}) {
+		t.Fatalf("before: %v", before.Providers)
+	}
+	cost := func(s Summary) (float64, map[string]int) {
+		calls, sum := map[string]int{}, 0.0
+		for _, g := range s.Models {
+			calls[g.ID] += g.Calls
+			sum += g.Cost
+		}
+		return sum, calls
+	}
+	sumBefore, _ := cost(Summarize(All))
+
+	if err := provider.MergeDeleted("relay", "main"); err != nil {
+		t.Fatal(err)
+	}
+	page := QueryPage(All, Filter{}, 0, 50)
+	if !slices.Equal(page.Providers, []string{"main"}) {
+		t.Fatalf("merged: %v", page.Providers)
+	}
+	for _, r := range page.Rows {
+		if r.Provider != "main" {
+			t.Fatalf("a row under %q", r.Provider)
+		}
+	}
+	// 2 calls at relay's $3 and one at main's $300, as before the merge
+	if page.Sum.Cost != before.Sum.Cost || page.Sum.Cost != 306 {
+		t.Fatalf("cost %v, before %v", page.Sum.Cost, before.Sum.Cost)
+	}
+	if p := QueryPage(All, Filter{Provider: "main"}, 0, 50); p.Sum.Calls != 3 || p.Sum.Cost != 306 {
+		t.Fatalf("main's: %+v", p.Sum)
+	}
+	sumAfter, calls := cost(Summarize(All))
+	if sumAfter != sumBefore || calls["main/gpt-9"] != 3 || calls["relay/gpt-9"] != 0 {
+		t.Fatalf("summary %v (cost %v, before %v)", calls, sumAfter, sumBefore)
+	}
+	if vs := Vias(time.Time{}).Of("codex|s1"); len(vs) != 1 || vs[0].Provider != "main" {
+		t.Fatalf("vias %+v", vs)
+	}
+	coster := NewCoster()
+	if c, ok := coster(Record{Time: then, Provider: "relay", Model: "gpt-9", Input: 1e6, Output: 1e6}); !ok || c != 3 {
+		t.Fatalf("coster %v %v", c, ok)
+	}
+	if got := NewPricer()([]Record{{Time: then, Provider: "relay", Model: "gpt-9", Input: 1e6, Output: 1e6}}); got.Cost != 3 {
+		t.Fatalf("pricer %+v", got)
+	}
+
+	// a provider added under relay's id later is not merged
+	if err := provider.Save(provider.Provider{ID: "relay", Name: "New relay", Key: "k3", Chat: "http://127.0.0.1:3/v1", Models: []string{"gpt-9"}}); err != nil {
+		t.Fatal(err)
+	}
+	Append(Record{Time: time.Now().Add(time.Second), Agent: "codex", Session: "s3", Provider: "relay", Model: "gpt-9", Input: 1e6, Output: 1e6, Status: 200})
+	if p := QueryPage(All, Filter{Provider: "relay"}, 0, 50); p.Sum.Calls != 1 {
+		t.Fatalf("the new relay's: %+v", p.Sum)
+	}
+	mergedSum := QueryPage(All, Filter{Provider: "main"}, 0, 50).Sum
+	if mergedSum.Calls != 3 {
+		t.Fatalf("main's, a relay added since: %+v", mergedSum)
+	}
+
+	// the provider merged into renamed: still merged
+	if err := provider.Rename("main", "primary"); err != nil {
+		t.Fatal(err)
+	}
+	if p := QueryPage(All, Filter{Provider: "primary"}, 0, 50); p.Sum.Calls != 3 {
+		t.Fatalf("renamed: %+v (providers %v)", p.Sum, p.Providers)
+	}
+
+	// undone: the deleted relay's calls are its own again, by the id the
+	// page lists it under now that another has relay
+	old := ""
+	for _, id := range QueryPage(All, Filter{}, 0, 50).Providers {
+		if strings.HasPrefix(id, "relay~") {
+			old = id
+		}
+	}
+	if old != "" {
+		t.Fatalf("listed apart while merged: %q", old)
+	}
+	gone := provider.UsageRenames().Merged("primary")
+	if len(gone) != 1 || !strings.HasPrefix(gone[0], "relay~") {
+		t.Fatalf("merged into primary: %v", gone)
+	}
+	if err := provider.MergeDeleted(gone[0], ""); err != nil {
+		t.Fatal(err)
+	}
+	// the parts sum to what the merge showed, each call as it cost
+	parted, own := QueryPage(All, Filter{Provider: gone[0]}, 0, 50).Sum, QueryPage(All, Filter{Provider: "primary"}, 0, 50).Sum
+	if parted.Calls != 2 || own.Calls != 1 || own.Cost != 300 || parted.Cost+own.Cost != mergedSum.Cost || parted.Unpriced+own.Unpriced != mergedSum.Unpriced {
+		t.Fatalf("parted %+v, primary's own %+v, merged %+v", parted, own, mergedSum)
+	}
+
+	// merged again, then the provider merged into deleted: the merge ends
+	if err := provider.MergeDeleted(gone[0], "primary"); err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.Delete("primary"); err != nil {
+		t.Fatal(err)
+	}
+	if p := QueryPage(All, Filter{Provider: gone[0]}, 0, 50); p.Sum.Calls != 2 {
+		t.Fatalf("its target deleted: %+v (providers %v)", p.Sum, QueryPage(All, Filter{}, 0, 50).Providers)
+	}
+	if err := provider.MergeDeleted(gone[0], "nobody"); err == nil {
+		t.Fatal("merged into a provider there is not")
 	}
 }

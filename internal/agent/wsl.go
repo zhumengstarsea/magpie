@@ -319,7 +319,9 @@ var wslKinds = []wslKind{
 			}
 			return nil
 		}},
-	{id: "pi", name: "Pi", dir: ".pi", bin: "pi", in: piIn,
+	// its version says which file its MCP servers go in (Pi 0.99 reads
+	// mcp.json itself, library's piMCP)
+	{id: "pi", name: "Pi", dir: ".pi", bin: "pi", in: piIn, version: true,
 		asleep: func(key string) func(map[string]string) []Option {
 			if key == "model" {
 				// the providers of its auth.json are the distro's files
@@ -708,8 +710,10 @@ func wslPi(d distro) *Agent { return wslAgent(wslKindOf("pi"), d) }
 // access to its files starts it. Picking a value starts it, as asked.
 func wslAgent(k wslKind, d distro) *Agent {
 	id := k.id + "@wsl:" + d.Name
-	a := k.in(d.place(id))
+	at := d.place(id)
+	a := k.in(at)
 	a.ID, a.Name, a.Aliases, a.Bin, a.UA, a.WSL = id, k.name+" · WSL "+d.Name, nil, "", nil, d.Name
+	a.wslVersion = at.version
 	a.Gateway = d.base
 	a.reachFrom = func(base string) (ok, known bool) {
 		if !d.live() {

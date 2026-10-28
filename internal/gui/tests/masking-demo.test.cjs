@@ -129,6 +129,15 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
             return (end - low) / k < ({ req: 4, prov: 4 }[b.dataset.k] ?? 0) - .5 ? [`${b.dataset.k} ${Math.round((end - low) / k)}px to spare`] : [];
           });
         }), []);
+        // each box's icon is a 22px square (the app's own .acc once made the notebook's
+        // 38px tall), and the notebook's entries sit under its header, one after the other
+        assert.deepEqual(await page.evaluate(() => {
+          const k = document.querySelector(".xq-stage").getBoundingClientRect().width / 1000, r = (n) => n.getBoundingClientRect();
+          const bad = [...document.querySelectorAll(".xq-stage .xq-ic")].map((n) => [Math.round(r(n).width / k), Math.round(r(n).height / k)]).filter(([w, h]) => w !== 22 || h !== 22);
+          const book = document.querySelector('.xq-stage [data-k="ledger"]'), head = r(book.querySelector(".xq-bh")).bottom;
+          const rows = [...book.querySelectorAll(".xq-lrow")].map(r);
+          return { bad, gaps: [rows[0].top - head, rows[1].top - rows[0].bottom].map((g) => g / k >= 4) };
+        }), { bad: [], gaps: [true, true] });
         if (process.env.MASK_SHOTS) await page.screenshot({ path: path.join(process.env.MASK_SHOTS, `demo_${engine}_${lang}_${width}.png`), fullPage: true });
 
         await row.click();

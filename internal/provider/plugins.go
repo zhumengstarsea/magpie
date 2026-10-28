@@ -499,7 +499,9 @@ func (p Provider) Origin(ctx context.Context) string {
 			pp = cur
 		}
 		base = pp.API
-		if o, err := plugin.LoaderOptions(ctx, pp.ID, p.Account.pluginKey); err == nil {
+		// the loader may renew the sign-in: through the account's proxy,
+		// as its requests go (#2777)
+		if o, err := plugin.LoaderOptions(p.Via(ctx), pp.ID, p.Account.pluginKey); err == nil {
 			base = firstOf(o.BaseURL, pp.API)
 		}
 	} else {

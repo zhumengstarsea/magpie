@@ -534,6 +534,7 @@ magpie quota                             <span class="c"># acme · Pro · 5h 37%
     models: [], notModels: [],  <span class="c">// or exactly these ids, or all but these</span>
     aside: false,               <span class="c">// true: using it up doesn't stop the account</span>
     runsOutAt: <span class="s">"2026-10-05T00:00:00Z"</span>, runsOut: 120, <span class="c">// when the soonest credits left are lost, and how many</span>
+    balance: 6291,              <span class="c">// a prepaid wallet: what is left, in unit; no used or limit</span>
   }],
   resets: { count: 2, until: <span class="s">"…"</span>, byWindow: false, fiveHour: 1, weekly: 1 }, <span class="c">// resets the account may spend</span>
   signIn: <span class="s">"kept"</span>,               <span class="c">// as X-Magpie-Sign-In</span>
@@ -691,7 +692,7 @@ magpie plugin options model-map '{"mapping": {"fast": "deepseek/deepseek-chat"}}
     <h3 id="middleware-options"><a class="anchor" href="#middleware-options">オプション</a></h3>
     <p>ミドルウェアは設定を <code>ctx.options</code> から読みます。これは <code>plugins.json</code> のそのエントリの <code>options</code> です。<span class="ui">プラグイン → インストール済み</span> でミドルウェアの <span class="ui">オプション</span> ボタンを押すとその行で JSON として編集でき、<code>magpie plugin options &lt;名前&gt; '&lt;json&gt;'</code> でも設定できます（<code>off</code> で消去）。名前はパッケージ名、spec、短い名前のどれでもかまいません：<code>@magpie-community/middleware-model-map</code> なら <code>model-map</code> です。次のリクエストから反映されます。パッケージは <code>package.json</code> の <code>"magpie": { "options": { … } }</code> でオプションの例を示せます。未設定のときエディタはそれから始まりますが、保存するまでミドルウェアはオプションなしで動きます。</p>
     <h3>動き方</h3>
-    <p>ミドルウェアは Bun では動きません。ゲートウェイ自身のプロセスの中で、Go で書かれた JavaScript エンジン <a href="https://github.com/Calcium-Ion/moejs">moejs</a> によって動きます。応答は数千のイベントとしてストリームされ、各イベントがミドルウェアの処理を待つからです。1 イベントでのフック呼び出しは約 1 マイクロ秒で済みますが、Bun との往復だと数十マイクロ秒かかります。各ミドルウェアのコンパイルは一度だけで、リクエストごとに専用のランタイムを使います。そのためリクエストは並行に処理され、同じリクエストのフック同士は <code>ctx.state</code> を共有します。</p>
+    <p>ミドルウェアは Bun では動きません。ゲートウェイ自身のプロセスの中で、Go で書かれた JavaScript エンジン <a href="https://github.com/MoeForge/moejs">moejs</a> によって動きます。応答は数千のイベントとしてストリームされ、各イベントがミドルウェアの処理を待つからです。1 イベントでのフック呼び出しは約 1 マイクロ秒で済みますが、Bun との往復だと数十マイクロ秒かかります。各ミドルウェアのコンパイルは一度だけで、リクエストごとに専用のランタイムを使います。そのためリクエストは並行に処理され、同じリクエストのフック同士は <code>ctx.state</code> を共有します。</p>
     <ul>
       <li><b>宣言のしかた。</b><code>package.json</code> に <code>"magpie": { "middleware": "./mw.js" }</code> と書くか、<code>*.middleware.js</code>（または <code>.mjs</code>）という名前の単一ファイルにします。<code>main</code> も <code>exports</code> もないパッケージはミドルウェア専用で、プラグインホストは読み込みません。両方あるパッケージはプロバイダプラグインとミドルウェアを兼ねます。</li>
       <li><b>インポート。</b>プラグイン内のファイルだけを相対パスで読み込めます。ここに <code>node_modules</code> はないので、使う依存はファイルにバンドルしてください。</li>

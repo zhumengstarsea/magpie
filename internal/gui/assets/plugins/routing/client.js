@@ -291,11 +291,15 @@ function routingPage(part) {
     const kept = [], under = colA.classList.contains("meta-under");
     for (let p = reqs; p; p = p.parentElement) if (p.scrollTop) kept.push([p, p.scrollTop]);
     colA.classList.remove("meta-under");
+    inMetaFit = true;
+    fitCols(); // the rows' columns for the layout measured, not the one before
     const wraps = [...reqs.querySelectorAll(".rt-req .meta:not([hidden])")].some((m) => {
       const k = m.children;
       return k.length > 1 && k[k.length - 1].getBoundingClientRect().top - k[0].getBoundingClientRect().top > 2;
     });
     colA.classList.toggle("meta-under", wraps);
+    fitCols();
+    inMetaFit = false;
     for (const [p, top] of kept) if (p.scrollTop !== top) p.scrollTop = top;
     if (colA.classList.contains("meta-under") !== under) redrawList(); // the rows' heights changed
   }); };
@@ -310,7 +314,22 @@ function routingPage(part) {
   // setAttr: an attribute written only when it changes, as setText: the
   // list's head is told again on every trace answer (#3731)
   const setAttr = (e, k, v) => { if (e.getAttribute(k) !== v) e.setAttribute(k, v); };
-  const tick = (e) => { e.classList.remove("tick"); void e.offsetWidth; e.classList.add("tick"); };
+  // rerun: a class's animation played again from its start. Taking the
+  // class off and reading offsetWidth to start it again laid the whole page
+  // out, three or four times a request (gpboyer2, #3731): a running one is
+  // rewound, and the class comes off when it ends, so putting it on again
+  // starts it with no layout
+  const replaying = new WeakSet();
+  const rerun = (e, cls, name) => {
+    const a = e.getAnimations?.().find((x) => x.animationName === name);
+    if (a) { a.currentTime = 0; return; }
+    if (!replaying.has(e)) {
+      replaying.add(e);
+      e.addEventListener("animationend", (ev) => { if (ev.target === e && ev.animationName === name) e.classList.remove(cls); });
+    }
+    e.classList.add(cls);
+  };
+  const tick = (e) => rerun(e, "tick", "rttick");
 
   // ---------- words ----------
 
@@ -473,7 +492,21 @@ function routingPage(part) {
   const share = (w) => quotaLeft ? 100 - Math.max(0, Math.min(100, w.used)) : w.used;
   // the account's own count before it, when its vendor counts in amounts
   // (WorkBuddy's credits, #659): "355 / 500 credits · 71% used"
-  const quota = (w, used, left, vars) => (w.limit > 0 ? quotaCount(w) + " · " : "") + t(quotaLeft ? left : used, { n: pct(share(w)), ...vars });
+  // a prepaid wallet tells what it has left in its unit, no share (#3950):
+  // "6,291 points left", whichever way the meters read
+  const balText = (w) => (countFormat.format(w.balance) + " " + t(w.unit || "")).trim();
+  // and what of it is lost first, as the Usage card says it from the
+  // wallet's window (runsOutText): "6,291 points left · 185 points expire
+  // 23:59", the day's batch otherwise unseen beside the total (#3964).
+  // Live only, as winsOf: a kept day's figure was read long ago
+  const lapses = (w) => {
+    const ws = day ? [] : (cardOf(w)?.windows || []).filter((x) => x.balance != null && (x.unit || "") === (w.unit || ""));
+    const x = ws.find((x) => x.balance === w.balance) || (ws.length === 1 ? ws[0] : null);
+    const out = x ? runsOutText(x) : "";
+    return out ? " · " + out : "";
+  };
+  const quota = (w, used, left, vars) => w.balance != null ? t(left, { n: balText(w), ...vars }) + lapses(w)
+    : (w.limit > 0 ? quotaCount(w) + " · " : "") + t(quotaLeft ? left : used, { n: pct(share(w)), ...vars });
   const fill = (w) => Math.max(0, Math.min(100, share(w))) + "%";
   const FAIL = { rate: "rate limited", credit: "out of credit", quota: "quota used up", other: "failed", auth: "sign-in required", canceled: "canceled", foreign: "another account's reasoning", floor: "reply too short", verify: "needs verification", refused: "refused (safety filter)", shape: "request not understood", proxy: "proxy not reachable", effort: "reasoning effort not in its plan", overflow: "too long for its model", room: "reply asked past the window left", slow: "slow to start", prompt: "agent's prompt turned away", restricted: "account restricted by the vendor" };
   const failWord = (why) => t(FAIL[why] || "failed");
@@ -639,6 +672,14 @@ function routingPage(part) {
       && (!(x.fallback || whole) || (y.provider === x.provider && y.model === x.model && (y.fixed || "") === (x.fixed || "") && !!y.fast === !!x.fast)));
   }
 
+  // walletWhy: f, a prepaid wallet, goes before the next of its
+  // provider's in its unit as it has more left (routes.byLeft, #3950)
+  function walletWhy(r, f) {
+    const o = r.order.find((x) => x !== f && !x.fallback && !x.rest && x.balance != null && x.provider === f.provider && x.unit === f.unit);
+    return f.balance != null && o && f.balance > o.balance
+      ? t("{who} goes first: of those alike, its wallet has the most left — {n}, where {other} has {m}.", { who: who(f), n: balText(f), other: who(o), m: balText(o) }) : null;
+  }
+
   // why routing put the first where it did
   function firstWhy(r) {
     const f = r.order[0];
@@ -696,10 +737,12 @@ function routingPage(part) {
         return t("Speed first: none has answered {model} lately, so {who}, first in the list, goes first and its answer measures it.", { who: w, model: f.model });
       }
       case "usage":
+        if (f.balance != null) return walletWhy(r, f) || t("{who} goes first.", { who: w });
         if (f.known) return t("Least used first: {who} has the most of its allowance left — {n} used.", { who: w, n: pct(f.used) });
         if (f.kind === "key" && !someKnown) return t("Least used first: {who} served the fewest tokens lately — {n}.", { who: w, n: tokens(f.tokens || 0) });
         return t("Least used first: {who} goes first.", { who: w });
       case "pace":
+        if (f.balance != null) return walletWhy(r, f) || t("{who} goes first.", { who: w });
         if (f.known) {
           // The allowance window used for pace, which may be shorter than a week.
           const left = known0(f.due) ? Math.min(100, Math.round((f.pace || 0) * Math.max(1, (at(f.due) - at(r.time)) / 36e5))) : null;
@@ -732,6 +775,7 @@ function routingPage(part) {
     if (c < 0 && k === 0 && known0(f.restarts)) return t("{who} goes first: of those with quota to spare, its allowance starts again soonest — one of its Codex resets about to run out is used by itself in {d}, and what it has left then is lost. {other} renews later and keeps its own.", { who: w, d: dur(at(f.restarts) - at(r.time)), other: who(next) });
     if (c < 0 && k === 0) return t("{who} goes first: of those with quota to spare, its allowance renews soonest — in {d} — and what it has left then is lost. {other} renews later and keeps its own.", { who: w, d: dur(renews(f)[0] - at(r.time)), other: who(next) });
     if (c < 0) return t("{who} goes first: its allowance renews in the same hour as {other}'s, and its shorter one sooner — in {d}.", { who: w, other: who(next), d: dur(renewsBy(f)[k] - at(r.time)) });
+    if (c === 0 && walletWhy(r, f)) return walletWhy(r, f);
     if (soon) return t("{who} and {other} renew within the same hour, so the order given stays — and the vendor's prompt cache stays warm.", { who: w, other: who(next) });
     return t("{who} goes first, in the order given: when its allowance renews isn't known.", { who: w });
   }
@@ -780,6 +824,21 @@ function routingPage(part) {
     }
     return null;
   }
+
+  // leftWhy is why a member was skipped before it was tried (r.left)
+  const leftWhy = (x) => x.held
+    ? t("{who} is left out: the gateway key asking may not use its account.", { who: who(x) })
+    : x.window
+    ? t("{who} is left out: this request is longer than its {n} context window, so it would only refuse it. It's asked only once every one with room is out of its allowance.", { who: who(x), n: ctxShort(x.window) })
+    : x.noCredits
+    ? t("{who} is left out: a usage window is used up, and the account is set not to spend its credits, so it counts as used up until that window renews.", { who: who(x) })
+    : x.capped
+    ? t("{who} is left out: a usage window is at {n}, past the {cap}% cap set on the account, so it counts as used up until that window renews.", { who: who(x), n: pct(x.used), cap: x.capped })
+    : x.barred
+    ? t("{who} is left out: it is set to serve other models, not {model}.", { who: who(x), model: x.model })
+    : x.kind === "key"
+    ? t("{who} is left out: {name} lists {model} to its other keys, not this one.", { who: who(x), name: x.name, model: x.model })
+    : t("{who} is left out: its plan doesn't list {model}.", { who: who(x), model: x.model });
 
   // asides: the others' places, where they say something
   function asides(r) {
@@ -833,19 +892,7 @@ function routingPage(part) {
     }
     const pooled = r.order.find((x) => !x.aside && x.kind === "key");
     for (const x of r.order.filter((x) => x.aside)) out.push(t("{who} is made for {api}, not {other} as the keys routed over are, so it isn't one of them: it's tried after them.", { who: who(x), api: API[x.speaks] || x.speaks || t("any API"), other: API[pooled?.speaks] || pooled?.speaks || t("any API") }));
-    for (const x of r.left || []) out.push(x.held
-      ? t("{who} is left out: the gateway key asking may not use its account.", { who: who(x) })
-      : x.window
-      ? t("{who} is left out: this request is longer than its {n} context window, so it would only refuse it. It's asked only once every one with room is out of its allowance.", { who: who(x), n: ctxShort(x.window) })
-      : x.noCredits
-      ? t("{who} is left out: a usage window is used up, and the account is set not to spend its credits, so it counts as used up until that window renews.", { who: who(x) })
-      : x.capped
-      ? t("{who} is left out: a usage window is at {n}, past the {cap}% cap set on the account, so it counts as used up until that window renews.", { who: who(x), n: pct(x.used), cap: x.capped })
-      : x.barred
-      ? t("{who} is left out: it is set to serve other models, not {model}.", { who: who(x), model: x.model })
-      : x.kind === "key"
-      ? t("{who} is left out: {name} lists {model} to its other keys, not this one.", { who: who(x), name: x.name, model: x.model })
-      : t("{who} is left out: its plan doesn't list {model}.", { who: who(x), model: x.model }));
+    for (const x of r.left || []) out.push(leftWhy(x));
     return out;
   }
 
@@ -1571,7 +1618,7 @@ function routingPage(part) {
     if (capQ.length > 3) capQ.shift();
     kick();
   }
-  function show(c) { capLo = !!c.lo; cap.textContent = c.s; cap.classList.remove("in"); void cap.offsetWidth; cap.classList.add("in"); capAt = performance.now(); }
+  function show(c) { capLo = !!c.lo; cap.textContent = c.s; rerun(cap, "in", "rtin"); capAt = performance.now(); }
 
   // curve is a wire's S from (x0, y0) to (x3, y3), its bends at mx: one
   // cubic, cut into exact pieces of it about 1000 px tall (the middle ones
@@ -2420,7 +2467,7 @@ function routingPage(part) {
       // crowd the stage. Live only, as the list's are (winsOf).
       const tip = [w.id, ...(day ? [] : winsOf(w))].join("\n");
       if (row.li.title !== tip) row.li.title = tip;
-      const bar = w.known && !w.free;
+      const bar = w.known && !w.free && w.balance == null;
       row.li.classList.toggle("nobar", !bar);
       row.bi.style.width = bar ? fill(w) : "0";
       // on: the row answers or answered the request shown; flying: a
@@ -2687,10 +2734,15 @@ function routingPage(part) {
   // provider a line of the story names, so who it is about reads at a
   // glance (the owner: 这里在前面显示对应的 provider 图标会不会更直观一点)
   const logoOf = (w) => w.icon || w.preset || "generic";
-  function logoed(s, r) {
+  // A line names an order member, one skipped before it was tried (r.left,
+  // #3953: a skipped OpenCode Zen Free's line had no logo, or another
+  // member's), or both. Where two share the name at the same place (a key
+  // called "API key" on two providers), the member the line is about wins,
+  // then an order member over a skipped one.
+  function logoed(s, r, about) {
     const word = /[A-Za-z0-9_]/;
     let hit = null;
-    for (const w of r.order) {
+    for (const w of new Set([about, ...r.order, ...(r.left || [])].filter(Boolean))) {
       for (const n of new Set([who(w), w.name].filter(Boolean))) {
         for (let i = s.indexOf(n); i >= 0; i = s.indexOf(n, i + 1)) {
           if (word.test(s[i - 1] || "") || word.test(s[i + n.length] || "")) continue;
@@ -2721,9 +2773,11 @@ function routingPage(part) {
       : "This subagent task is encrypted. Only ChatGPT accounts can read it."), "aside"]);
     items.push([affWhy(r, true) || ruleWhy(r, true) || firstWhy(r), "why"]);
     for (const s of nestedWhy(r)) items.push([s, "why"]);
-    for (const a of asides(r)) items.push([a, "aside"]);
+    // the member a line is about, where it is one: a skipped one's line, a try's
+    const skipped = new Map((r.left || []).map((x) => [leftWhy(x), x]));
+    for (const a of asides(r)) items.push([a, "aside", undefined, skipped.get(a)]);
     r.tries.forEach((tr, i) => {
-      items.push([tryWhy(r, i), tr.done ? (tryOk(tr) ? "ok" : "bad") : "wait"]);
+      items.push([tryWhy(r, i), tr.done ? (tryOk(tr) ? "ok" : "bad") : "wait", undefined, tried(r, tr)]);
       // where its time went, once it is done: the first try's has the
       // request's masking before it
       const timed = i === 0 && r.masking > 0 ? { ...tr, masking: r.masking } : tr;
@@ -2753,7 +2807,9 @@ function routingPage(part) {
       if (tr.done && tryOk(tr) && tr.upstream) items.push([upstreamWhy(tr), "aside upstream-said", tr]);
     });
     if (r.done && !r.tries.length) items.push([t("Nothing was tried: {error}", { error: r.error || r.status }), "bad"]);
-    const key = JSON.stringify([tagKind(r), items.map(([s, c, tr]) => [s, c, tr?.model, tr?.served]), r.order.map(logoOf)]);
+    const aboutKey = (w) => w ? seat(w) : "";
+    const logos = [...r.order, ...(r.left || [])].map(logoOf);
+    const key = JSON.stringify([tagKind(r), items.map(([s, c, tr, w]) => [s, c, tr?.model, tr?.served, aboutKey(w)]), logos]);
     // a different request starts its steps at the top, even when they say
     // what the last one's said (the box is routing.css's, #3764); the same
     // request keeps its scroll while its steps grow
@@ -2765,21 +2821,20 @@ function routingPage(part) {
     // again and, in WebKit, blinks out for a frame, and the story is drawn
     // again on every request that comes in and at each of its steps, so
     // with an agent at work every logo in it blinked on and off
-    const logos = r.order.map(logoOf);
     const was = new Map([...steps.children].map((li) => [li.dataset.k, li]));
-    const lis = items.map(([s, c, tr]) => {
-      const k = JSON.stringify([tagKind(r), s, c, tr?.model, tr?.served, logos]);
+    const lis = items.map(([s, c, tr, w]) => {
+      const k = JSON.stringify([tagKind(r), s, c, tr?.model, tr?.served, aboutKey(w), logos]);
       const old = was.get(k);
       if (old) { was.delete(k); return { li: old }; }
-      return { k, s, c, tr };
+      return { k, s, c, tr, w };
     });
     keepIcons(...was.values());
     replaceKeeping(steps, lis.map((x) => {
       if (x.li) return x.li;
-      const { k, s, c, tr } = x;
+      const { k, s, c, tr, w } = x;
       const li = el("li", c);
       li.dataset.k = k;
-      li.append(...(/^(why|ok|bad|wait|aside)$/.test(c) ? logoed(s, r) : [s]));
+      li.append(...(/^(why|ok|bad|wait|aside)$/.test(c) ? logoed(s, r, w) : [s]));
       if (c === "aside kind") li.prepend(kindTag(r), " ");
       if (c === "swap") li.prepend(swapTag(tr), " ");
       if (c === "aside time") li.replaceChildren(timeElement(tr));
@@ -3373,17 +3428,49 @@ function routingPage(part) {
   // taken as tall as the average drawn.
   //
   // The columns are as wide as the widest of all the requests, drawn or
-  // not, as before: a row unlike any drawn — another time's shape, model,
-  // kind or numbers — is in the list too, with no height and unseen (a
-  // probe), so the grid sizes its columns by it. Digits are as wide as
-  // each other there (tabular-nums), so a probe stands for every row of
-  // its shape.
+  // not: one row of each shape — its time's, model's, kind's and numbers' —
+  // is in a hidden grid at the list's foot (a probe in the sizer), which
+  // sizes its columns by them, and every row takes the widths it found
+  // (fitCols). Digits are as wide as each other there (tabular-nums), so a
+  // probe stands for every row of its shape. The rows were a subgrid of
+  // the list once, and Safari 16 crashed sizing them (#3731).
   const WIN_MIN = 300;
   let listItems = [], winKey = "", winAvg = 0, winSoon = 0, rowsMoved = false;
   const heights = new Map(); // a request's id, or a session's head → its height
   const gapAbove = el("div", "rt-gap"), gapBelow = el("div", "rt-gap");
   for (const g of [gapAbove, gapBelow]) g.setAttribute("aria-hidden", "true");
   const probes = new Map(), probeShapes = new WeakMap();
+  const sizer = el("div", "rt-sizer");
+  sizer.setAttribute("aria-hidden", "true");
+  sizer.inert = true;
+  // fitCols: the sizer's columns, measured, for the rows to take; each
+  // fixed but the one taking what is left (the third of four, else the
+  // last), which stays a share so a pixel rounded over never pushes a row
+  // wider. Told whenever a probe's cell changes size, as a column moving
+  // does: a new width, another layout, a font come in.
+  let colsAt = "", inMetaFit = false;
+  const fitCols = () => {
+    if (!reqs.offsetWidth) return; // out of sight: left as it is, the list untouched
+    const c = getComputedStyle(sizer).gridTemplateColumns;
+    if (c === colsAt) return;
+    colsAt = c;
+    const w = c.split(" ");
+    if (!w.every((x) => /^[\d.]+px$/.test(x))) reqs.style.removeProperty("--rt-cols"); // no probe: unsized
+    else {
+      // up to the layout's 1/64px: the width read back is rounded, and a
+      // hair narrower than its numbers wraps them (meta-under)
+      const px = w.map((x) => Math.ceil(parseFloat(x) * 64) / 64 + "px");
+      px[w.length === 4 ? 2 : w.length - 1] = "minmax(0, 1fr)";
+      reqs.style.setProperty("--rt-cols", px.join(" "));
+    }
+    redrawList(); // the rows' heights measured in the columns before are dropped (listKey)
+    if (!inMetaFit) metaFit(); // new columns, not metaFit's own: whether the numbers fit asked again
+  };
+  // told a frame later: the rows taking their columns can move the list's
+  // scrollbar and with it the probes, which within the observer's own turn
+  // is a loop WebKit reports
+  let colsSoon = 0;
+  const colsSeen = new ResizeObserver(() => { if (!colsSoon) colsSoon = requestAnimationFrame(() => { colsSoon = 0; fitCols(); }); });
   const isHead = (x) => x instanceof Element;
   const itemKey = (x) => isHead(x) ? x : x.id;
   const itemEl = (x) => isHead(x) ? x : rowOf(x);
@@ -3407,7 +3494,8 @@ function routingPage(part) {
     probeShapes.set(r, { key, s });
     return s;
   }
-  function probesFor(rs) {
+  // fillSizer: a probe of each shape the rows have, in the sizer
+  function fillSizer(rs) {
     const key = document.documentElement.lang + "|" + visibleMetrics.join(), seen = new Set(), want = new Map();
     for (const r of rs) {
       const s = shapes(r, key);
@@ -3417,20 +3505,23 @@ function routingPage(part) {
       if (!want.has(id)) want.set(id, r);
     }
     for (const id of probes.keys()) if (!want.has(id)) probes.delete(id);
-    return [...want].map(([id, r]) => {
-      let b = probes.get(id);
-      if (!b) {
+    const els = [...want].map(([id, r]) => {
+      let p = probes.get(id);
+      if (!p) {
         const [said, how, tr] = outcome(r), meta = r.tries.length > 1 ? [t("{n} tries", { n: r.tries.length })] : [];
-        b = reqRow(r, said, how, tr, agentOf(r.agent), meta, requestMetrics(r, how), "");
-        b.classList.add("probe");
-        b.removeAttribute("title");
-        b.tabIndex = -1;
-        b.inert = true;
-        b.setAttribute("aria-hidden", "true");
-        probes.set(id, b);
+        const b = reqRow(r, said, how, tr, agentOf(r.agent), meta, requestMetrics(r, how), "");
+        p = el("div", b.className.replace(/^rt-req /, "rt-probe ") + " probe"); // not a row to anything that asks for one
+        p.append(...b.childNodes);
+        probes.set(id, p);
       }
-      return b;
+      return p;
     });
+    // only the probes come and go: their order measures nothing, and the
+    // rest are kept in place for a request going on (its numbers' shape
+    // changing) not to put every probe in again on each update
+    const keep = new Set(els);
+    for (const k of [...sizer.children]) if (!keep.has(k)) { for (const c of k.children) colsSeen.unobserve(c); k.remove(); }
+    for (const p of els) if (p.parentNode !== sizer) { sizer.append(p); for (const c of p.children) colsSeen.observe(c); }
   }
   // placeRows puts the list's children in order, moving only those out of
   // place: the list scrolls on its own, and WebKit, a row taken out for a
@@ -3462,27 +3553,30 @@ function routingPage(part) {
   }
   function drawList() {
     const n = listItems.length;
+    fillSizer(listItems.filter((x) => !isHead(x)));
     if (n < WIN_MIN) {
       reqs.classList.remove("win");
-      probes.clear();
-      return placeRows(listItems.map(itemEl));
+      return placeRows([...listItems.map(itemEl), sizer]);
     }
     reqs.classList.add("win");
     // out of sight (another view, the window hidden) nothing has a height:
     // drawn as last measured, and measured once in sight again
     const live = !!reqs.offsetParent;
-    const listKey = [colA.className, reqs.clientWidth, document.documentElement.lang, visibleMetrics.join()].join("|");
-    if (live && listKey !== winKey) { winKey = listKey; heights.clear(); winAvg = 0; }
+    const listKey = [colA.className, reqs.clientWidth, reqs.style.getPropertyValue("--rt-cols"), document.documentElement.lang, visibleMetrics.join()].join("|");
+    // other columns (a wider probe come in): the heights measured in the
+    // old ones dropped, their average kept for the rows not drawn again
+    if (live && listKey !== winKey) { if (winKey.split("|").filter((x, i) => i !== 2).join() !== listKey.split("|").filter((x, i) => i !== 2).join()) winAvg = 0; winKey = listKey; heights.clear(); }
     const pad = parseFloat(getComputedStyle(reqs).paddingTop) || 0;
     // the first row in sight, and where: it stays there
     const box = reqs.getBoundingClientRect();
     let anchor = null, anchorAt = 0;
     for (const e of reqs.children) {
-      if (e.classList.contains("rt-gap") || e.classList.contains("probe")) continue;
+      if (e.classList.contains("rt-gap") || e === sizer) continue;
       const r = e.getBoundingClientRect();
       if (r.bottom > box.top) { anchor = e; anchorAt = r.top - box.top; break; }
     }
-    const est = winAvg || 31, off = new Float64Array(n + 1);
+    let est = winAvg || 31;
+    const off = new Float64Array(n + 1);
     const sum = () => { for (let i = 0; i < n; i++) off[i + 1] = off[i] + (heights.get(itemKey(listItems[i])) ?? est); };
     sum();
     const view = reqs.clientHeight, over = Math.max(view, 300), y = reqs.scrollTop - pad;
@@ -3492,7 +3586,7 @@ function routingPage(part) {
     const drawn = listItems.slice(i0, i1).map(itemEl);
     gapAbove.style.height = off[i0] + "px";
     gapBelow.style.height = off[n] - off[i1] + "px";
-    placeRows([gapAbove, ...drawn, gapBelow, ...probesFor(listItems.filter((x) => !isHead(x)))]);
+    placeRows([gapAbove, ...drawn, gapBelow, sizer]);
     if (!live) return;
     // measured as drawn: each one's slot in the grid, its margins with it
     drawn.forEach((e, i) => {
@@ -3500,8 +3594,12 @@ function routingPage(part) {
       heights.set(itemKey(listItems[i0 + i]), e.getBoundingClientRect().height + parseFloat(s.marginTop) + parseFloat(s.marginBottom));
     });
     let total = 0;
+    // the rows gone from the list leave the average: kept, every row ever
+    // measured was summed again on each draw (gpboyer2, #3731)
+    if (heights.size > n) { const keep = new Set(listItems.map(itemKey)); for (const k of heights.keys()) if (!keep.has(k)) heights.delete(k); }
     for (const h of heights.values()) total += h;
     winAvg = heights.size ? total / heights.size : 0;
+    est = winAvg || 31; // the rows not drawn as tall as those just measured, not as the average before
     sum();
     const above = off[i0] + "px", below = off[n] - off[i1] + "px";
     if (gapAbove.style.height !== above) gapAbove.style.height = above;
@@ -3778,7 +3876,7 @@ function routingPage(part) {
         fix.append(go);
         row.append(fix);
       }
-      if (w.known) {
+      if (w.known && w.balance == null) {
         const bar = el("div", "bar"), bi = el("i");
         bi.style.width = fill(w);
         bar.append(bi);
@@ -3990,7 +4088,7 @@ function routingPage(part) {
           tick(A.node);
           break;
         }
-        row.li.classList.remove("hit"); void row.li.offsetWidth; row.li.classList.add("hit", "tagged");
+        rerun(row.li, "hit", "rthit"); row.li.classList.add("tagged");
         row.tg.textContent = `${tr.status} · ${failWord(tr.fail)}`;
         setTimeout(() => row.li.classList.remove("tagged"), 1800);
         say(tryWhy(r, i));
@@ -6115,9 +6213,30 @@ function routingPage(part) {
       };
       return b;
     };
+    // fitConds: the widest rule's conditions, measured, as every rule's
+    // (--rt-condw), so each rule's → starts at one x. Measured each under
+    // its own fit-content(50%), with the width before taken off; told a
+    // frame after a rule's conditions or the list change size, or a
+    // condition is typed into (narrower, a rule held at the width before
+    // tells nothing)
+    let condsSoon = 0;
+    const fitConds = () => {
+      condsSoon = 0;
+      if (!rlist.offsetWidth) return;
+      rlist.style.removeProperty("--rt-condw");
+      const w = Math.max(0, ...[...rlist.querySelectorAll(":scope > .rt-rule > .rt-line.when")].map((x) => x.getBoundingClientRect().width));
+      // up to the layout's 1/64px, so the widest rule's conditions don't wrap
+      if (w) rlist.style.setProperty("--rt-condw", Math.ceil(w * 64) / 64 + "px");
+    };
+    const fitCondsSoon = () => { if (!condsSoon) condsSoon = requestAnimationFrame(fitConds); };
+    const condsSeen = new ResizeObserver(fitCondsSoon);
+    rlist.addEventListener("input", fitCondsSoon);
     const drawRules = () => {
       drawCtx(); // the members' windows changed with them
       rlist.replaceChildren();
+      // the rules drawn before are let go, not watched on while unseen
+      condsSeen.disconnect();
+      condsSeen.observe(rlist);
       rAdd.hidden = rTip.hidden = d.members.length < 2;
       // only what holds the rules back is said in a line: how they work is
       // under the ⓘ beside Add a rule
@@ -6474,7 +6593,9 @@ function routingPage(part) {
         };
         row.append(ruleHandle(i, row), line, then, more, need);
         rlist.append(row);
+        condsSeen.observe(line);
       });
+      fitConds();
       drawClassifier();
       focusCond = null;
       focus?.();

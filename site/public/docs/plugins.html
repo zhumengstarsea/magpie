@@ -534,6 +534,7 @@ magpie quota                             <span class="c"># acme · Pro · 5h 37%
     models: [], notModels: [],  <span class="c">// or exactly these ids, or all but these</span>
     aside: false,               <span class="c">// true: using it up doesn't stop the account</span>
     runsOutAt: <span class="s">"2026-10-05T00:00:00Z"</span>, runsOut: 120, <span class="c">// when the soonest credits left are lost, and how many</span>
+    balance: 6291,              <span class="c">// a prepaid wallet: what is left, in unit; no used or limit</span>
   }],
   resets: { count: 2, until: <span class="s">"…"</span>, byWindow: false, fiveHour: 1, weekly: 1 }, <span class="c">// resets the account may spend</span>
   signIn: <span class="s">"kept"</span>,               <span class="c">// as X-Magpie-Sign-In</span>
@@ -691,7 +692,7 @@ magpie plugin options model-map '{"mapping": {"fast": "deepseek/deepseek-chat"}}
     <h3 id="middleware-options"><a class="anchor" href="#middleware-options">Options</a></h3>
     <p>A middleware reads its settings from <code>ctx.options</code>, which are its entry’s <code>options</code> in <code>plugins.json</code>. Set them in <span class="ui">Plugins → Installed</span> with the middleware’s <span class="ui">Options</span> button, which edits them as JSON in its row, or with <code>magpie plugin options &lt;name&gt; '&lt;json&gt;'</code> (<code>off</code> clears them). The name can be the package’s, its spec, or its short name: <code>model-map</code> for <code>@magpie-community/middleware-model-map</code>. They apply from the next request on. A package can suggest options with <code>"magpie": { "options": { … } }</code> in its <code>package.json</code>: the editor starts from those when none are set, but a middleware runs with no options until you save some.</p>
     <h3>How it runs</h3>
-    <p>Middleware isn’t run on Bun. It runs inside the gateway’s own process, in <a href="https://github.com/Calcium-Ion/moejs">moejs</a>, a JavaScript engine written in Go, because a reply streams thousands of events and each one waits for it. A hook on one event costs about a microsecond; a round trip to Bun would cost tens. Each middleware is compiled once, and each request gets a runtime of its own, so requests run in parallel and a request’s hooks share <code>ctx.state</code>.</p>
+    <p>Middleware isn’t run on Bun. It runs inside the gateway’s own process, in <a href="https://github.com/MoeForge/moejs">moejs</a>, a JavaScript engine written in Go, because a reply streams thousands of events and each one waits for it. A hook on one event costs about a microsecond; a round trip to Bun would cost tens. Each middleware is compiled once, and each request gets a runtime of its own, so requests run in parallel and a request’s hooks share <code>ctx.state</code>.</p>
     <ul>
       <li><b>Declaring it.</b> <code>"magpie": { "middleware": "./mw.js" }</code> in <code>package.json</code>, or a single file named <code>*.middleware.js</code> (or <code>.mjs</code>). A package with no <code>main</code> and no <code>exports</code> is only middleware, and the plugin host leaves it alone; one with both is a provider plugin and middleware at once.</li>
       <li><b>Imports.</b> Only files inside the plugin, by relative path. There is no <code>node_modules</code> here: bundle what you import into the file.</li>

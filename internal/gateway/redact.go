@@ -12,6 +12,7 @@ import (
 	"github.com/yetone/magpie/internal/maskrec"
 	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/settings"
+	"github.com/yetone/magpie/internal/usage"
 )
 
 // redacted masks a request's secrets, as the settings say, before it goes
@@ -238,6 +239,42 @@ func maskedQuery(ctx context.Context, query string, p *provider.Provider) (strin
 		noteMasked(nil, "search", h, masked, 0, id, "")
 	}
 	return masked, err
+}
+
+// maskedCopy is body masked for a record of a request sent nowhere, nil
+// when masking fails: nothing unmasked is kept in its place.
+func maskedCopy(ctx context.Context, body []byte) []byte {
+	m, err := gwmw.Masking(redactionWanted())
+	if err != nil {
+		return nil
+	}
+	if m == nil {
+		return body
+	}
+	b, err := gwmw.Safely(func() []byte {
+		if t, ok := m.(gwmw.ContextTeller); ok {
+			b, _ := t.JSONHitsContext(ctx, body)
+			return b
+		}
+		b, _ := m.JSON(body)
+		return b
+	})
+	if err != nil {
+		return nil
+	}
+	return b
+}
+
+// bodiesKeptAway says a request's body may be kept off this computer: an
+// observer wants it (the OTLP export, a JS plugin's observer) or the
+// request archive is on. A request sent unmasked is masked for them all
+// the same.
+func bodiesKeptAway() bool {
+	if usage.ObservedBodies() != usage.NoBodies {
+		return true
+	}
+	_, on := archiveDest()
+	return on
 }
 
 // unredactedRoute says a request resolved to p, or to the group whose

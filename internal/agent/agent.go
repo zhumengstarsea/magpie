@@ -295,6 +295,9 @@ type Agent struct {
 	// whether there is one. A WSL network's address answers from Windows
 	// whatever its firewall lets in from WSL, so only this tells.
 	reachFrom func(base string) (ok, known bool)
+	// wslVersion is an agent in a WSL distro's CLI's version, as the
+	// distro's probe asked it (wslKind.version); "" when not asked
+	wslVersion string
 	// move, when set, points the agent's config at to where it names the
 	// gateway at from: an address of WSL's that changed (#1013).
 	move func(from, to string) error

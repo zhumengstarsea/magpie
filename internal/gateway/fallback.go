@@ -79,6 +79,9 @@ type capHold struct {
 	used      float64
 	back      time.Time
 	noCredits bool
+	// unread: held by a careful provider as its usage can't be told, why
+	// (carefulDoubt), cap then the account's own
+	unread string
 }
 
 // label names a candidate in a call's record: the provider, and the key
@@ -422,6 +425,11 @@ func (s *Server) plan(p provider.Provider, model string, from provider.Protocol)
 		return cs
 	}
 	out := add(p, model, false)
+	if p.CapStop && len(out) == 0 && len(pl.capped)+len(pl.held) > 0 {
+		// every account held at its cap: the user set the provider to end
+		// there (plugins#349), answered 429 rather than sent on
+		return restLast(out, pl)
+	}
 	seen := map[string]bool{p.ID + "/" + model: true}
 	for _, id := range p.Fallback {
 		fp, fm, ok := provider.Resolve(id)
@@ -713,8 +721,16 @@ func capHeld(p, acct provider.Provider, model string, now time.Time) *capHold {
 	if !caps.Holds() {
 		return nil
 	}
-	h := allowances(a.UsageAgent())[a.User].CapHeld(model, caps, now)
+	al, known := allowances(a.UsageAgent())[a.User]
+	h := al.CapHeld(model, caps, now)
 	if h == nil {
+		if p.CapCareful {
+			// what can't be told is not spent (plugins#349)
+			if why := carefulDoubt(a, al, known, model, caps, now); why != "" {
+				used, _ := al.For(model, now)
+				return &capHold{cap: capShare(caps), used: used, unread: why}
+			}
+		}
 		return nil
 	}
 	return &capHold{cap: h.Cap, used: h.Used, back: h.Back, noCredits: h.Credits}
@@ -726,6 +742,9 @@ func capHeld(p, acct provider.Provider, model string, now time.Time) *capHold {
 func cappedError(model string, ws []Weighed, now time.Time) (string, time.Time) {
 	held, soonest := heldReasons(ws, now)
 	capped, noCredits := heldBy(ws)
+	if unread(ws) {
+		return fmt.Sprintf("usage cap reached: every account that serves %q is held at the usage cap set on it in magpie, or held as its usage can't be told right now — %s. magpie reads it again at the next request and uses it once it is under its cap; %s, or turn off Check usage near the cap (Providers → the provider's accounts, or magpie provider pool <id> --careful off)", model, strings.Join(held, "; "), heldAdvice(capped, noCredits)), soonest
+	}
 	switch {
 	case !noCredits:
 		return fmt.Sprintf("usage cap reached: every account that serves %q is held at the usage cap set on it in magpie — %s. magpie uses it again once that window renews; %s", model, strings.Join(held, "; "), heldAdvice(capped, noCredits)), soonest
@@ -757,6 +776,9 @@ func heldReasons(ws []Weighed, now time.Time) ([]string, time.Time) {
 		s := fmt.Sprintf("%s (%s) is at %.0f%% of a usage window, past its %d%% cap", w.Name, w.Who, w.Used, w.Capped)
 		if w.NoCredits {
 			s = fmt.Sprintf("%s (%s) has used up a usage window and is set not to spend its credits", w.Name, w.Who)
+		}
+		if w.Unread != "" {
+			s = fmt.Sprintf("%s (%s) is held, as %s and its provider is set to check usage near the cap", w.Name, w.Who, w.Unread)
 		}
 		if w.CapBack != nil {
 			s += ", until " + heldClock(*w.CapBack, now)
@@ -806,6 +828,9 @@ func checkpointCappedRecord(ws []Weighed) string {
 // cappedRecord is the call's record of the same refusal as cappedError,
 // told apart the same way.
 func cappedRecord(ws []Weighed) string {
+	if unread(ws) {
+		return "every account at its usage cap or its usage unread"
+	}
 	switch capped, noCredits := heldBy(ws); {
 	case !noCredits:
 		return "every account at its usage cap"
@@ -813,6 +838,17 @@ func cappedRecord(ws []Weighed) string {
 		return "every account held: set not to spend its credits"
 	}
 	return "every account held: at its usage cap or set not to spend its credits"
+}
+
+// unread says whether one of ws is held as its usage can't be told
+// (carefulDoubt).
+func unread(ws []Weighed) bool {
+	for _, w := range ws {
+		if w.Capped > 0 && w.Unread != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // creditsHeld are those of cs held only as they won't spend their
@@ -850,7 +886,7 @@ func barredOf(cs []candidate, q provider.Provider, fallback bool, from provider.
 		w := weighed(c, q, weighing{}, fallback, from)
 		w.Unlisted, w.Via = true, via
 		if h := c.capped; h != nil {
-			w.Capped, w.Used, w.NoCredits = h.cap, h.used, h.noCredits
+			w.Capped, w.Used, w.NoCredits, w.Unread = h.cap, h.used, h.noCredits, h.unread
 			if !h.back.IsZero() {
 				w.CapBack = &h.back
 			}
@@ -2517,6 +2553,15 @@ func (h *holdWriter) settle() {
 		h.failure, h.failMsg, h.refused = refusedStatus, msg, true
 		return
 	}
+	if h.status < 400 {
+		// a 200 that is only an error fails as that error's own status
+		// would (errorReply): asked again, or of the next, not handed on
+		// as an answer
+		if status, msg, ok := errorReply(h.held.Bytes()); ok {
+			h.failure, h.failMsg = status, msg
+			return
+		}
+	}
 	if h.alive != nil && h.alive.sent && h.status < 400 && wholeEvents(h.alive.proto, h.held.Bytes()) == nil {
 		// a 200 that is no reply of the protocol's, once the agent has a
 		// stream's headers: it can't go as that stream, so it failed, as
@@ -3436,6 +3481,48 @@ func refusedReply(b []byte) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// errorReply says whether a reply that came whole under a success status
+// is only an error: OpenAI's or Gemini's {"error":{…}}, Anthropic's
+// {"type":"error","error":{…}}, a Responses object whose error is set —
+// with no reply beside it. msg is what it says (provider.APIError), and
+// status what it stands for (streamStatus), as the same error said in a
+// stream is read: a relay that answers OpenAI's TPM limit as a 200 fails
+// as its 429 would, asked again in a moment, not as a reply that went
+// through (monater on Discord).
+func errorReply(body []byte) (status int, msg string, ok bool) {
+	b := bytes.TrimSpace(body)
+	if len(b) == 0 || b[0] != '{' {
+		return 0, "", false
+	}
+	var v struct {
+		Error      json.RawMessage `json:"error"`
+		Choices    []any           `json:"choices"`
+		Content    []any           `json:"content"`
+		Candidates []any           `json:"candidates"`
+		Output     []any           `json:"output"`
+		Status     string          `json:"status"`
+	}
+	if json.Unmarshal(b, &v) != nil || !carries(v.Error) || len(v.Choices)+len(v.Content)+len(v.Candidates) > 0 ||
+		len(v.Output) > 0 && v.Status != "failed" {
+		return 0, "", false
+	}
+	var e struct {
+		Message any `json:"message"`
+		Type    any `json:"type"`
+		Code    any `json:"code"`
+		Status  any `json:"status"`
+	}
+	var said string
+	if json.Unmarshal(v.Error, &said) == nil {
+		if strings.TrimSpace(said) == "" {
+			return 0, "", false
+		}
+	} else if json.Unmarshal(v.Error, &e) != nil || e.Message == nil && e.Type == nil && e.Code == nil && e.Status == nil {
+		return 0, "", false
+	}
+	return streamStatus(string(wordsOf(b))), provider.APIError(b, "the upstream reported an error"), true
 }
 
 // streamStatus is the status an error in a stream stands for, as a vendor

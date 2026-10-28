@@ -221,7 +221,8 @@ func windowHolds(qs []provider.SubscriptionQuota, now, first time.Time, priceOf 
 		if r.IsRejected() || r.IsReported() || r.Input+r.Output == 0 {
 			return
 		}
-		r.Provider = renamed.Of(r.Provider, r.Time)
+		// who answered, not who a merge shows it under (Renames.Own)
+		r.Provider = renamed.Own(r.Provider, r.Time)
 		acct := r.Provider + "\x00" + strings.ToLower(r.Account())
 		var runs []runKey
 		for i, d := range dry[acct] {
@@ -326,13 +327,14 @@ func apiPricer() func(Record) *catalog.Price {
 		if served == r.Model {
 			served = ""
 		}
-		k := [3]string{r.Provider, r.Model, served}
+		id := r.priceID()
+		k := [3]string{id, r.Model, served}
 		if pr, ok := prices[k]; ok {
 			return pr
 		}
-		pr := one(r.Provider, r.Model)
+		pr := one(id, r.Model)
 		if pr == nil && served != "" {
-			pr = one(r.Provider, served)
+			pr = one(id, served)
 		}
 		prices[k] = pr
 		return pr

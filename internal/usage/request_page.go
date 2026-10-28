@@ -866,14 +866,14 @@ func readRequestBlocks(idx *requestIndex, st requestState, p Period, now time.Ti
 		return func(r Record, source string) Row {
 			sent := r.Model
 			if source == "" {
-				sent = provider.SentNameIn(cfg.ModelWires, r.Provider, r.Model, r.Effort)
+				sent = provider.SentNameIn(cfg.ModelWires, r.priceID(), r.Model, r.Effort)
 			}
 			row := Row{Record: r, Source: source, Routed: GroupRouted(sent, r.Served)}
 			if r.Served != "" {
-				k := [4]string{r.Provider, r.Model, sent, r.Served}
+				k := [4]string{r.priceID(), r.Model, sent, r.Served}
 				s, ok := swapped[k]
 				if !ok {
-					s = Swapped(sent, r.Served) && !ListedAs(r.Provider, r.Model, r.Served)
+					s = Swapped(sent, r.Served) && !ListedAs(r.priceID(), r.Model, r.Served)
 					swapped[k] = s
 				}
 				row.Swapped = s
@@ -1000,7 +1000,7 @@ func readRequestBlocks(idx *requestIndex, st requestState, p Period, now time.Ti
 			for i, call := range d.Calls {
 				r := call.Record
 				r.Computer = ""
-				r.Provider = renames.Of(r.Provider, r.Time)
+				r.renameBy(renames)
 				c.add(priceRow(r, call.Source), "", int64(i), false)
 			}
 			c.Bytes -= int64(32 * len(c.Strings))
