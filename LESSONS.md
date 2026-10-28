@@ -248,6 +248,26 @@ nor the vendor's limits.**
   ban risk, so a prompt change gets the same care as a header change.
 - Seen 1× (2026-10-12).
 
+**A new reader of a live object reads each field the way its writer
+writes it.**
+- 7f827b3b0 (10-27) added /v1/magpie/claude-runs, which lists every
+  run and calls pid() on each. pid() read cmd.Process without a lock
+  while a run's launch was still in cmd.Start writing it. It was red
+  under -race on ubuntu CI at 6104e88aa only (run 40698575099), since
+  most runs were cancelled by the next push. 983fff23d reads the run's
+  tree under mu first; it was red with a 50ms sleep injected at launch,
+  and not in 30 runs without it.
+- Before adding a list or status route, find who writes each field it
+  reads and under which lock. Run its test under -race with a delay
+  injected into the writer.
+- The fix moved when the pid shows, and the test waiting on it wasn't
+  re-read: TestClaudeRunsNamesEachProcess took a listing, then read the
+  fake's hang.pid, and could end on a list made before the tree was set
+  (PID 0), red on CI at 5bfd76cd8. 3dd59428e waits for a run listed
+  with that pid; red 3 of 3 with a sleep injected in the listing before.
+  A change to when a value appears re-reads every wait on it.
+- Seen 1× (2026-10-28).
+
 **A bit or enum value has one owner.**
 - d4c2512d2 (#1874) gave a usage row's Flags bit 256 to rowOwnCost while
   a rebase of #1463 gave it to rowReasoningHidden, so every reported cost
@@ -548,6 +568,12 @@ cause:
 - A cancelled run tests nothing. On 10-14 nine pushes in ten minutes
   cancelled each other's runs, and 3c4b4dc97 never had a run of its own;
   its red showed first at 84f14e555.
+  - 10-28: of main's last 58 Test runs, 49 were cancelled by the next
+    push. 0b99b8fbe's new allocation bound went red in macOS's Race job
+    (sync.Pool lets go under -race) at 25df3187b, the first run after it
+    that finished, and sat red until d3f3f3381. A test that bounds
+    allocations or a pool's savings checks `raceOn` (race_on_test.go)
+    and is run once with -race before it is pushed.
 - Done right: 2bd49cc5's race was fixed at its cause in 25 minutes
   (28049bd2, -race -count=40 -cpu 1,2). 60f87223, b1cba654, 443f1cbc and
   395c4bc5 fixed flakes at their cause instead of retrying. 06420a71 fixed
@@ -592,6 +618,19 @@ before the merge, are in the code standards.)
 - A raise moves something out first, or follows a growth rate the owner
   set.
 - Seen 1× (2026-10-17).
+
+**A release published after a newer one takes Latest, and with it the
+update feed and the tap, unless the publish step checks.**
+- 10-15: v0.1.1255 was published 25 minutes after v0.1.1256, and
+  GitHub marked the older one Latest (moved back by hand then).
+- 10-28: v0.1.1891 finished 16s after v0.1.1892. 1891 became Latest,
+  which usemagpie.ai's /api/latest serves, and the Homebrew tap went from
+  1892 back to 1891 (tap 1d47b64). v0.1.1890, still notarising, would
+  have done it again. magpie-releases ee73d7a now passes `make_latest`
+  only to the highest version and runs the tap update only then.
+- A fix made by hand once is a fix for that release only. When it comes
+  back, fix the step that does it.
+- Seen 2× (2026-10-15, 2026-10-28).
 
 **A publish run that stays red for one known package hides every new
 failure behind it.**

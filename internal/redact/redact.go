@@ -301,8 +301,10 @@ func keyValue(v string) bool {
 // time.
 func keyAt(s string, a, b int) bool {
 	v := s[a:b]
-	if pathValue(v) {
-		return false // where a key is kept: 私钥 ~/.ssh/id_ed25519 (fieldvalue.go)
+	if pathValue(v) || versionValue(v) {
+		// where a key is kept: 私钥 ~/.ssh/id_ed25519, or a release's
+		// version: token 是 0.15.0-rc1 (fieldvalue.go)
+		return false
 	}
 	if keyValue(v) {
 		return true
@@ -689,6 +691,9 @@ type span struct {
 	kind       string
 	by         string  // which finder found it: one of the By constants
 	score      float64 // the model's score for one it found, else 0
+	// bare: a whole bare value of JSON text (inStrings), whose
+	// placeholder goes in quoted
+	bare bool
 }
 
 // Which finder found a value (Hit.By): magpie's rules, the user's own
@@ -824,7 +829,7 @@ func Mask(s string, o Options) (string, int) {
 
 // Preview is Mask with nothing remembered: each value goes as the
 // placeholder, or with Options.Shape the made-up key, it would have (a
-// user name its made-up name), which
+// user name its made-up name, an IP address its documentation one), which
 // isn't kept for Restore or as a value seen before (known.go).
 func Preview(s string, o Options) string {
 	put := tag
@@ -841,6 +846,11 @@ func Preview(s string, o Options) string {
 	put = func(kind, v string) string {
 		if kind == "USERNAME" {
 			return standInOf(v) // a user name's made-up name (shape.go)
+		}
+		if kind == "IP" {
+			if at, _, ok := ipStandIns(v); ok {
+				return at(0) // an address's documentation one (shape.go)
+			}
 		}
 		return tagOrShape(kind, v)
 	}
@@ -906,7 +916,7 @@ func mask(raw string, o Options, put func(kind, v string) string, escaped bool) 
 				i = a + max(n, 1)
 				continue
 			}
-			found = append(found, span{a, b, "TERM", ByWord, 0})
+			found = append(found, span{a, b, "TERM", ByWord, 0, false})
 			i = max(b, a+1)
 		}
 	}
@@ -941,12 +951,12 @@ func mask(raw string, o Options, put func(kind, v string) string, escaped bool) 
 				took := false
 				for g, kind := range r.groups {
 					if a, b := m[2*g+2], m[2*g+3]; a >= 0 && r.takes(s, a, b, r.groupOK[g]) {
-						found = append(found, span{a, b, kind, r.by(), 0})
+						found = append(found, span{a, b, kind, r.by(), 0, false})
 						took = true
 					}
 				}
 				if took {
-					split = append(split, span{m[2], m[1], "", "", 0})
+					split = append(split, span{m[2], m[1], "", "", 0, false})
 				}
 				continue
 			}
@@ -969,7 +979,7 @@ func mask(raw string, o Options, put func(kind, v string) string, escaped bool) 
 				ok = nil
 			}
 			if r.takes(s, a, b, ok) {
-				found = append(found, span{a, b, r.kind, r.by(), 0})
+				found = append(found, span{a, b, r.kind, r.by(), 0, false})
 			}
 		}
 	}
@@ -987,7 +997,7 @@ func mask(raw string, o Options, put func(kind, v string) string, escaped bool) 
 		found = append(found, knownSpans(s, o)...)
 	}
 	if escaped {
-		found = outsideEscapes(raw, found)
+		found = inStrings(raw, outsideEscapes(raw, found))
 	}
 	found = noNumbers(s, noIDs(s, found))
 	if o.sent {
@@ -1090,6 +1100,83 @@ func outsideEscapes(s string, found []span) []span {
 		}
 	}
 	return out
+}
+
+// inStrings is found, for s JSON text (a tool call's arguments), with
+// each value inside the one string it starts in: cut at that string's
+// closing quote, or started at the first string inside it. A value that
+// is a whole bare value (a number under "password":) is kept, and its
+// placeholder goes in quoted (span.bare); one in nothing else, across a
+// key's quotes, a colon or a brace, goes. Masked over the quote, the
+// arguments were JSON no longer: the local model reads a password's ! and
+// the "} after it as one token, and {"cmd":"export DB_PASSWORD=Hunt3r!"}
+// went as {"cmd":"export DB_PASSWORD={{SECRET_…}}}; a user's rule
+// tok-\S+ took the "} too. The vendor turned away every turn that
+// replayed the call, and Codex reconnected over and over
+// (xiaojiang091499 on X). Every finder's values go through here, as
+// through outsideEscapes. Text that isn't JSON is left as it is.
+func inStrings(s string, found []span) []span {
+	if len(found) == 0 || !json.Valid([]byte(s)) {
+		return found
+	}
+	// in[i] is 1 + which string literal byte i is the text of, 0 for one
+	// outside every string (its quotes among them)
+	in := make([]int32, len(s))
+	n := int32(0)
+	for i := 0; i < len(s); i++ {
+		if s[i] != '"' {
+			continue
+		}
+		n++
+		j := i + 1
+		for ; j < len(s) && s[j] != '"'; j++ {
+			in[j] = n
+			if s[j] == '\\' && j+1 < len(s) {
+				j++
+				in[j] = n
+			}
+		}
+		i = j
+	}
+	out := found[:0]
+	for _, f := range found {
+		a := f.start
+		for a < f.end && in[a] == 0 {
+			a++
+		}
+		if a == f.end {
+			if bareValue(s, f.start, f.end) {
+				f.bare = true
+				out = append(out, f)
+			}
+			continue
+		}
+		b := a
+		for b < f.end && in[b] == in[a] {
+			b++
+		}
+		f.start, f.end = a, b
+		out = append(out, f)
+	}
+	return out
+}
+
+// bareValue says s[a:b], JSON text outside its strings, is all of one
+// bare value: an object's (after :) or an array's (after [ or ,), with
+// the , } or ] that ends it after it.
+func bareValue(s string, a, b int) bool {
+	if a >= b || strings.ContainsAny(s[a:b], " \t\r\n{}[]\",:") {
+		return false
+	}
+	i := a - 1
+	for i >= 0 && isSpace(s[i]) {
+		i--
+	}
+	k := b
+	for k < len(s) && isSpace(s[k]) {
+		k++
+	}
+	return i >= 0 && strings.IndexByte(":[,", s[i]) >= 0 && (k == len(s) || strings.IndexByte(",}]", s[k]) >= 0)
 }
 
 // noNumbers is found without what is a piece of a decimal number of s:
@@ -1306,7 +1393,11 @@ func apply(s string, found []span, put func(kind, v string) string, o Options) (
 		}
 		b.WriteString(s[last:f.start])
 		h.Placeholder = put(f.kind, v)
-		b.WriteString(h.Placeholder)
+		if f.bare {
+			b.WriteString(`"` + h.Placeholder + `"`)
+		} else {
+			b.WriteString(h.Placeholder)
+		}
 		if o.Seen != nil {
 			o.Seen(h)
 		}

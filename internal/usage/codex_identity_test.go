@@ -448,7 +448,7 @@ func TestCodexActorSurvivesPackedRequestChunk(t *testing.T) {
 	if row.SessionRole != "subagent" || row.Session != "main" || row.Subagent != "child" {
 		t.Fatalf("packed Codex actor identity was lost: %+v", row)
 	}
-	if len(chunk.codexActors) != len(chunk.Rows) || chunk.codexActors[0] != "child" {
+	if chunk.codexActors.len() != len(chunk.Rows) || chunk.codexActors.at(0) != "child" {
 		t.Fatal("query identity changed the source chunk")
 	}
 }

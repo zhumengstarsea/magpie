@@ -198,6 +198,13 @@ func cxSkillReads(b []byte, name string) []string {
 	if strings.Contains(text, "*** Begin Patch") {
 		return nil
 	}
+	return skillReadsIn(text)
+}
+
+// skillReadsIn are the skills a command or a path that reads files calls
+// up: each SKILL.md read by its folder's name, once. A redirect into one
+// and a bare SKILL.md with no folder (a find -name, a grep) call none up.
+func skillReadsIn(text string) []string {
 	var out []string
 	for rest := text; ; {
 		i := strings.Index(rest, "SKILL.md")

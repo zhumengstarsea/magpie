@@ -69,7 +69,7 @@ func TestCoreMLMatchesGo(t *testing.T) {
 		ids = append(ids, k.id)
 	}
 	ids = append(ids, 2)
-	want := m.net.logits(ids, threads)
+	want := m.net.logits(ids, Cores())
 	t1 := time.Now()
 	got, err := coremlLogits(m.ml, m.net, ids)
 	if err != nil {

@@ -17,6 +17,12 @@ commit updates Homebrew after the release; after that commit is pushed, the
 workflow adds its link to that version's English and Chinese notes. Older
 publication commits are excluded from the product changes.
 
+Both macOS release jobs size the DMG from its source files' logical byte
+lengths, with 25% plus 128 MiB of headroom. They do not rely on hdiutil's
+automatic size or APFS's allocated blocks, which can leave the image too
+small to copy the app. The packaging step prints the chosen capacity and
+runner disk space before creating the compressed image.
+
 The update service address is injected from the `MAGPIE_UPDATE_ORIGIN`
 Actions Secret at build time; downloads remain in `zhumengstarsea/magpie`
 Releases. Source builds without that value have no default update service.

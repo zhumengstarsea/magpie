@@ -645,6 +645,15 @@ type Settings struct {
 	// name, and routing, keys, caps and budgets go on by it. A pair taken
 	// out counts the client on its own again, the history with it.
 	ClientAgents map[string]string `json:"clientAgents,omitempty"`
+	// UsageCleared are the user's clears of the Usage page's figures
+	// (CrazyMouse_TT on X: a local model benchmarked again from nothing),
+	// each the calls up to its time, of one provider's model or of
+	// everything. Only what the usage pages report: usage.jsonl keeps every
+	// call, and a key's spending limit, the allowances' window holds and
+	// the gateway's own reads of its log still count them. It rides the
+	// settings part of a sync, so a clear holds on every computer that
+	// syncs with this one, other computers' shared days included.
+	UsageCleared []UsageClear `json:"usageCleared,omitempty"`
 	// Visible narrows the models an agent is shown, by agent id: the
 	// families (the tag a provider or group is given), provider ids and
 	// group ids its lists hold. An agent it doesn't name is shown them all.
@@ -1685,6 +1694,7 @@ func save(s Settings, recording bool) error {
 	s.PanelUsageHidden = ids(s.PanelUsageHidden)
 	s.UsageAgentsHidden = ids(s.UsageAgentsHidden)
 	s.ClientAgents = clientAgents(s.ClientAgents)
+	s.UsageCleared = usageCleared(s.UsageCleared)
 	s.TrayUsages = ids(s.TrayUsages)
 	for i, u := range s.CodexAutoReset {
 		s.CodexAutoReset[i] = strings.ToLower(u)
@@ -1901,6 +1911,102 @@ func clientAgents(m map[string]string) map[string]string {
 		return nil
 	}
 	return out
+}
+
+// UsageClear is one clear of the Usage page's figures: the calls up to At
+// (Unix milliseconds) of Model at Provider, as the page's Models list
+// names them (the model counted under its usage alias, the provider under
+// the id it is shown by now), stop being counted there. Both "" is every
+// call.
+type UsageClear struct {
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
+	At       int64  `json:"at"`
+}
+
+// Time is when the clear was made.
+func (c UsageClear) Time() time.Time { return time.UnixMilli(c.At) }
+
+// Covers is whether c clears every call o clears: everything, or the same
+// model, up to a time no earlier.
+func (c UsageClear) Covers(o UsageClear) bool {
+	return c.At >= o.At && (c.Provider == "" && c.Model == "" || c.Provider == o.Provider && c.Model == o.Model)
+}
+
+// usageCleared is UsageCleared as kept: one without a time left out, and
+// one another covers (a later clear of everything, or of the same model)
+// dropped, so the list holds no more than one a model.
+func usageCleared(in []UsageClear) []UsageClear {
+	var out []UsageClear
+	for i, c := range in {
+		c.Provider, c.Model = strings.TrimSpace(c.Provider), strings.TrimSpace(c.Model)
+		if c.At <= 0 {
+			continue
+		}
+		covered := false
+		for j, o := range in {
+			o.Provider, o.Model = strings.TrimSpace(o.Provider), strings.TrimSpace(o.Model)
+			// of two the same, the first is kept
+			if j != i && o.At > 0 && o.Covers(c) && (!c.Covers(o) || j < i) {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// ClearUsage adds a clear of the Usage page's figures up to at: of model at
+// provider, or of everything with both "". It changes UsageCleared alone,
+// from what the file holds now, so a save elsewhere from an older snapshot
+// isn't undone; a settings file that can't be read is left as it is, with
+// the error.
+func ClearUsage(provider, model string, at time.Time) error {
+	provider, model = strings.TrimSpace(provider), strings.TrimSpace(model)
+	if model == "" && provider != "" {
+		return fmt.Errorf("a clear of %q's usage names its model", provider)
+	}
+	if at.UnixMilli() <= 0 {
+		return fmt.Errorf("a clear of usage needs a time")
+	}
+	defer lockFile()()
+	s, err := loadChecked()
+	if err != nil {
+		return err
+	}
+	s.UsageCleared = usageCleared(append(slices.Clone(s.UsageCleared), UsageClear{Provider: provider, Model: model, At: at.UnixMilli()}))
+	return save(s, false)
+}
+
+// UsageClearedNow is Load().UsageCleared, parsed again only once the file
+// changed: every read of the usage pages asks for it.
+func UsageClearedNow() []UsageClear {
+	fileMu.RLock()
+	defer fileMu.RUnlock()
+	m, err := filememo.Read("settings.usageCleared", Path(), func(b []byte) ([]UsageClear, error) {
+		if len(bytes.TrimSpace(b)) == 0 {
+			return nil, nil
+		}
+		var s struct {
+			UsageCleared []UsageClear `json:"usageCleared"`
+		}
+		if err := json.Unmarshal(b, &s); err != nil {
+			return nil, err
+		}
+		return usageCleared(s.UsageCleared), nil
+	})
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		// what load makes of a file that doesn't parse (its last good
+		// generation), not none
+		return usageCleared(load().UsageCleared)
+	}
+	return m
 }
 
 // ClientAgentsNow is Load().ClientAgents, parsed again only once the file

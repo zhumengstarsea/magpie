@@ -819,7 +819,7 @@ func applyRule(hit *RuleHit, ms []provider.Member, cs []candidate, pl planned) (
 // effort.
 func ofMember(c candidate, m provider.Member) bool {
 	id := m.Provider.ID
-	return c.model == m.Model && c.effort == m.Effort && (c.rest == id || strings.HasPrefix(c.rest, id+"#") || strings.HasPrefix(c.rest, id+"@"))
+	return c.model == m.Model && c.effort == m.Effort && slices.Equal(c.levels, m.Levels) && (c.rest == id || strings.HasPrefix(c.rest, id+"#") || strings.HasPrefix(c.rest, id+"@"))
 }
 
 // membersImageInput is whether a group request may carry images: when a

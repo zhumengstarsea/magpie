@@ -49,9 +49,11 @@ import (
 // OpenAI with that key (#322). So it is too for a ChatGPT account the
 // Codex app holds, out of its allowance with no credits to go on with
 // (provider.CodexUsedUp), which it won't send anything for, whoever serves
-// the model, and when the user asks for it (the sign-in field's api): the
-// Codex app is then in its API state rather than signed in to ChatGPT, its
-// durable threads and remote control gone with it. A window at 100% alone
+// the model, and when the user asks for it (the sign-in field's api): under
+// the takeover (codex.out) the Codex app is then in its API state rather
+// than signed in to ChatGPT, its chats, projects and remote control gone
+// with it till the reset; for api, with room, it keeps its account
+// (requires_openai_auth, openaiAuth). A window at 100% alone
 // is not that: credits carry the account on, the app keeps sending, and
 // Codex stays signed in beside magpie's models. The base URL is set then
 // too: a thread started on the built-in provider is opened on it again, and
@@ -574,6 +576,33 @@ func codexIn(at place) *Agent {
 		}
 		return tok
 	}
+	// openaiAuth: whether magpie's provider table says
+	// requires_openai_auth, and whether that is known. Without it Codex's
+	// app-server answers account/read and getAuthStatus with no account and
+	// no token for a provider that is magpie, and the Codex app (ChatGPT.app
+	// 26.1021) switches to an identity of no account: its ChatGPT mode's
+	// chats and projects ("Work") are gone, as are Chrome control and cloud
+	// tasks, while magpie's models still answer (Qyburn3 on X). With it the
+	// app keeps the account, and Codex still sends magpie's key
+	// (experimental_bearer_token) to magpie, no ChatGPT-Account-ID, its
+	// tools the same (image_gen kept): tried with ChatGPT.app 26.1021 and
+	// its codex 0.164.0-alpha.11 against a capturing server.
+	//
+	// Only for a ChatGPT sign-in with room. One the Codex app holds (used
+	// up, codexUsedUp) would have the app read its rate limit again and
+	// grey Send for magpie's models too, which is what codex.out exists to
+	// get past (#540, c54478904). An API key alone has no account to keep,
+	// and Codex drops its image tool for a provider requiring OpenAI auth
+	// (uses_openai_actor_authorization); no sign-in at all would have the
+	// app ask for one. A sign-in read that says nothing leaves the table
+	// as it is.
+	openaiAuth := func() (want, known bool) {
+		signedIn, known := codexChatGPTKnown(dir)
+		if !known {
+			return false, false
+		}
+		return signedIn && !codexUsedUp(), true
+	}
 	putProvider := func() error {
 		kvs := []edit.KV{
 			{Path: "name", Value: "magpie"},
@@ -599,10 +628,32 @@ func codexIn(at place) *Agent {
 		if caps := codexProviderCaps(path); caps != nil {
 			kvs = append(kvs, edit.KV{Path: "capabilities", Value: caps})
 		}
+		want, known := openaiAuth()
+		if want {
+			kvs = append(kvs, edit.KV{Path: "requires_openai_auth", Value: true})
+		}
 		if err := edit.SetTOMLTable(path, "model_providers."+magpieID, kvs...); err != nil {
 			return err
 		}
+		if t, _ := edit.GetTOMLTable(path, "model_providers."+magpieID); !want && known && t["requires_openai_auth"] != "" {
+			if err := edit.DelTOMLKey(path, "model_providers."+magpieID, "requires_openai_auth"); err != nil {
+				return err
+			}
+		}
 		return asyncCompaction(true)
+	}
+	// authStale: the magpie table says requires_openai_auth otherwise
+	// than openaiAuth wants, for Sync to write it again
+	authStale := func() bool {
+		want, known := openaiAuth()
+		if !known {
+			return false
+		}
+		t, err := edit.GetTOMLTable(path, "model_providers."+magpieID)
+		if err != nil || t == nil {
+			return false
+		}
+		return (t["requires_openai_auth"] == "true") != want
 	}
 	hasProvider := func() bool {
 		t, err := edit.GetTOMLTable(path, "model_providers."+magpieID)
@@ -1527,6 +1578,14 @@ func codexIn(at place) *Agent {
 					return err
 				}
 			}
+			// the sign-in came or went, or the account ran out or has
+			// room again: requires_openai_auth follows (openaiAuth), on a
+			// table an older magpie wrote too
+			if authStale() {
+				if err := putProvider(); err != nil {
+					return err
+				}
+			}
 			if err := failover(); err != nil {
 				return err
 			}
@@ -1881,10 +1940,12 @@ func codexIn(at place) *Agent {
 				// sign-in (openai_base_url), magpie its provider only while
 				// the Codex app holds the account (""); beside it always,
 				// held or not (chatgpt); or with magpie as its provider,
-				// the Codex app in its API state. Codex's getAuthStatus has
-				// no token for a provider without requires_openai_auth, so
-				// its Chrome control needs ChatGPT; the api note says so
-				// (#1824). Kept in the stash, where set("") leaves it.
+				// the Codex app keeping its ChatGPT account while it has
+				// room (requires_openai_auth, openaiAuth): Codex's
+				// getAuthStatus has no token for a provider without it, and
+				// the app lost its chats, projects and Chrome control
+				// (#1824, Qyburn3 on X). Kept in the stash, where set("")
+				// leaves it.
 				Key: "login", Label: "sign-in", Quiet: true,
 				Get: func() string { return stashLoad()[at.key("codex.login")] },
 				Set: func(v string) error {

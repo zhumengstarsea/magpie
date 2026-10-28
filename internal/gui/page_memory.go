@@ -4,6 +4,8 @@ import (
 	"runtime/debug"
 	"sync"
 	"time"
+
+	"github.com/yetone/magpie/internal/usage"
 )
 
 // A Sessions or Usage page's poll reads every session file's listing and
@@ -70,6 +72,8 @@ func releaseIfPagesRest() {
 	}
 	release := pageReads.release
 	pageReads.Unlock()
+	// what the request matching keeps for a poll's next read goes too
+	usage.ReleaseScratch()
 	if release != nil {
 		release()
 		return

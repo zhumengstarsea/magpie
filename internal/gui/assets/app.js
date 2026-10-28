@@ -1909,7 +1909,7 @@ function appOutSaid(a) {
   let s = o.user
     ? t("{user}'s ChatGPT allowance is used up, so magpie serves {agent}'s turns until it resets.", { user: o.user, agent: a.name })
     : t("{agent}'s ChatGPT allowance is used up, so magpie serves its turns until it resets.", { agent: a.name });
-  s += " " + t("Till then the {agent} app's ChatGPT side is off: browser use (its Chrome control), cloud tasks, its usage meter and Log out. It all comes back on its own at the reset.", { agent: a.name });
+  s += " " + t("Till then the {agent} app's ChatGPT side is off: its ChatGPT chats and projects, browser use (its Chrome control), cloud tasks, its usage meter and Log out. It all comes back on its own at the reset.", { agent: a.name });
   if (o.stuck) s += " " + t("magpie couldn't restart the {agent} app's app-server: quit the app and open it again to send.", { agent: a.name });
   return s + " " + t("Keep on ChatGPT (its sign-in's Always ChatGPT) leaves {agent} on its ChatGPT account instead: it shows its own limit message till the reset, and magpie no longer takes it over.", { agent: a.name });
 }
@@ -2548,8 +2548,13 @@ function goneSaid(a) {
 let installsOpen = null; // null: as the list has it (open with no agents)
 const VIA = { script: "Installer", powershell: "PowerShell", brew: "Homebrew", npm: "npm" };
 
+let pluginAgents = []; // the names of the agents a suggested plugin adds, not installed
+
 async function loadInstalls() {
   if (mode === "panel") return;
+  // the plugins' agents come from the market, which may be fetched: the
+  // commands aren't held for them
+  api("plugins/agents").then((r) => { pluginAgents = Array.isArray(r) ? r : []; paintInstalls(); }, () => {});
   let r;
   try { r = await api("agents/install"); } catch { return; } // it just isn't shown
   installInfo = Array.isArray(r) ? r : [];
@@ -2586,7 +2591,7 @@ function paintInstalls() {
   // one listed above by its settings alone, its CLI gone (#843), is
   // offered again too
   const items = installInfo.filter((x) => x.missing || !here.has(x.id));
-  if (!items.length) { box?.remove(); return; }
+  if (!items.length && !pluginAgents.length) { box?.remove(); return; }
   if (!box) {
     box = el("section", "ag-install");
     box.id = "agentsInstall";
@@ -2604,9 +2609,9 @@ function paintInstalls() {
     paintInstalls();
     $("#agentsInstall .ag-install-head")?.focus({ preventScroll: true });
   };
-  const parts = [head];
+  const parts = items.length ? [head] : [];
   if (open) {
-    parts.push(el("p", "ag-install-note", installNote(items)));
+    if (items.length) parts.push(el("p", "ag-install-note", installNote(items)));
     for (const x of items) {
       const r = el("div", "ag-install-row");
       r.dataset.id = x.id;
@@ -2630,7 +2635,33 @@ function paintInstalls() {
       parts.push(r);
     }
   }
+  // the agents plugins add, installed from Plugins as every plugin is: in
+  // sight with the commands folded (the owner: not folded away with them)
+  if (pluginAgents.length) parts.push(pluginAgentsRow());
   box.replaceChildren(...parts);
+}
+
+function pluginAgentsRow() {
+  const r = el("button", "ag-install-row ag-install-plugins");
+  r.type = "button";
+  const who = el("div", "ag-install-who");
+  const ic = el("span", "puzzle");
+  ic.append(svg(PUZZLE, 15, 1.4));
+  const name = el("span", "ag-install-name");
+  name.append(el("b", "", t("More in Plugins")));
+  who.append(ic, name);
+  const names = el("span", "ag-install-pnames", pluginAgents.join(t(", ")));
+  r.append(who, names, el("span", "chev", svg(CHEV_R, 11, 1.6)));
+  r.title = t("Agents magpie has no setup of its own for: install a plugin for one in the Plugins tab, and it is listed here");
+  r.onclick = (e) => openPluginAgents(e);
+  return r;
+}
+
+// openPluginAgents: the Plugins tab, at its Agents
+async function openPluginAgents(e) {
+  if (mode !== "window") { api("window/main?view=plugins", {}).catch(() => {}); return; }
+  if (!await show("plugins")) return;
+  window.pluginAgentsTo?.(e);
 }
 
 // ---------- the agents' order, and the ones put away ----------
@@ -3819,29 +3850,24 @@ const MEMORIES = "memories";
 // Desktop's subagent model is the same square: the gateway puts each of
 // its subagents' turns on it
 const SUB_MODEL = "subagent model";
-// Codex's subagents square is [agents] default_subagent_model, the model a
-// subagent starts on only when its lead names none in spawn_agent
-// (codex-rs core/src/agent/child_config.rs). Unset, a subagent isn't held to
-// the model: the lead may name another, and GPT-6.1-Sol's spawned GPT-6-Astra
-// (willz on Discord). So it says the lead picks, and points at the subagent
-// model square, which holds every subagent to one.
+// Codex's subagents square is [agents] default_subagent_model: a subagent's
+// model when its lead names none (codex-rs child_config.rs); the lead may
+// name another (willz on Discord), so it points at the subagent model.
 // Claude Code's auto mode square: the model its client-side auto mode
 // classifier runs on (CLAUDE_CODE_AUTO_MODE_MODEL); unset, Claude Code's own
 // pick, not the model's
 const AUTO_MODE = "auto mode";
 const AUTO_MODE_UNSET = "Claude Code's own pick";
 const leadPicks = (a, f) => f.label === "subagents" && ["codex", "claude"].includes(a.id.split("@wsl:")[0]);
-const LEAD_PICKS = "Codex's lead may name another model for a subagent; set the subagent model to hold every subagent to one";
+const LEAD_PICKS = "The model a subagent starts on when Codex's lead names none; the lead may still name another. To hold every subagent to one model, set the subagent model";
 // Claude Code's subagents unset: magpie writes no CLAUDE_CODE_SUBAGENT_MODEL
 // and Claude Code picks, taking the Agent call's model, then the subagent's
 // own model:, then that variable, then the session's (2.1.306), so it is
 // its pick, not "same as model" (KorenKrita on Discord)
 const CLAUDE_PICKS = "Claude Code's lead, or a subagent's own definition, may name a model or tier for it; a model set here is for the subagents that name none";
 const claudePicks = (a, f) => leadPicks(a, f) && a.id === "claude";
-// Codex had two squares for its subagents' model, the subagents one above
-// and the subagent model, and nobody could tell them apart (the owner): the
-// card shows the subagent model alone, saying plainly what each choice
-// does. A pick there takes away [agents] default_subagent_model too (the
+// Codex's two subagent squares read alike (the owner, HoGee_xxl on X): the
+// card shows the subagent model alone, saying what each does. A pick there takes away [agents] default_subagent_model too (the
 // backend), and one left in the config is said on it until then. With no
 // model of magpie's to pick there, Codex's own square stays.
 const codexSub = (a) => a.id.split("@wsl:")[0] === "codex" && a.fields.some((f) => f.label === SUB_MODEL && (f.options.length || f.value));
@@ -3850,12 +3876,11 @@ const codexOwnSub = (a, f) => f.label === "subagents" && codexSub(a);
 const hermesBot = (f) => f.key.startsWith("profile:");
 const codexRowed = (a, f) => a.id === "codex" && !gatewayMode && (f.label === SUB_MODEL || f.label === MEMORIES);
 const SAME_AS_LEAD = "Same as the lead";
-const SUB_MODEL_UNSET = "Each subagent runs on the lead's model ({model}), or on another the lead picks for it. Pick a model here to put every subagent on it.";
-const SUB_MODEL_UNSET_PLAIN = "Each subagent runs on the lead's model, or on another the lead picks for it. Pick a model here to put every subagent on it.";
-const SUB_MODEL_SET = "Every subagent runs on this model, whatever the lead asks for.";
+const SUB_MODEL_UNSET = "The lead picks each subagent's model; one it names none for runs on the lead's model ({model}). A resumed subagent stays on the model it started on. A model picked here holds every subagent to it, even when the lead names another.";
+const SUB_MODEL_UNSET_PLAIN = "The lead picks each subagent's model; one it names none for runs on the lead's model. A resumed subagent stays on the model it started on. A model picked here holds every subagent to it, even when the lead names another.";
+const SUB_MODEL_SET = "Every subagent runs on this model, even when the lead names another. Same as the lead gives the pick back to the lead.";
 const SUB_MODEL_OLD = "Codex's config still starts subagents on {model} when the lead names none; picking here replaces it.";
-// codexSubSaid: what Codex's subagent model is, in words: its value, and a
-// line on what it does
+// codexSubSaid: the subagent model's name, what it does
 function codexSubSaid(a, f) {
   const opt = optionFor(f, f.value);
   const main = a.fields.find((x) => x.key === "model");
@@ -4242,7 +4267,7 @@ function updatePath(p) {
 async function renderUpdateBadge() {
   const b = $("#update"), label = b.querySelector("span");
   const u = await api(updatePath("update")).catch(() => null);
-  if (u) updateLast = u;
+  if (u) updateLast = u, u.at = Date.now();
   // pulling: a click is downloading it again, and restarts once it's in
   const pulling = !!u && !!b.dataset.pulling && ["checking", "downloading", "ready"].includes(u.state);
   if (b.dataset.pulling && !pulling) {
@@ -13058,19 +13083,14 @@ function renderAccounts(a, p) {
     box.append(keep, as);
     list.append(box);
   }
-  // with more of its accounts on, magpie sends Codex's own requests through
-  // the gateway to fail over between them (#1385); this has it only switch
-  // Codex's own sign-in instead, its requests going straight to OpenAI
-  // (#1907: Codex Desktop and the CLI on their own subscription alone)
-  if (a.agent === "codex" && several && p) {
-    const box = el("div", "switch-only");
-    const [only, cb] = tick(t("Only switch {agent}'s sign-in", { agent: a.agentName }), !!p.switchOnly);
-    only.title = t("magpie signs {agent} in to the next account with room when the one it is on is used up, and back once that has room again, by writing {agent}'s own sign-in; {agent}'s requests go straight to OpenAI, never through magpie. A {agent} app or session already open stays on its account until it is opened again. Connected to magpie, {agent}'s requests go through it as before.", { agent: a.agentName });
-    cb.onchange = () => accountAction("provider/switchonly", { id: p.id, switchOnly: cb.checked }, cb.checked
-      ? t("magpie only switches {agent}'s sign-in; its requests go straight to OpenAI", { agent: a.agentName })
-      : t("{agent}'s requests go through magpie to fail over to your other accounts again", { agent: a.agentName }));
-    box.append(only);
-    list.append(box);
+  const cx = a.agent === "codex", ag = { agent: a.agentName };
+  if (p && (cx && several || a.agent === "claude")) {
+    const [only, cb] = tick(t("Only switch {agent}'s sign-in", ag), p.switchOnly);
+    const [tip, on, off] = cx ? [t("magpie signs {agent} in to the next account with room when the one it is on is used up, and back once that has room again, by writing {agent}'s own sign-in; {agent}'s requests go straight to OpenAI, never through magpie. A {agent} app or session already open stays on its account until it is opened again. Connected to magpie, {agent}'s requests go through it as before.", ag), t("magpie only switches {agent}'s sign-in; its requests go straight to OpenAI", ag), t("{agent}'s requests go through magpie to fail over to your other accounts again", ag)]
+      : [t("magpie moves {agent}'s own sign-in to the next account with room when one is used up, and back once it has room. Nothing on these accounts is served through magpie.", ag), t("magpie serves no requests on these accounts"), t("magpie serves requests on these accounts again")];
+    only.title = tip;
+    cb.onchange = () => accountAction("provider/switchonly", { id: p.id, switchOnly: cb.checked }, cb.checked ? on : off);
+    list.append(el("div", "switch-only", only));
   }
   // how a pool ends at its caps (plugins#349)
   const capped = (l) => accountCapOf(p, l.user) || windowCapsOf(p, l.user);
@@ -13819,13 +13839,11 @@ function laneText(pill) {
   const own = laneOwnOf(p, pill.dataset.ref), limit = laneLimitOf(p, pill.dataset.ref);
   const lane = (lanesRead ? lanesNow : providers?.gateway?.lanes || {})[pill.dataset.who];
   const busy = lane?.busy || 0, waiting = lane?.waiting || 0;
-  let text;
-  if (limit && (busy || waiting)) text = waiting ? t("{n}/{max} running · {q} queued", { n: busy, max: limit, q: waiting }) : t("{n}/{max} running", { n: busy, max: limit });
-  else if (limit) text = t("{n} at once", { n: limit });
-  else text = t("No limit at once");
+  const v = { n: busy, max: limit, q: waiting };
+  const text = !limit ? t(busy ? "{n} running" : "No limit at once", v) : waiting ? t("{n}/{max} running · {q} queued", v) : t(busy ? "{n}/{max} running" : "{n} at once", busy ? v : { n: limit });
   if (pill.textContent !== text) pill.textContent = text;
   lanesTick ||= setInterval(refreshLanes, 2e3);
-  pill.classList.toggle("set", own != null || limit > 0);
+  pill.classList.toggle("set", own != null || limit + busy > 0);
   pill.classList.toggle("busy-lane", !!(limit && busy >= limit));
   pill.classList.toggle("queued", !!waiting);
   const whose = own != null ? t("its own") : t("the provider's");
@@ -21103,7 +21121,7 @@ function renderCodexSubagentModel() {
   b.onclick = (ev) => openPicker(a, f, b, ev);
   $("#codexSubagentModelPick").replaceChildren(b);
   b.title = said.line;
-  row.querySelector(".who").title = said.line;
+  row.querySelector(".who").title = row.querySelector(".sub").textContent = said.line;
 }
 
 // renderImages: the model that describes images to a model that can't see
@@ -22443,25 +22461,23 @@ function editRedactRule(r, n, row) {
 }
 
 // renderUpdate fills in the version row: whether a newer magpie is out.
-// The app checks and downloads on its own, so usually the row just offers
-// the restart; a check can also be asked for. That check leaves the button
-// where it is, dimmed, and a second click does nothing. A read still out
-// from before the answer is not drawn over it. A row drawn again draws the
-// last state at once, but in a check (#3469), and reads while a check or a
-// download is under way.
+// A check asked for dims its button, ignores a second click, and isn't
+// drawn over by an older read. A row drawn again draws a state read in the
+// last 30s at once (#3469); an older one may be stale, so it waits (#4057).
 let updateBusy = false, updateLast = null;
 const updateSeq = new WeakMap(), seqOf = (r) => updateSeq.get(r) || 0;
 
 async function renderUpdate(r, u) {
   const seq = seqOf(r);
   if (u == null) {
-    const early = !updateBusy && updateLast && !r.querySelector(".sub");
+    const bare = !r.querySelector(".sub"), early = bare && !updateBusy && Date.now() - updateLast?.at < 3e4;
     if (early) renderUpdate(r, updateLast);
+    else if (bare) r.querySelector(".who").append(el("div", "sub", "\u00a0"));
     u = await api(updatePath("update?fresh=1")).catch(() => null);
     if (!u || !r.isConnected || seqOf(r) !== seq) return;
     if (early) updateSeq.set(r, seq + 1); // stops timers
   } else if (!r.isConnected) return;
-  updateLast = u;
+  updateLast = u, u.at ??= Date.now();
   const who = r.querySelector(".who"), val = r.querySelector(".val");
   const sub = who.querySelector(".sub") || who.appendChild(el("div", "sub"));
   sub.title = "";
@@ -24052,7 +24068,7 @@ function renderSideGw(g) {
   if (b.hidden) return;
   // a page other machines open (magpie web) says where they reach it,
   // MAGPIE_PUBLIC_URL, as the Gateway page does (#1551; noahhrreion)
-  const url = web && g.publicURL || g.url;
+  const url = self.sideLAN?.(g) || web && g.publicURL || g.url;
   let host = url;
   try { host = new URL(url).host; } catch {}
   b.classList.toggle("off", !g.running);
@@ -24062,7 +24078,7 @@ function renderSideGw(g) {
   // gateway leaves it no room ("Zugangspunkt") says the address alone, the
   // word kept in its tooltip
   if (g.running && s.scrollWidth > s.clientWidth) s.textContent = host;
-  b.title = g.running ? t("Gateway") + " " + url : url;
+  b.title = (g.running ? t("Gateway") + " " + url : url) + (web || url == g.url ? "" : " · " + g.url);
 }
 if (mode === "window") {
   $("#sideGw").onclick = () => { show("gateway"); $("#sideGw").blur(); };

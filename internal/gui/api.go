@@ -483,6 +483,9 @@ type settingsJSON struct {
 	// LANURLs are a container's own addresses, not the host's: the page
 	// offers the one it was opened at instead, or says how to set it
 	LANContainer bool `json:"lanContainer,omitempty"`
+	// those of LANURLs at an internet address, which anyone online can
+	// reach, not only this network
+	LANPublic []string `json:"lanPublic,omitempty"`
 	// when the Codex warm-up last started an account's window
 	CodexWarmed *time.Time `json:"codexWarmed,omitempty"`
 	// and the Claude warm-up
@@ -667,6 +670,7 @@ func settingsState() settingsJSON {
 	s.Login, s.LoginAllow = login != autostart.Off, login == autostart.NeedsAllowing
 	if s.LAN {
 		s.LANURLs, s.LANContainer = gateway.LANURLs(), gateway.ContainerAddrs()
+		s.LANPublic = gateway.PublicURLs(s.LANURLs)
 	}
 	s.CodexWarmed, s.ClaudeWarmed = latest(provider.CodexWarmed()), latest(provider.ClaudeWarmed())
 	s.CodexUsers = codexUsers()
@@ -890,8 +894,13 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 			// and MAGPIE_PUBLIC_URL while other machines are let in, which
 			// a page they open (magpie web) shows instead (noahhrreion on
 			// Discord: in Docker the line said the container's loopback)
-			if u := gateway.PublicURL(); u != "" && (s.LAN || gateway.OnNetwork()) {
-				side["publicURL"] = u
+			// and, shared, the addresses other machines use, which the
+			// window's line names from the first paint (coeo91 on Discord)
+			if s.LAN || gateway.OnNetwork() {
+				side["lan"], side["lanURLs"] = true, gateway.LANURLs()
+				if u := gateway.PublicURL(); u != "" {
+					side["publicURL"] = u
+				}
 			}
 			boot["sideGateway"] = side
 		}
@@ -1350,6 +1359,8 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		in.UsageAgentsHidden = cur.UsageAgentsHidden
 		// and the names models' usage is counted under (magpie model alias)
 		in.UsageAliases = cur.UsageAliases
+		// and the clears of usage made on the Usage page
+		in.UsageCleared = cur.UsageCleared
 		// and the clients it counts as agents, set there too (#1958)
 		in.ClientAgents = cur.ClientAgents
 		// how agents' lists name models, set on its own for the agents to be told

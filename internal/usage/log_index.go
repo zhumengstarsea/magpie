@@ -260,15 +260,19 @@ func (o routeRows) handedOn(c *rowChunk, r *Record) {
 	r.Tries = max(r.Tries, 2)
 }
 
+// visit hands fn each record of the log since since. The blocks are
+// decoded into one buffer, each over the one before: each decoded into
+// rows of its own, the Sessions, Usage and Routing pages' reads of the
+// log allocated ~800 MB of rows a minute while calls came in (#2278). A
+// record's strings are the block's own, not the buffer's.
 func (s *logSnapshot) visit(since time.Time, fn func(Record)) {
+	rows := chunkRows{}
+	defer rows.release()
 	for _, packed := range s.blocks {
 		if !since.IsZero() && packed.Latest.Before(since) {
 			continue
 		}
-		c := packed.unpack()
-		if c == nil {
-			continue
-		}
+		c := rows.of(packed)
 		for i := range c.Rows {
 			p := &c.Rows[i]
 			if !p.Time.Before(since) {

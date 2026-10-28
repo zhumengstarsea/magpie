@@ -43,6 +43,17 @@ func (h *maskHits) add(o maskHits) {
 	h.took += o.took
 }
 
+// sentOf is a masked body as noteMasked takes it: copied only for a
+// record that keeps it. With nothing masked no record is made, and one
+// over maskrec.SentMax keeps none of it, so a 45 MiB Codex turn was
+// copied whole on every request for nothing (#4004).
+func sentOf(h maskHits, body []byte) string {
+	if h.n == 0 && len(h.hits) == 0 || len(body) > maskrec.SentMax {
+		return ""
+	}
+	return string(body)
+}
+
 // noteMasked records what masking swapped in a request that went to a
 // vendor as sent: what it was (chat, search, image…), who sent it, the
 // route it is in the trace (0 for none), and the provider and model it
@@ -157,7 +168,10 @@ func snipsOf(sent string, hits []gwmw.Hit) map[string]string {
 		if b < end {
 			s += "…"
 		}
-		out[x.Placeholder] = s
+		// a value that is a whole string of the body is a snip cut from
+		// it: copied, or the record kept the whole request (up to
+		// SentMax) for as long as memory keeps its snips (#2278)
+		out[x.Placeholder] = strings.Clone(s)
 	}
 	return out
 }

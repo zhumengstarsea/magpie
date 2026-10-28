@@ -141,3 +141,48 @@ func TestHeatmapKeptWhileOnlySessionsChange(t *testing.T) {
 		t.Fatalf("heatFresh up, %d calls", n)
 	}
 }
+
+// A call through magpie changes the gateway's log, and the heatmap is
+// worked out again at once: from the sums of the chunks it had, adding up
+// again only those the call changed, not every row of the year (#2278).
+// What it shows is what a cold build shows.
+func TestHeatmapAfterACallAddsUpOnlyWhatChanged(t *testing.T) {
+	pageHome(t)
+	now := holdClock(t, time.Date(2026, 9, 30, 12, 0, 0, 0, time.Local))
+	const files = 8
+	for i := range files {
+		at := now.AddDate(0, 0, -3*i).Add(-time.Hour)
+		id := string(rune('a' + i))
+		path := filepath.Join(sessions.CodexDir(), "sessions", at.Format("2006/01/02"), "rollout-"+at.Format("2006-01-02T15-04-05")+"-"+id+".jsonl")
+		writeCodexCall(t, path, id, "s"+id, `"vscode"`, "resp-"+id, "m", "low", at, 100+i, 10)
+	}
+	Append(Record{Time: now.AddDate(0, 0, -40), Agent: "claude-code", Provider: "anthropic", Model: "x", Input: 3, Status: 200})
+	read := 0
+	heatReading = func(*rowChunk) { read++ }
+	t.Cleanup(func() { heatReading = nil })
+	calls := func(h Heatmap) int {
+		n := 0
+		for _, d := range h.Days {
+			n += d.Calls
+		}
+		return n
+	}
+	if h := HeatmapOf(Filter{}); calls(h) != files+1 || read < files {
+		t.Fatalf("cold: %d calls, %d chunks added up", calls(h), read)
+	}
+	read = 0
+	Append(Record{Time: now.Add(-time.Minute), Agent: "claude-code", Provider: "anthropic", Model: "x", Input: 5, Status: 200})
+	warm := HeatmapOf(Filter{})
+	if calls(warm) != files+2 {
+		t.Fatalf("a call through magpie isn't counted at once: %d calls", calls(warm))
+	}
+	if read > 1 {
+		t.Fatalf("a call added up %d chunks again, want only the one it changed", read)
+	}
+	requestCache.Lock()
+	requestCache.heatParts, requestCache.heats, requestCache.pages = nil, nil, map[pageKey]RequestPage{}
+	requestCache.Unlock()
+	if cold := HeatmapOf(Filter{}); !reflect.DeepEqual(cold, warm) {
+		t.Fatalf("kept sums %+v, cold %+v", warm, cold)
+	}
+}

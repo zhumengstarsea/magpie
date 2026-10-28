@@ -85,6 +85,8 @@ type chunkPart struct {
 	cells []pageCell
 	kept  int       // rows the filter keeps
 	first time.Time // the oldest charted row's time
+	// days are the heatmap's sums of the chunk, oldest first (heatOf)
+	days []Day
 }
 
 // partKey is what a chunk's cells are of besides the chunk: the page's
@@ -287,8 +289,8 @@ func (ps *pairedRows) sigs(identities map[string]sessions.CodexIdentity) map[*ro
 		if c.codexIdentities != nil {
 			h += mix(3)
 		}
-		for i, a := range c.codexActors {
-			if a != "" {
+		for i := range c.codexActors.len() {
+			if a := c.codexActors.at(i); a != "" {
 				h += mix(4, uint64(i), actor(a))
 			}
 		}

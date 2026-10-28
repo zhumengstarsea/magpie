@@ -46,7 +46,7 @@ func compactionTriggerIn(body []byte) bool {
 	if !bytes.Contains(body, []byte(`"compaction_trigger"`)) {
 		return false
 	}
-	for _, it := range gjson.GetBytes(body, "input").Array() {
+	for _, it := range getIn(body, "input").Array() {
 		if it.Get("type").Str == "compaction_trigger" {
 			return true
 		}
@@ -62,7 +62,7 @@ func sealedCompactions(body []byte) []string {
 		return nil
 	}
 	var out []string
-	for _, it := range gjson.GetBytes(body, "input").Array() {
+	for _, it := range getIn(body, "input").Array() {
 		if !slices.Contains(compactionKinds, it.Get("type").Str) {
 			continue
 		}

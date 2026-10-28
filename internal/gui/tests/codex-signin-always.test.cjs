@@ -3,7 +3,8 @@
 // magpie is Codex's provider while the Codex app blocks the ChatGPT account
 // (out of allowance, no credits left), so the app still sends; Always
 // ChatGPT, which never does that and says what it costs; and magpie API,
-// which says Codex's Chrome control needs the ChatGPT sign-in (#1824).
+// which says the Codex app keeps its ChatGPT account, Chrome control
+// included, while it has room (#1824, Qyburn3 on X).
 // The square opens the app's picker with each way's sentence whole, in
 // the page's language; Always ChatGPT is posted as "chatgpt" and lights the
 // square, ChatGPT posts "" again. A click scrolls nothing. At 1100px and
@@ -85,7 +86,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await page.locator(codex).waitFor();
         const words = await page.evaluate(([ways, lang]) => ways.map((w) => lang === "en" ? [w.label, w.note] : [I18N[lang][w.label] || w.label, I18N[lang][w.note]]), [ways, lang]);
         assert(words.every(([, n]) => n), `every sentence has its ${lang}`);
-        assert.match(words[2][1], /Chrome.*ChatGPT/, `magpie API says Chrome control needs ChatGPT in ${lang}`);
+        assert.match(words[2][1], /ChatGPT.*Chrome/, `magpie API says the app keeps its ChatGPT account, Chrome control too, in ${lang}`);
         assert.equal(words[1][0] === "Always ChatGPT", lang === "en", `"Always ChatGPT" has its ${lang}`);
         await page.locator(`${codex} .ag-link`).click();
         await page.locator(`${codex} .ag-exp`).waitFor();

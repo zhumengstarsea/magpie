@@ -43,6 +43,10 @@ type candidate struct {
 	// effort is the reasoning the group's member it is of is fixed at
 	// ("provider/model:low"); "" for one that follows the agent or the group
 	effort string
+	// levels are the reasoning levels the member follows the agent among
+	// (Member.Levels, "provider/model:low+high"): what the agent asks is
+	// sent at the nearest of them. nil for one fixed or following the group.
+	levels []string
 	// fast is set on a member the group sends in its vendor's fast mode
 	// (Group.Fast); ultra on an agent's fast pick sent Ultrafast (#1954)
 	fast, ultra bool
@@ -112,7 +116,7 @@ func (c candidate) restKey() string {
 // seat is the candidate as one of a group's members has it: its key or
 // account, the model, and the effort the member is fixed at.
 func (c candidate) seat() string {
-	return provider.WithMemberEffort(c.rest+"/"+c.model, c.effort)
+	return provider.WithMemberEffort(c.rest+"/"+c.model, cmp.Or(c.effort, strings.Join(c.levels, "+")))
 }
 
 func (c candidate) isOpenRouterFree() bool {
@@ -502,7 +506,7 @@ func planLevel(g provider.Group, ms []provider.Member, depth int, from provider.
 		// the same model at another effort is another member's
 		for _, l := range [][]candidate{cs, aside, left, barred} {
 			for i := range l {
-				l[i].effort, l[i].fast = m.Effort, m.Fast
+				l[i].effort, l[i].levels, l[i].fast = m.Effort, m.Levels, m.Fast
 				l[i].firstToken = innerFirstToken(m)
 				l[i].patience = innerPatience(m)
 			}
@@ -1205,7 +1209,9 @@ func quotaSaid(msg string) bool {
 
 // unservedWords are how a vendor says the model isn't one it serves this
 // key, or this way — words another provider, or key, may not answer with.
-var unservedWords = regexp.MustCompile(`(?i)model.{0,80}(not (supported|accessible|available|found|enabled|allowed)|unsupported|does ?n[o']t exist|unknown|invalid)|(no such|unknown|invalid|unsupported) model|model_not_found|模型.{0,12}(不存在|不支持|无权|未开通)`)
+// provider.ModelUnserved owns them: a plugin's 401 that says them doesn't
+// mark the account's sign-in either.
+var unservedWords = provider.ModelUnserved
 
 // modelRefused says the vendor turned the request away over its model
 // alone — not one this key's plan, or this key, may use: SenseNova's 403
@@ -1340,11 +1346,13 @@ var unsaidWords = regexp.MustCompile(`(?i)(^|"|\\"|: )invalid request error trac
 // member has tried every API it has a URL for (forwardTranslated), and
 // another member, on another API or another vendor, may serve it (#2670:
 // a relay with a Chat URL alone, refusing tools with reasoning there).
+// One that also says the account is out of quota or credit (quotaWords,
+// creditWords: "请充值") is that, and rests it (#4095).
 func shapeRefused(status int, body []byte) bool {
 	// the words are matched decoded, too (#1669)
 	body = wordsOf(body)
 	return (status == 400 || status == 422) && (shapeWords.Match(body) || unsaidWords.Match(body) || customToolRefusal.Match(body) || wrongEndpoint(status, body)) &&
-		!quotaWords.Match(body) && !unservedWords.Match(body) && !refusedWords.Match(body)
+		!quotaWords.Match(body) && !creditWords.Match(body) && !unservedWords.Match(body) && !refusedWords.Match(body)
 }
 
 // regionWords are how a vendor says it doesn't serve where the request
@@ -1438,6 +1446,7 @@ func elsewhere(left []candidate, c candidate) []candidate {
 // that failed this way: the vendor was busy, out of quota or failing, or
 // this key or provider can't serve it — not the request itself at fault.
 func retryable(status int, body []byte) bool {
+	raw := body
 	// the words are matched decoded, too (#1669)
 	body = wordsOf(body)
 	switch {
@@ -1453,6 +1462,14 @@ func retryable(status int, body []byte) bool {
 	case status >= 400 && provider.EdgeBlocked(body):
 		// the vendor's firewall blocked this address (Alibaba Cloud's 405
 		// in front of zcode.z.ai): another provider goes another way
+		return true
+	case status >= 400 && status < 500 && failure(status, raw) == failCredit:
+		// out of credit, as failure reads it, whatever the status: another
+		// account may have a balance. SuperMagic's 400 "您的可用积分已不足…
+		// 通过「充值」通道补充积分" read as credit, but no word of
+		// quotaWords' is in it, so a group never asked the account with
+		// 6,467 points and the empty one was never rested (#4095,
+		// mycf_711)
 		return true
 	case status == 400, status == 422:
 		return quotaWords.Match(body) || unservedWords.Match(body) || refusedWords.Match(body) || shapeWords.Match(body) || unsaidWords.Match(body) || regionWords.Match(body) || wrongEndpoint(status, body)

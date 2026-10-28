@@ -650,6 +650,9 @@ button.rt-session { cursor: pointer; }
 /* Add a rule, and beside it a rule by what the message asks for */
 .rt-gadds { display: flex; flex-wrap: wrap; gap: 6px; }
 .rt-gadds > [hidden] { display: none; }
+/* Add a model, and beside it Sort by weight while it would move something */
+.rt-madds { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.rt-madds > [hidden] { display: none; }
 /* a group's rules, each one line read as a sentence: the conditions it
    has, → and the model it sends that turn to first; its acts under ⋯ */
 .rt-rules .fbl:not(:empty) + .rt-gadds { margin-top: 2px; }

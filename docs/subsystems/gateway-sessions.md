@@ -74,6 +74,28 @@ Requests, the Requests ledger and model lists keep each call's own id.
 Verification: `TestUsageAliasCountsTwoIdsAsOne`,
 `TestSessionsCountAliasedModelsAsOne`, `TestAliasStatsLeavesItsInputAlone`.
 
+The Usage page can clear its figures (CrazyMouse_TT on X): a model's row's
+"…" has "Clear usage…", and "Clear all usage…" sits under the lists. Each
+asks first, then `POST /api/usage/clear` adds a mark to `usageCleared` in
+settings.json ([`settings.ClearUsage`](../../internal/settings/settings.go)):
+a provider and model as the Models list names them (the alias, the
+provider's shown id), or neither for everything, and the time in Unix
+milliseconds. usage.jsonl is never rewritten. The usage pages leave out
+each call at or before a mark that matches it
+([`cleared.go`](../../internal/usage/cleared.go)): the Overview
+(`summarizeFrom`), and the Requests page, its heatmap and the CSV through
+`Filter.keepsRow`; the request index keys its meta on the marks
+(`clearedKey`), so a cached page is read again. Gateway keys' spending
+limits, the allowances' window holds and Codex's reads go by `usage.Visit`
+and the raw log, so they still count every cleared call: a clear never
+lifts a limit, and the confirmation says so. The marks ride the settings
+part of a sync, so a clear holds on the computers it syncs with, over
+their shared days and the agents' session-file rows too, and a later clear
+of the same model or of everything takes an earlier one's place. Usage ›
+Sessions is not cleared. Verification: `TestClearedUsageLeavesThePages`,
+`TestClearUsageKeepsOneMarkAModel`, `TestUsageClearRoute`,
+`usage-clear.test.cjs`.
+
 Claude Desktop gateway rows can have a local name even without a CLI
 transcript (#1675). [`DesktopTitles`](../../internal/sessions/desktop_titles.go)
 reads `claude-code-sessions/*/*/local_*.json` and
@@ -546,7 +568,14 @@ for: `provider_test`, `api_detect` or `model_list`
   full of 0-token rows no agent sent. A list that failed is still a row,
   under the Failed filter too, as is every Test and Detect APIs. Older
   lines stay in `usage.jsonl`, read by nothing.
-  `TestAnsweredModelListIsNoRow` covers it.
+  `TestAnsweredModelListIsNoRow` covers it. A request that is only a step
+  towards a list is no row either (`probelog.Taken`): an Antigravity
+  account's `fetchAvailableModels` with its tier named, which Google
+  answers 400 for a Google AI Pro account before the request without one
+  lists its models (ferock4669 on Discord, a 400 "Model list" row beside
+  every list). That tier isn't named again for a day (`tierRefusedFor`);
+  the request without one is written down as any list.
+  `TestAntigravityRefusedTierAskedOnceAndNoRow`.
 - **Whose:** a row recorded under its host, sent before its provider had
   an id, is listed under the provider saved on that host now
   (`Renames.ProbeOf`), and with none on it, a deleted one's, under the id

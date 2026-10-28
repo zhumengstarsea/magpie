@@ -91,11 +91,18 @@ func (m *Model) logits(ids []int, procs int) []float32 {
 	return m.net.logits(ids, procs)
 }
 
+// Cores is how many cores the model reads on at most: half of them, and
+// never more than 4. It reads beside the agents and everything else on
+// the computer, and on all of them a long history unread kept every core
+// busy for as long as requests came (xinvxueyuan and shensmart on Discord,
+// 10-28: a 32-core Linux box spent 45 CPU seconds on each request).
+func Cores() int { return max(1, min(4, runtime.GOMAXPROCS(0)/2)) }
+
 // Find is what the model finds in text, at Floor, each span with its score.
 // A text longer than a window is read a window at a time, overlapping,
-// and on the CPU those windows are read at once, one a core: a window's
-// own matmuls split over the cores leave most of each idle in the steps
-// between them (a 4-core server read a long prompt for minutes).
+// and on the CPU those windows are read at once, one a core (of Cores): a
+// window's own matmuls split over the cores leave most of each idle in
+// the steps between them (a 4-core server read a long prompt for minutes).
 func (m *Model) Find(text string) []Span {
 	toks := m.tok.encode(text)
 	n := len(toks)
@@ -121,11 +128,11 @@ func (m *Model) Find(text string) []Span {
 		ids = append(ids, 2)
 		lgs[w] = m.logits(ids, procs)
 	}
-	procs := runtime.GOMAXPROCS(0)
+	procs := Cores()
 	at := min(procs, len(starts))
 	if m.ml != nil || at == 1 {
 		for w := range starts {
-			read(w, threads)
+			read(w, procs)
 		}
 	} else {
 		var next atomic.Int32

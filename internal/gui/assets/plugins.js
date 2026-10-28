@@ -258,6 +258,20 @@
     draw();
   };
 
+  // pluginAgentsTo: Discover, at its Agents (the Agents page's More in
+  // Plugins). The scroll is the reader's click's, so it is made only while
+  // the click is fresh: Agents drawn later, the listings slow, is left
+  // where the page is.
+  let agentsFor = null; // the click that asked for Agents, till they are drawn
+  window.pluginAgentsTo = (ev) => {
+    query = "";
+    tab = "discover";
+    clearTimeout(searchTimer);
+    hits = null;
+    agentsFor = ev;
+    draw();
+  };
+
   async function refresh() {
     // a plugin installed, switched on or off, or removed brings its
     // page's tab, or takes it, now: not on the Plugins page's next load
@@ -914,7 +928,8 @@
       const pgs = ls.filter((l) => l.community && kindOf(l) === "pg");
       if (ours.length) out.push(section(t("Subscriptions"), t("written for magpie, checked against its own sign-ins"), ours));
       if (mws.length) out.push(section(t("Gateway middleware"), t("runs in magpie's gateway on what every agent sends and gets back, whichever provider serves it"), mws));
-      if (ags.length) out.push(section(t("Agents"), t("agents magpie has no setup of its own for, connected to it as its own are"), ags));
+      const agSec = ags.length ? section(t("Agents"), t("agents magpie has no setup of its own for, connected to it as its own are"), ags) : null;
+      if (agSec) { agSec.classList.add("pm-agents"); out.push(agSec); }
       if (tls.length) out.push(section(t("Tools for agents"), t("tools every agent can call, through magpie's MCP server"), tls));
       if (pgs.length) out.push(section(t("Pages"), t("pages of their own in magpie's window, each shut off from the rest and reading only what it lists"), pgs));
       if (gh.length) out.push(ghSection(gh));
@@ -922,6 +937,13 @@
       else if (taggedErr && !tagged.length) out.push(ghFailed());
       out.push(manual());
       replaceKeeping(body, out);
+      if (agentsFor && agSec) {
+        // after the view is put back where the reader was, as showing it
+        // does; the section then is the one drawn last (npm's answers draw
+        // it again)
+        if (window.scrollOnPurpose?.(agentsFor)) requestAnimationFrame(() => { body.querySelector(".pm-agents")?.scrollIntoView({ block: "start" }); window.arrived?.(page); });
+        agentsFor = null;
+      }
       return;
     }
     if (ls.length) out.push(section(t("Suggested"), "", ls));

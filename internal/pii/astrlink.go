@@ -156,6 +156,7 @@ var guardBackend = &backend{
 	path:     func() string { return filepath.Join(guardRoot(), "found-"+guardRev[:12]+".bin") },
 	classify: guardClassify,
 	heldBack: guardHeldBack,
+	chunk:    guardChunk,
 }
 
 // guardClassify is what the model finds in texts, loaded if it isn't.

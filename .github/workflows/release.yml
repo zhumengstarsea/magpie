@@ -232,7 +232,14 @@ jobs:
           mkdir -p $RUNNER_TEMP/dmg
           cp -R magpie.app $RUNNER_TEMP/dmg/
           ln -s /Applications $RUNNER_TEMP/dmg/Applications
-          hdiutil create -volname magpie -srcfolder $RUNNER_TEMP/dmg -ov -format UDZO "$DMG"
+          # hdiutil's automatic size can leave too little room to copy the
+          # app. Use logical file sizes (not APFS's allocated blocks), with
+          # 25% plus 128 MiB for filesystem metadata and copy overhead.
+          SOURCE_BYTES=$(python3 -c 'import os, sys; print(sum(os.lstat(os.path.join(root, name)).st_size for root, _, files in os.walk(sys.argv[1]) for name in files))' "$RUNNER_TEMP/dmg")
+          DMG_SIZE_MB=$(( (SOURCE_BYTES * 5 / 4 + 1048575) / 1048576 + 128 ))
+          echo "DMG source: $SOURCE_BYTES bytes; image capacity: $DMG_SIZE_MB MiB"
+          df -h "$RUNNER_TEMP" .
+          hdiutil create -volname magpie -srcfolder "$RUNNER_TEMP/dmg" -size "${DMG_SIZE_MB}m" -ov -format UDZO "$DMG"
           if [ -n "$IDENTITY" ]; then
             codesign --force --timestamp --sign "$IDENTITY" "$DMG"
           fi

@@ -15,7 +15,7 @@
 }
 .lib-head::before {
   content: ""; position: absolute; z-index: -1; pointer-events: none;
-  top: 0; bottom: 0; left: calc(-1 * var(--bleed-l)); right: calc(-1 * var(--bleed-r));
+  top: 0; bottom: 0; left: calc(-1 * var(--bleed-l)); right: calc(var(--bar, 0px) - var(--bleed-r)); /* the bar's room is out of the padding */
   background: color-mix(in srgb, var(--bg) 92%, transparent);
   -webkit-backdrop-filter: saturate(1.6) blur(16px); backdrop-filter: saturate(1.6) blur(16px);
   box-shadow: 0 1px 0 transparent; transition: box-shadow .18s var(--ease);
@@ -52,6 +52,44 @@ body.window .lib-head { top: -2px; margin: -2px 0 0; padding: 8px 0 4px; --bleed
 .lib-intro { margin: 8px 2px 10px; font-size: 12px; line-height: 1.5; color: var(--muted); text-wrap: pretty; }
 .lib-aside { margin: 8px 4px 0; font-size: 11.5px; line-height: 1.5; color: var(--faint); }
 .lib-aside.center { text-align: center; margin-top: 14px; }
+/* the MCP hub's switch, under the servers (#2679) */
+.lib-hublist { margin-top: 16px; }
+.lib-hub .lib-switch { align-self: center; }
+/* its switch stays beside its text in a narrow window, as a setting's does */
+.lib-list .row.lib-hub { flex-wrap: nowrap; }
+.lib-hub .name { white-space: normal; }
+.lib-hub .lib-hubstats { margin-top: 4px; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* the address any other app connects at, under the switch */
+.lib-list .row.lib-hubat { flex-wrap: nowrap; align-items: center; }
+.lib-hubat > .lib-glyph { align-self: center; margin-top: 0; }
+.lib-hubat .who { min-width: 0; }
+.lib-hubat .lib-hubURL { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: text; }
+.lib-hubat .lib-hubconnect { flex: none; }
+/* Connect an app: the agents here and where each stands, then the address, a picker of apps, and what adds it */
+/* one column: the dialog's body (.ebody) is the editor's label/field grid */
+.modal .editor.lib-hubsheet > .ebody { grid-template-columns: minmax(0, 1fr); grid-auto-rows: max-content; gap: 12px; }
+.lib-hubsheet .ebody > * { min-width: 0; margin-top: 0; margin-bottom: 0; }
+.lib-hubsheet .lib-hublead { color: var(--fg-2); text-wrap: pretty; }
+.lib-hubsheet .lib-hubsec { margin-top: 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.lib-hubsheet .lib-hubagents { max-height: min(40vh, 300px); overflow: auto; }
+.lib-list .row.lib-hubagent { gap: 10px; flex-wrap: nowrap; align-items: center; }
+.lib-hubagent > .ic { width: 20px; height: 20px; flex: none; }
+.lib-hubagent .who { flex: 1; min-width: 0; }
+.lib-hubagent .sub { white-space: normal; text-wrap: pretty; }
+.lib-hubok { flex: none; display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--green); }
+.lib-hubagent .lib-hubgo { height: 24px; padding: 0 10px; font-size: 12px; flex: none; }
+.lib-hubaddr { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 8px 8px 8px 12px; border-radius: 8px; background: var(--pill); }
+.lib-hubaddr code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; user-select: all; }
+.lib-hubsheet .segs { justify-self: start; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.lib-hubsheet .segs .opt { flex: none; }
+.lib-hubpane { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; min-height: 132px; }
+.lib-hubpane .lib-hubadd { margin-bottom: 2px; }
+.lib-hubwhere, .lib-hubdone { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--fg-2); }
+.lib-hubdone { color: var(--muted); }
+.lib-hubcode { position: relative; align-self: stretch; min-width: 0; border: 1px solid var(--line-2); border-radius: 8px; background: var(--bg-2, var(--pill)); }
+.lib-hubcode pre { margin: 0; padding: 10px 40px 10px 12px; overflow-x: auto; font-family: var(--code-font, var(--code)); font-size: 12px; line-height: 1.55; white-space: pre; user-select: text; }
+.lib-hubcode .copy { position: absolute; top: 6px; right: 6px; }
+.lib-hubpane .lib-aside { margin: 0; }
 
 /* the glyph at the front of a row: drawn, in the text colour */
 .lib-glyph { flex: none; width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; color: var(--fg-2); background: var(--pill); }
@@ -105,6 +143,13 @@ body.window .lib-head { top: -2px; margin: -2px 0 0; padding: 8px 0 4px; --bleed
 .lib-skill .sub { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.4; }
 .lib-skill.missing .name { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--faint); }
 .lib-skill.missing .sub { color: var(--amber); }
+/* off on this computer: its agents' ticks are the other computers', shown faded and not to be changed here */
+.lib-skill.offhere > .lib-glyph, .lib-skill.offhere > .lib-logo, .lib-skill.offhere .sub { opacity: .55; }
+.lib-skill.offhere > .lib-agents { opacity: .4; pointer-events: none; }
+.lib-hereline { display: flex; margin-top: 3px; min-width: 0; }
+.lib-hereline > .lib-tag.lib-offhere { cursor: pointer; margin-left: 0; flex: 0 1 auto; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.lib-tag.lib-offhere:hover { color: var(--fg); }
+.lib-icon.lib-here.on { color: var(--accent); }
 .lib-src { display: flex; align-items: center; gap: 5px; margin-top: 3px; font-size: 11px; color: var(--faint); min-width: 0; }
 /* "linked from" stays whole, one line, and the path beside it gives way:
    CJK can break after any character, so the label shrank to a column of
@@ -412,9 +457,14 @@ input.lib-setname:focus { border-color: var(--accent); box-shadow: 0 0 0 3px col
 .mk-top { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .mk-icon {
   flex: none; width: 36px; height: 36px; border-radius: 9px; overflow: hidden; display: grid; place-items: center;
-  background: #fff; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .07);
+  position: relative; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .07);
 }
-.mk-icon img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* The white sits on a plate 1px in, not on the tile: under an opaque logo
+   a white background bleeds through the rounded clip's soft edge as a white
+   fringe at each corner. */
+.mk-icon::before { content: ""; position: absolute; inset: 1px; border-radius: inherit; background: #fff; }
+.mk-icon.mono::before { content: none; }
+.mk-icon img { position: relative; width: 100%; height: 100%; object-fit: cover; display: block; }
 .mk-icon.svg img { width: 72%; height: 72%; object-fit: contain; }
 .mk-icon.mono { background: var(--pill); box-shadow: none; }
 .mk-mono { font-size: 15px; font-weight: 600; color: var(--fg-2); }

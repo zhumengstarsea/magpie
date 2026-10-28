@@ -951,6 +951,10 @@ func summarizeFrom(p Period, now time.Time, first time.Time, historicalKeys map[
 		}
 	}
 	historicalKeys = normalizedKeys
+	// the user's clears (cleared.go): a call cleared is in no figure, and a
+	// clear of everything starts the timeline again
+	cleared := readCleared()
+	first = cleared.clearedSince(first)
 	// a picked range's own days alone: its chart can start on the Monday
 	// before its first, and it ends before now (#1492)
 	from, until := p.Since(now), p.Until(now)
@@ -960,6 +964,9 @@ func summarizeFrom(p Period, now time.Time, first time.Time, historicalKeys map[
 				return
 			}
 			r.renameBy(renamed)
+			if cleared.hides(&r) {
+				return
+			}
 			fn(r)
 		})
 	}
