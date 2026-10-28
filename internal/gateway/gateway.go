@@ -3678,6 +3678,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 					// Subscribe before re-reading: a login added around the
 					// replan must either be seen now or wake this wait.
 					changes := provider.AccountChanges()
+					allowancesChanged := provider.AllowanceChanges()
 					if resumeQuota() {
 						s.trace.update(tr, func(t *Route) { t.Order, t.Left = pl.order, pl.left })
 						i, again = -1, 0
@@ -3694,7 +3695,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 					}
 					try.Fail, try.Again = failQuota, wait.Milliseconds()
 					s.trace.update(tr, func(t *Route) { t.Tries[len(t.Tries)-1] = try })
-					if !pauseAlive(r.Context(), w, kept, streams, start, wait, changes) {
+					if !pauseAlive(r.Context(), w, kept, streams, start, wait, changes, allowancesChanged) {
 						call.Status, call.Error = canceled(r.Context())
 						try.Gone = true
 						s.trace.update(tr, func(t *Route) { t.Tries[len(t.Tries)-1] = try })

@@ -22,7 +22,11 @@ Replanning preserves the group's selected members, gateway-key
 account limits and native checkpoint compatibility, and is disabled for an
 explicit account pin or strict affinity. Writes to the account pool wake the
 wait through `provider.AccountChanges`, subscribed before re-reading the
-accounts, without polling. Client cancellation ends the wait and retries.
+accounts, without polling. `provider.AllowanceChanges` also wakes this wait
+when a quota card is refreshed, routing's allowance read completes, or a
+reset is spent. A refresh makes routing's separate cache stale first, so an
+early renewal resumes the original request instead of waiting for the old
+reset date. Client cancellation ends the wait and retries.
 
 While such a Codex stream is held, `holdWriter.pulse` sends the extension SSE
 event `magpie.keepalive`. Codex ignores its content and resets its stream idle

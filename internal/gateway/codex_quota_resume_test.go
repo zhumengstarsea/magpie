@@ -357,3 +357,78 @@ func TestCodexQuotaHeartbeatDoesNotSplitPartialUpstreamFrame(t *testing.T) {
 		t.Fatalf("data event inserted into an in-progress upstream frame: %q", got)
 	}
 }
+
+// A refreshed allowance can recover hours before the reset promised by a
+// refusal. The original request must wake even though no account was added.
+func TestCodexQuotaResumeAfterEarlyRenewal(t *testing.T) {
+	quotaResumeTest(t)
+	codexQuotaResumeMax = 3 * time.Hour
+	var recovered atomic.Bool
+	provider.LoginUsageVia(func(context.Context, string) map[string]provider.SubscriptionQuota {
+		used := 100.0
+		if recovered.Load() {
+			used = 0
+		}
+		reset := time.Now().Add(2 * time.Hour)
+		q := provider.SubscriptionQuota{Provider: "codex", Windows: []provider.QuotaWindow{
+			{Name: "5 hours", Used: used, ResetsAt: &reset, Span: 5 * time.Hour},
+		}}
+		return map[string]provider.SubscriptionQuota{"me@example.com": q, "spare@example.com": q}
+	})
+	t.Cleanup(func() { provider.LoginUsageVia(nil) })
+	provider.StaleAllowance("codex", "me@example.com")
+	if !provider.AwaitAllowance(context.Background(), "codex", "me@example.com") {
+		t.Fatal("initial full allowance was not read")
+	}
+	var asks atomic.Int32
+	quotaBackend(t, func(w http.ResponseWriter, r *http.Request) {
+		io.ReadAll(r.Body)
+		asks.Add(1)
+		if !recovered.Load() {
+			w.WriteHeader(429)
+			io.WriteString(w, `{"error":{"type":"usage_limit_reached","resets_in_seconds":7200}}`)
+			return
+		}
+		quotaPong(w)
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req := httptest.NewRequest("POST", CodexPath+"/responses", strings.NewReader(
+		`{"model":"gpt-5.5","stream":true,"input":"ping"}`)).WithContext(ctx)
+	req.Header.Set("Authorization", "Bearer chatgpt-token")
+	req.Header.Set("chatgpt-account-id", "acct-1")
+	s, rec := New(), httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.Handler().ServeHTTP(rec, req)
+	}()
+	defer func() { cancel(); <-done }()
+	var seq int64
+	waiting := false
+	for !waiting && ctx.Err() == nil {
+		st := s.Trace(ctx, seq, time.Second)
+		seq = st.Seq
+		for _, route := range st.Routes {
+			for _, attempt := range route.Tries {
+				waiting = waiting || attempt.Again > int64(time.Hour/time.Millisecond)
+			}
+		}
+	}
+	if !waiting {
+		t.Fatal("request never entered its long quota wait")
+	}
+	recovered.Store(true)
+	provider.StaleAllowance("codex", "me@example.com")
+	if !provider.AwaitAllowance(ctx, "codex", "me@example.com") {
+		t.Fatal("recovered allowance was not read")
+	}
+	select {
+	case <-done:
+	case <-ctx.Done():
+		t.Fatal("allowance recovered but the original request kept waiting for the old reset")
+	}
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "pong") {
+		t.Fatalf("early recovery did not resume the request: %d %s", rec.Code, rec.Body.String())
+	}
+}
