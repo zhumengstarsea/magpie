@@ -5,12 +5,7 @@
 name: privacy-filter
 
 on:
-  push:
-    branches: [main, "pf/**"]
-    paths: ["native/privacy-filter/**", ".github/workflows/privacy-filter.yml"]
-    tags: ["pf-v*"]
-  pull_request:
-    paths: ["native/privacy-filter/**", ".github/workflows/privacy-filter.yml"]
+  
   workflow_dispatch:
 
 permissions:
