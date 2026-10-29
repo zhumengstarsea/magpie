@@ -4,8 +4,7 @@ name: Sync upstream
 # takes a merge: changes are picked from `up` one commit at a time, so the
 # subtraction stays readable and reversible.
 on:
-  schedule:
-    - cron: '17 */6 * * *'
+  
   workflow_dispatch:
 
 permissions:
