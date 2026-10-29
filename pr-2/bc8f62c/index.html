@@ -1,0 +1,14 @@
+<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>#2 界面预览 · bc8f62c</title>
+<style>:root{color-scheme:light dark;--bg:#f6f6f7;--fg:#1d1d1f;--muted:#6e6e73;--card:#fff;--line:#e5e5ea}
+@media (prefers-color-scheme:dark){:root{--bg:#111113;--fg:#f2f2f4;--muted:#9a9aa0;--card:#1c1c1f;--line:#2c2c30}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif}
+main{max-width:1100px;margin:0 auto;padding:28px 16px 60px}h1{font-size:20px;margin:0 0 4px}.m{color:var(--muted);font-size:13px;margin:0 0 20px}
+video,img{display:block;width:100%;border-radius:10px;border:1px solid var(--line);background:var(--card)}figure{margin:0 0 28px}figcaption{color:var(--muted);font-size:13px;margin-top:8px}
+a{color:inherit}</style>
+<main><h1>#2 界面预览</h1><p class="m">commit bc8f62c · <a href="https://github.com/lingqiqi5211/moepie/pull/2">回到 PR</a> · 本次唯一的界面改动是供应商编辑弹窗里「压缩」（Codex 原生压缩）开关下方的说明文案：由“压缩过的对话只能在同一服务商和账号上继续”改为“官方 Codex 账号可在账号池内其他符合条件的账号上继续，其他服务商仍绑定原写入方，检查点不会被丢弃”；中文、繁体、日、德四套文案同步更新。其余改动都在网关内部（额度等待与恢复、SSE keepalive、检查点跨账号续接），不产生新的界面元素。</p>
+<figure><video src="preview.mp4" controls autoplay muted playsinline poster="poster.png"></video><figcaption>红线是鼠标走过的轨迹，红色圆环是一次点击；底部文字是这一步在做什么。空格暂停，← → 逐段查看。</figcaption></figure>
+<figure><img src="01-provider-dialog.png" alt="供应商编辑弹窗打开后的样子"><figcaption>供应商的「压缩」说明文案 · 供应商编辑弹窗打开后的样子</figcaption></figure>
+<figure><img src="02-compaction-note.png" alt="「压缩」开关及其下方的说明文案"><figcaption>供应商的「压缩」说明文案 · 「压缩」开关及其下方的说明文案</figcaption></figure>
+<figure><img src="03-compaction-field.png" alt="「压缩」设置项与其说明文字（放大）"><figcaption>供应商的「压缩」说明文案 · 「压缩」设置项与其说明文字（放大）</figcaption></figure>
+</main></html>

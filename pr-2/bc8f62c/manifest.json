@@ -1,0 +1,36 @@
+{
+  "summary": "本次唯一的界面改动是供应商编辑弹窗里「压缩」（Codex 原生压缩）开关下方的说明文案：由“压缩过的对话只能在同一服务商和账号上继续”改为“官方 Codex 账号可在账号池内其他符合条件的账号上继续，其他服务商仍绑定原写入方，检查点不会被丢弃”；中文、繁体、日、德四套文案同步更新。其余改动都在网关内部（额度等待与恢复、SSE keepalive、检查点跨账号续接），不产生新的界面元素。",
+  "scenes": [
+    {
+      "title": "供应商的「压缩」说明文案",
+      "shots": [
+        {
+          "file": "01-provider-dialog.png",
+          "caption": "供应商编辑弹窗打开后的样子",
+          "width": 2560
+        },
+        {
+          "file": "02-compaction-note.png",
+          "caption": "「压缩」开关及其下方的说明文案",
+          "width": 2560
+        },
+        {
+          "file": "03-compaction-field.png",
+          "caption": "「压缩」设置项与其说明文字（放大）",
+          "width": 1120
+        }
+      ]
+    }
+  ],
+  "video": "preview.mp4",
+  "poster": "poster.png",
+  "errors": [
+    "供应商的「压缩」说明文案 · scroll : nothing visible matches .native-compaction (1 in the page)"
+  ],
+  "leak": false,
+  "skipped": null,
+  "mismatch": "",
+  "unseen": "额度耗尽后保留请求、按最早重置时间或账号/额度变更唤醒、扩展 SSE keepalive、自动重置卡优先、第三方静默回退与回官方、检查点跨 Codex 账号池续接等全部是网关内部行为，没有对应的界面开关或状态。沙盒里只有两个 Codex 账号（maya.chen 37%、dev.team 91%），额度并未耗尽，也没有重置卡与第三方静默转发，因此这些行为无法在这里触发或截图；只能展示被这些行为连带改了文案的「压缩」设置项。",
+  "interactive": true,
+  "pages": 1
+}

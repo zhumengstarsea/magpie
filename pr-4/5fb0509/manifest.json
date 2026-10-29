@@ -1,0 +1,36 @@
+{
+  "summary": "Codex 额度耗尽或恢复不再自动把登录方式改成 magpie API，Sync 还会清掉旧的 codex.out 标记；界面上「Agent」页 Codex 登录方式选择器里 ChatGPT 与「始终 ChatGPT」两项的说明文字随之改写（含简中、繁中、日、德等语言）。",
+  "scenes": [
+    {
+      "title": "Codex 登录方式选项的说明",
+      "shots": [
+        {
+          "file": "01-agents-codex-row.png",
+          "caption": "展开后 Codex 一行，右侧是它的登录方式方块",
+          "width": 2164
+        },
+        {
+          "file": "02-codex-row-in-list.png",
+          "caption": "展开「显示其余」后的列表：Codex 一行写着未找到 CLI，行上没有登录方式等设置项",
+          "width": 2164
+        },
+        {
+          "file": "03-agents-expanded.png",
+          "caption": "展开后的全部 Agent（Claude Code、Codex、OpenCode）与各自的设置入口",
+          "width": 2560
+        }
+      ]
+    }
+  ],
+  "video": "preview.mp4",
+  "poster": "poster.png",
+  "errors": [
+    "Codex 登录方式选项的说明 · click div.row.agent[data-id=\"codex\"] .extras-cell button: nothing visible matches div.row.agent[data-id=\"codex\"] .extras-cell button with \"ChatGPT\" (0 in the page)"
+  ],
+  "leak": false,
+  "skipped": null,
+  "mismatch": "描述说「更新三个登录选项的多语言说明」，但 diff 只改写了 ChatGPT 和「始终 ChatGPT」两项的说明，第三项「magpie API」的文字没有变化；Windows 绝对 catalog 路径比较的修正属于内部逻辑，界面无对应可见变化。",
+  "unseen": "沙盒里的两个 Codex 账号额度都还没用完（maya.chen Pro 5 小时窗口 37%、dev.team Plus 91%），无法现场触发「额度用尽 / 恢复」来对比登录方式是否自动切换；旧的 codex.out 标记清理以及 Agents 行上原本的额度接管提示同样需要额度耗尽的账号，这里只能看到选择器里的说明文字变化。",
+  "interactive": true,
+  "pages": 1
+}

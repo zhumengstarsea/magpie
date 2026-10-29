@@ -1,0 +1,31 @@
+{
+  "summary": "此 PR 只改了一处界面文案：供应商编辑页里「Codex 在此服务商上原生压缩」开关下的说明，改成「官方 Codex 账号可切换到账号池中其他符合条件的账号继续、检查点原样传递且不丢弃」的新表述，并同步了简体中文、繁体中文、日文和德文翻译。网关侧的检查点跨账号续接、错误提示等属于后端行为，没有新增页面或控件。",
+  "scenes": [
+    {
+      "title": "Codex 原生压缩的说明文字",
+      "shots": [
+        {
+          "file": "01-codex-compaction-help.png",
+          "caption": "「压缩」开关下方的说明文字",
+          "width": 2560
+        },
+        {
+          "file": "02-codex-compaction-switch.png",
+          "caption": "「Codex 在此服务商上原生压缩」开关与说明",
+          "width": 1120
+        }
+      ]
+    }
+  ],
+  "video": "preview.mp4",
+  "poster": "poster.png",
+  "errors": [
+    "Codex 原生压缩的说明文字 · scroll : nothing visible matches .native-compaction (1 in the page)"
+  ],
+  "leak": false,
+  "skipped": null,
+  "mismatch": "",
+  "unseen": "官方 Codex checkpoint 在账号池中跨账号续接、以及新的 checkpoint 错误文案，只出现在网关请求结果和路由/最近调用的日志里；沙盒中没有携带官方原生压缩检查点的真实请求，无法演示这些行为，只能看到开关下方说明文字的改动。",
+  "interactive": true,
+  "pages": 1
+}
