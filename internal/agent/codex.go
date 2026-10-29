@@ -1183,9 +1183,18 @@ func codexIn(at place) *Agent {
 			t, _ := edit.GetTOMLTable(path, "model_providers."+p)
 			to, through = p, t["base_url"] == at.codexURL() || t["base_url"] == at.v1()
 		}
+		// beside its sign-in on one of magpie's models, not joined, one of
+		// its own picked here takes magpie out (set, #940) unless failover
+		// puts the base URL back: it said via magpie, and the pick went
+		// straight to OpenAI with nothing asked (NancyTom18 on X)
+		ownThrough := through
+		if through && (p == "" || p == "openai") && beside() && !asProvider() && !api() &&
+			!(joined() && chatGPT()) && !(codexFailover() && !disconnected()) {
+			ownThrough = false
+		}
 		say := func(own []Option) []Option {
 			for i := range own {
-				if through {
+				if ownThrough {
 					own[i].Via = true
 				} else {
 					own[i].Direct = to

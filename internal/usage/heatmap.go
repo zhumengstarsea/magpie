@@ -149,12 +149,21 @@ func heatmapFrom(since, now time.Time, days []Day) *Heatmap {
 // read every row of the year again for it, and paired them: ~4 GB a
 // minute and seconds of CPU a refresh while an agent worked (#2278).
 func (ps *pairedRows) heatOf(since, now time.Time, f Filter, cache *partCache, identities map[string]sessions.CodexIdentity) *Heatmap {
+	return heatmapFrom(since, now, ps.heatDaysOf(since, now, f, cache, identities, nil))
+}
+
+// heatDaysOf is heatOf's days, oldest first, each with a call, of the
+// chunks of ps that only keeps (nil: all).
+func (ps *pairedRows) heatDaysOf(since, now time.Time, f Filter, cache *partCache, identities map[string]sessions.CodexIdentity, only func(*rowChunk) bool) []Day {
 	sigs := ps.sigs(identities)
 	var rows chunkRows
 	defer rows.release()
 	var r Row
 	all := heatDays{}
 	for _, c := range ps.all {
+		if only != nil && !only(c) {
+			continue
+		}
 		sig := sigs[c]
 		var part *chunkPart
 		if cache != nil && c.serial != 0 {
@@ -181,8 +190,151 @@ func (ps *pairedRows) heatOf(since, now time.Time, f Filter, cache *partCache, i
 			all.addDay(d)
 		}
 	}
+	return all.list()
+}
+
+// heatRecent is how many days before today the heatmap pairs again for a
+// call (heatSplit), and heatReach how far before them a chunk's newest
+// call can be and still be paired with one of theirs: the gateway's calls
+// are read from a day before a period (gatewaySince), the other
+// computers' days from two.
+const (
+	heatRecent = 2
+	heatReach  = 48 * time.Hour
+)
+
+// heatOldFresh is how long heatSplit keeps the days before its last few
+// while only the chunks of those days change. A session file a call is
+// written to now can hold older calls too, and those are taken to stay as
+// they were: an agent appends to its file. What changes them anyway, a
+// file written again or a thread's identity learnt, shows within this.
+var heatOldFresh = 10 * time.Minute
+
+// heatOld is the heatmap's days before cut, from a pairing of every
+// chunk, while settled, the serials of the chunks with no call since
+// heatReach before cut, are the same. parts are the other chunks' sums
+// from cut on, as the last pairing of them paired them.
+type heatOld struct {
+	cut     time.Time
+	settled []uint64
+	at      time.Time
+	days    []Day
+	parts   map[uint64]*chunkPart
+	// before is the recent chunks' rows before cut, which days counts
+	before heatSum
+}
+
+// heatSum is a sum of rows as read, to tell a change in them.
+type heatSum struct {
+	n          int
+	at, tokens int64
+}
+
+// heatBefore is the sum of the recent chunks' rows before cut: a recent
+// chunk can hold calls of the days before (a session file copied in, a
+// rollout forked from an old one), and they change the days the last
+// pairing of every chunk counted.
+func heatBefore(cut time.Time, recent [3][]*rowChunk) heatSum {
+	rows := lentRows()
+	defer rows.release()
+	var s heatSum
+	for _, set := range recent {
+		for _, c := range set {
+			open := rows.of(c)
+			for i := range open.Rows {
+				if pr := &open.Rows[i]; pr.Time.Before(cut) {
+					s.n++
+					s.at += pr.Time.UnixNano()
+					for _, t := range pr.Tokens {
+						s.tokens += t
+					}
+				}
+			}
+		}
+	}
+	return s
+}
+
+// heatSplit is heatOf of the rows of every chunk, paired. A call through
+// magpie changes the gateway's newest block and a session file, and the
+// heatmap paired a year of calls again for it: ~1.8 s and most of the
+// GC of each refresh of the Usage page while an agent worked (#2278). The
+// days before the last heatRecent are taken from the last pairing of
+// every chunk while the chunks that could change them are the same, and
+// only the chunks of the days since are paired again, as a page of those
+// days pairs them.
+func heatSplit(since, now time.Time, gateways, chunks, others []*rowChunk, f Filter, identities map[string]sessions.CodexIdentity, cache *partCache) *Heatmap {
+	cut := time.Date(now.Year(), now.Month(), now.Day()-heatRecent, 0, 0, 0, 0, now.Location())
+	edge := cut.Add(-heatReach)
+	isRecent := func(c *rowChunk) bool { return c.Latest.IsZero() || !c.Latest.Before(edge) }
+	if cache == nil || !cut.After(since) {
+		return heatmapFrom(since, now, pairRows(heatmapPeriod, now, gateways, chunks, others, identities).heatDaysOf(since, now, f, cache, identities, nil))
+	}
+	var recent, settled [3][]*rowChunk
+	for k, set := range [3][]*rowChunk{gateways, chunks, others} {
+		for _, c := range set {
+			if isRecent(c) {
+				recent[k] = append(recent[k], c)
+			} else {
+				settled[k] = append(settled[k], c)
+			}
+		}
+	}
+	// recentDays adds up the recent chunks' rows from cut on, paired as
+	// the next call pairs them, into parts
+	recentDays := func(old, parts map[uint64]*chunkPart) []Day {
+		ps := pairRowsIn(cut, heatmapPeriod.Until(now), recent[0], recent[1], recent[2], identities)
+		return ps.heatDaysOf(cut, now, f, &partCache{old: old, next: parts}, identities, nil)
+	}
+	serials, ok := pairSerials(settled[0], settled[1], settled[2])
+	old := cache.heatOld
+	var before heatSum
+	if ok {
+		before = heatBefore(cut, recent)
+	}
+	if !ok || old == nil || !old.cut.Equal(cut) || !slices.Equal(old.settled, serials) || old.before != before || time.Since(old.at) >= heatOldFresh {
+		if heatPairing != nil {
+			heatPairing(len(gateways) + len(chunks) + len(others))
+		}
+		days := pairRows(heatmapPeriod, now, gateways, chunks, others, identities).heatDaysOf(since, now, f, cache, identities, nil)
+		if ok {
+			n, _ := slices.BinarySearchFunc(days, cut.Format(time.DateOnly), func(d Day, day string) int { return strings.Compare(d.Date, day) })
+			parts := map[uint64]*chunkPart{}
+			var kept map[uint64]*chunkPart
+			if old != nil {
+				kept = old.parts
+			}
+			recentDays(kept, parts)
+			cache.heatOldNext = &heatOld{cut: cut, settled: serials, at: time.Now(), days: slices.Clip(days[:n]), parts: parts, before: before}
+		}
+		return heatmapFrom(since, now, days)
+	}
+	next := *old
+	next.parts = map[uint64]*chunkPart{}
+	cache.heatOldNext = &next
+	// the settled chunks' sums stay kept for the next pairing of them all
+	for _, set := range settled {
+		for _, c := range set {
+			if part := cache.old[c.serial]; part != nil {
+				cache.next[c.serial] = part
+			}
+		}
+	}
+	all := heatDays{}
+	for _, d := range old.days {
+		all.addDay(d)
+	}
+	if heatPairing != nil {
+		heatPairing(len(recent[0]) + len(recent[1]) + len(recent[2]))
+	}
+	for _, d := range recentDays(old.parts, next.parts) {
+		all.addDay(d)
+	}
 	return heatmapFrom(since, now, all.list())
 }
+
+// heatPairing, in tests, is told how many chunks heatSplit pairs.
+var heatPairing func(chunks int)
 
 // heatReading, in tests, is told each chunk heatOf adds up again.
 var heatReading func(*rowChunk)

@@ -2,6 +2,7 @@ package redact
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -319,7 +320,7 @@ func modelFits(s string, a, b int, kind string) bool {
 		// 10-28). A key is 64 hex digits; one called a key is masked still.
 		return kind == "SECRET" && secretCued(s, a)
 	}
-	if moduleAt(s, a, b) {
+	if packageAt(s, a, b) {
 		return false
 	}
 	switch kind {
@@ -359,12 +360,58 @@ func modelFits(s string, a, b int, kind string) bool {
 		if pinnedAfter(s, b) {
 			return false
 		}
+		if wordsOnly(v) && !assignedSecret(s, a) {
+			return false
+		}
 		return !hexRe.MatchString(v) || secretCued(s, a)
 	case "EMAIL":
 		// a URL's user:password@host is no address, as for the rule's (#3538)
 		return wordByte(v[0]) && !modCacheRe.MatchString(v) && !inUserinfo(s, a)
 	}
 	return true
+}
+
+// wordsOnlyRe is words in lower case and nothing else, joined by - . or
+// _: drizzle-orm, reflect-metadata, lodash.merge, secretstorage.
+var wordsOnlyRe = regexp.MustCompile(`^[a-z]+(?:[-._][a-z]+)*$`)
+
+// wordsOnly says v, which the model took for a secret, is made of words
+// in lower case alone, as a package's, a tool's or a setting's name is.
+// A key is random: it has a digit, a capital or a symbol in it, and the
+// SECRET rules ask a digit of a value after password= too (secretValue).
+// AstrLink Guard took drizzle-orm for a secret in a tsup config's
+// external list in a Markdown fence (dniray on Discord, v0.1.1976; 0.515
+// on that line alone), after v0.1.1932 and v0.1.1976 had each let it go
+// in more places (an import, package.json, a tsc error): the places a
+// package's name is written can't all be listed, so the shape decides. Such a value is a
+// secret only where it is assigned to a secret's name (assignedSecret):
+// PASSWORD=opensesame, "password": "letmeinplease", the wifi password is
+// purplemonkey.
+func wordsOnly(v string) bool { return wordsOnlyRe.MatchString(v) }
+
+// assignedSecret says the value at s[a] is given to a secret's name: the
+// name, then =, :, is or 是 (and the quotes around them), right before it.
+// A list's comma before it is no assignment, whatever is further back:
+// 'jsonwebtoken', 'drizzle-orm' (secretCued takes the token in that).
+func assignedSecret(s string, a int) bool {
+	before := strings.ToLower(strings.TrimRight(s[max(0, a-64):a], " \t\"'`“「"))
+	for _, sep := range []string{"=", ":", "：", " is", " was", "是", "为", "為"} {
+		if !strings.HasSuffix(before, sep) {
+			continue
+		}
+		name := strings.TrimRight(before[:len(before)-len(sep)], " \t\"'`:")
+		i := len(name)
+		for i > 0 && (wordByte(name[i-1]) || name[i-1] == '.' || name[i-1] == '-') {
+			i--
+		}
+		if i == len(name) {
+			// a Chinese name: 密码是, 令牌为
+			return slices.ContainsFunc(secretCues, func(c string) bool { return c[0] >= 0x80 && strings.HasSuffix(name, c) })
+		}
+		return slices.ContainsFunc(secretCues, func(c string) bool { return c[0] < 0x80 && strings.Contains(name[i:], c) }) ||
+			strings.Contains(name[i:], "pass") || strings.Contains(name[i:], "pwd") || strings.Contains(name[i:], "credential")
+	}
+	return false
 }
 
 // pinnedAfter says the value that ends at s[b] is a package's name, as
@@ -403,7 +450,7 @@ func moduleAt(s string, a, b int) bool {
 		return false
 	}
 	line := strings.LastIndexByte(s[:a], '\n') + 1
-	head := strings.TrimLeft(s[line:a], " \t")
+	head := codeHead(s[line:a])
 	end := strings.IndexByte(s[b:], '\n')
 	if end < 0 {
 		end = len(s) - b
@@ -438,6 +485,206 @@ func moduleAt(s string, a, b int) bool {
 	}
 	return false
 }
+
+// codeHead is a line of code up to a value, without what a tool puts
+// before the code: an editor's or cat -n's line number (Claude Code's
+// Read gives "     1→import drizzle from 'drizzle-orm'", cat -n a tab,
+// grep -n a colon) and a diff's + or -. With the number before it, a
+// default import was no import line (dniray, v0.1.1965).
+func codeHead(h string) string {
+	h = strings.TrimLeft(h, " \t")
+	i := 0
+	for i < len(h) && h[i] >= '0' && h[i] <= '9' {
+		i++
+	}
+	if i > 0 {
+		for _, sep := range []string{"→", "\t", ":", "|"} {
+			if strings.HasPrefix(h[i:], sep) {
+				h = strings.TrimLeft(h[i+len(sep):], " \t")
+				break
+			}
+		}
+	}
+	if h != "" && (h[0] == '+' || h[0] == '-') {
+		h = strings.TrimLeft(h[1:], " \t")
+	}
+	return h
+}
+
+// packageAt says s[a:b] is a package's or a module's name by where it is:
+// the module code loads (moduleAt), a dependency a manifest pins
+// (dependencyAt), a folder under node_modules or site-packages, the
+// module an error could not find (missingModuleAt), a package an install
+// names (installedAt) or one pinned at its version with @
+// (drizzle-orm@0.36.4, pinnedAt). The local model took drizzle-orm for a
+// secret in package.json, a tsc error or a sentence; masked there, the
+// name was known (knownSpans) and masked on the import line too, which
+// moduleAt had let go when the model found it there (dniray on Discord,
+// v0.1.1965: from ' {{SECRET_o2tu7vej}} ' still). knownSpans asks this
+// too: no secret is a name code loads or a manifest pins, whatever
+// found it before.
+func packageAt(s string, a, b int) bool {
+	// the whole of a name a piece of it was found in: drizzle-orm of
+	// drizzle-orm/pg-core, name of @scope/name
+	for b+1 < len(s) && s[b] == '/' && moduleByte(s[b+1]) {
+		for b++; b < len(s) && moduleByte(s[b]); b++ {
+		}
+	}
+	if a > 2 && s[a-1] == '/' {
+		i := a - 1
+		for i > 0 && moduleByte(s[i-1]) {
+			i--
+		}
+		if i < a-2 && s[i] == '@' {
+			a = i
+		}
+	}
+	if !moduleRe.MatchString(s[a:b]) {
+		return false
+	}
+	return moduleAt(s, a, b) || dependencyAt(s, a, b) || underPackages(s, a) ||
+		missingModuleAt(s, a, b) || installedAt(s, a, b) || pinnedAt(s, a, b)
+}
+
+func moduleByte(c byte) bool { return wordByte(c) || c == '.' || c == '-' || c == '~' || c == '@' }
+
+// dependencyAt says s[a:b] is a dependency's name as a manifest pins it:
+// a JSON key whose value is a version or a range ("drizzle-orm":
+// "^0.36.4", "x": "workspace:*") or TOML's at a line's start (jsonwebtoken
+// = "9.2.0"). A key whose value is no version ({"Zq8v…": "hunter2"}) is
+// judged as before.
+func dependencyAt(s string, a, b int) bool {
+	rest := ""
+	if a > 0 && s[a-1] == '"' && b < len(s) && s[b] == '"' {
+		rest = strings.TrimLeft(s[b+1:], " \t")
+		if !strings.HasPrefix(rest, ":") {
+			return false
+		}
+		rest = strings.TrimLeft(rest[1:], " \t")
+	} else {
+		line := strings.LastIndexByte(s[:a], '\n') + 1
+		if strings.Trim(s[line:a], " \t") != "" {
+			return false
+		}
+		rest = strings.TrimLeft(s[b:], " \t")
+		if !strings.HasPrefix(rest, "=") || strings.HasPrefix(rest, "==") {
+			return false
+		}
+		rest = strings.TrimLeft(rest[1:], " \t")
+		if strings.HasPrefix(rest, "{") {
+			// jsonwebtoken = { version = "9", features = […] }
+			return strings.HasPrefix(strings.TrimLeft(rest[1:], " \t"), "version")
+		}
+	}
+	if !strings.HasPrefix(rest, `"`) {
+		return false
+	}
+	v, _, ok := strings.Cut(rest[1:], `"`)
+	return ok && depVersion(v)
+}
+
+// depVersion says v is what a manifest pins a dependency at: a version
+// or a range of them (^0.36.4, >=0.30.0 <1, 9, 1.x, *), a workspace's or
+// a catalog's, a tag (latest, next), or where it comes from (npm:,
+// file:, link:, git+…, github:).
+func depVersion(v string) bool {
+	for _, p := range []string{"workspace:", "catalog:", "npm:", "file:", "link:", "portal:", "git+", "git:", "github:", "http://", "https://"} {
+		if strings.HasPrefix(v, p) {
+			return true
+		}
+	}
+	switch v {
+	case "*", "latest", "next", "beta", "canary", "x":
+		return true
+	}
+	for _, part := range strings.Fields(strings.NewReplacer("||", " ", " - ", " ").Replace(v)) {
+		if !depRangeRe.MatchString(part) {
+			return false
+		}
+	}
+	return v != ""
+}
+
+var depRangeRe = regexp.MustCompile(`^(?:[~^]|[<>]=?|=)?[vV]?\d+(?:\.(?:\d+|[xX*]))*(?:[-+][0-9A-Za-z.-]+)?$`)
+
+// underPackages says the name at a is a folder packages are installed in:
+// node_modules/drizzle-orm/…, site-packages/secretstorage/….
+func underPackages(s string, a int) bool {
+	return strings.HasSuffix(s[:a], "node_modules/") || strings.HasSuffix(s[:a], "node_modules\\") ||
+		strings.HasSuffix(s[:a], "site-packages/") || strings.HasSuffix(s[:a], "site-packages\\")
+}
+
+// missingModuleAt says s[a:b] is quoted after the words an error names a
+// module it could not load with: tsc's and Node's Cannot find module
+// 'x', Python's No module named 'x', a bundler's Can't resolve 'x'.
+func missingModuleAt(s string, a, b int) bool {
+	if a == 0 || b >= len(s) || !strings.ContainsRune("'\"`", rune(s[a-1])) || s[b] != s[a-1] {
+		return false
+	}
+	q := strings.ToLower(strings.TrimRight(s[:a-1], " \t"))
+	for _, w := range []string{"find module", "find package", "module named", "resolve", "resolve import", "resolve module"} {
+		if wordEnd(q, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// installRe is a package manager's command that names packages after it.
+var installRe = regexp.MustCompile(`(?:^|[\s;&|(` + "`" + `$])(?:npm|pnpm|yarn|bun|npx|pip|pip3|uv|poetry|pipx|cargo|gem|composer|deno|go)(?: +(?:pip|-[\w-]+))* +(?:add|install|i|remove|rm|uninstall|un|get|require|update|upgrade|up)(?: |$)`)
+
+// installedAt says s[a:b] is one of the packages a command on its line
+// installs or removes: pnpm add drizzle-orm postgres, npm i -D x,
+// pip install a-lib. A value after a flag for a credential (--token,
+// --auth) is that flag's, and judged as before.
+func installedAt(s string, a, b int) bool {
+	if b < len(s) && !isSpace(s[b]) && s[b] != ';' && s[b] != '&' && s[b] != '|' && s[b] != ')' {
+		return false
+	}
+	line := strings.LastIndexByte(s[:a], '\n') + 1
+	ms := installRe.FindAllStringIndex(s[line:a], -1)
+	if len(ms) == 0 {
+		return false
+	}
+	args := strings.Fields(s[line+ms[len(ms)-1][1] : a])
+	if a > 0 && !isSpace(s[a-1]) {
+		return false
+	}
+	for _, w := range args {
+		if strings.ContainsAny(w, ";&|<>`$") {
+			return false
+		}
+	}
+	if n := len(args); n > 0 && strings.HasPrefix(args[n-1], "-") && credFlag(args[n-1]) {
+		return false
+	}
+	return true
+}
+
+// credFlag says a command's flag names a credential (--token, --auth-key).
+func credFlag(f string) bool {
+	f = strings.ToLower(f)
+	for _, w := range []string{"token", "key", "pass", "secret", "auth", "cred"} {
+		if strings.Contains(f, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// pinnedAt says s[a:b] is a package's name pinned at a version with @, as
+// npm and pnpm write one (drizzle-orm@0.36.4, js-tokens@4.0.0:): a name
+// in lower case, as npm's are, and a version of three numbers that is no
+// IPv4 address, so s3cretPass@10.0.0.5 is a password still.
+func pinnedAt(s string, a, b int) bool {
+	if b >= len(s) || s[b] != '@' || strings.ToLower(s[a:b]) != s[a:b] {
+		return false
+	}
+	m := pinVersionRe.FindString(s[b+1:])
+	return m != "" && !(len(s) > b+1+len(m) && s[b+1+len(m)] == '.')
+}
+
+var pinVersionRe = regexp.MustCompile(`^[\^~]?v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]*[0-9A-Za-z])?`)
 
 // wordEnd says s ends in the word w.
 func wordEnd(s, w string) bool {

@@ -539,6 +539,8 @@ type requestIndex struct {
 	// heatParts are the heatmap's sums of each chunk (heatOf), kept as
 	// parts are but apart, so that the heatmap's never push a page's out
 	heatParts map[partKey]map[uint64]*chunkPart
+	// heatOld are the heatmap's days before its last few (heatSplit)
+	heatOld map[partKey]*heatOld
 	// pairs are the last pairing of each of a few periods (pairMemo),
 	// kept as parts are
 	pairs map[Period]*pairMemo
@@ -775,7 +777,7 @@ func queryPageOf(p Period, f Filter, offset, limit int, readSource func(sessions
 	var cache *partCache
 	pk := partKey{p: p, f: f, since: p.Since(now), until: p.Until(now), loc: now.Location()}
 	if p == heatmapPeriod {
-		cache = &partCache{old: idx.heatParts[pk], next: map[uint64]*chunkPart{}}
+		cache = &partCache{old: idx.heatParts[pk], next: map[uint64]*chunkPart{}, heatOld: idx.heatOld[pk]}
 	} else if p.Last() == 0 {
 		cache = &partCache{old: idx.parts[pk], next: map[uint64]*chunkPart{}, pairs: idx.pairs[p]}
 	}
@@ -805,6 +807,10 @@ func queryPageOf(p Period, f Filter, offset, limit int, readSource func(sessions
 			shared.heatParts = map[partKey]map[uint64]*chunkPart{}
 		}
 		shared.heatParts[pk] = cache.next
+		if shared.heatOld == nil || len(shared.heatOld) >= partSets && shared.heatOld[pk] == nil {
+			shared.heatOld = map[partKey]*heatOld{}
+		}
+		shared.heatOld[pk] = cache.heatOldNext
 	} else if cache != nil {
 		if shared.parts == nil || len(shared.parts) >= partSets && shared.parts[pk] == nil {
 			shared.parts = map[partKey]map[uint64]*chunkPart{}
@@ -1073,6 +1079,7 @@ func (idx *requestIndex) adopt(st requestState) {
 		idx.heats = nil
 		idx.parts = nil
 		idx.heatParts = nil
+		idx.heatOld = nil
 		idx.pairs = nil
 		idx.key = ""
 	}
@@ -1389,10 +1396,12 @@ func mapFor[K comparable, V any](m map[K]V, n int) map[K]V {
 	return m
 }
 
-// ReleaseScratch lets go of what the request matching keeps between calls.
+// ReleaseScratch lets go of what the request matching keeps between calls,
+// and the priced blocks no query holds.
 func ReleaseScratch() {
 	keptMatch.Store(nil)
 	keptPicks.Store(nil)
+	releasePriced()
 }
 
 // sized is s[:n], zeroed, in s's array when it holds n
@@ -1804,6 +1813,11 @@ type pairedRows struct {
 var pairing func()
 
 func pairRows(p Period, now time.Time, gateways, chunks, others []*rowChunk, identities map[string]sessions.CodexIdentity) *pairedRows {
+	return pairRowsIn(p.Since(now), p.Until(now), gateways, chunks, others, identities)
+}
+
+// pairRowsIn is pairRows over the rows from since to until.
+func pairRowsIn(since, until time.Time, gateways, chunks, others []*rowChunk, identities map[string]sessions.CodexIdentity) *pairedRows {
 	if pairing != nil {
 		pairing()
 	}
@@ -1819,7 +1833,6 @@ func pairRows(p Period, now time.Time, gateways, chunks, others []*rowChunk, ide
 	for ref := range duplicateSkip {
 		skip[ref] = true
 	}
-	since, until := p.Since(now), p.Until(now)
 	matched := matchedBlocks(gateways, chunks, skip, pairs, since, true)
 	for gateway, local := range pairs {
 		setCodexActor(gateway.Chunk, gateway.Index, local.Chunk.codexActors.at(local.Index))
@@ -1873,21 +1886,21 @@ func buildRequestBlocksOf(p Period, f Filter, offset, limit int, now time.Time, 
 // cache's for the chunks it has them for (nil: every chunk's read).
 func buildRequestBlocksIn(p Period, f Filter, offset, limit int, now time.Time, gateways, chunks, others []*rowChunk, names map[string]string, identities map[string]sessions.CodexIdentity, cache *partCache) RequestPage {
 	since := p.Since(now)
-	var ps *pairedRows
-	if cache != nil && p != heatmapPeriod {
-		ps, cache.pairsNext = pairRowsMemo(p, now, gateways, chunks, others, identities, cache.pairs)
-	} else {
-		ps = pairRows(p, now, gateways, chunks, others, identities)
-	}
-	out := RequestPage{Rows: []Row{}, Agents: []string{}, Providers: []string{}, Purposes: []string{}, By: map[string][]Share{}}
 	chartFilter := f
 	chartFilter.Day = ""
 	// The heatmap's page is only its days, all HeatmapOf reads: over its
 	// year the groups, shares and series below took seconds a call (#3493).
 	if p == heatmapPeriod {
-		out.Heat = ps.heatOf(since, now, chartFilter, cache, identities)
-		return out
+		return RequestPage{Rows: []Row{}, Agents: []string{}, Providers: []string{}, Purposes: []string{}, By: map[string][]Share{},
+			Heat: heatSplit(since, now, gateways, chunks, others, chartFilter, identities, cache)}
 	}
+	var ps *pairedRows
+	if cache != nil {
+		ps, cache.pairsNext = pairRowsMemo(p, now, gateways, chunks, others, identities, cache.pairs)
+	} else {
+		ps = pairRows(p, now, gateways, chunks, others, identities)
+	}
+	out := RequestPage{Rows: []Row{}, Agents: []string{}, Providers: []string{}, Purposes: []string{}, By: map[string][]Share{}}
 	agents, providers := map[string]bool{}, map[string]bool{}
 	kinds := map[string]bool{}
 	callers := map[string]*Group{}

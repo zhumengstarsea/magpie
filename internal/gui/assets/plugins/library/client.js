@@ -1604,118 +1604,249 @@ magpie.plugin("library", (ctx) => {
   }
   const hubURL = () => mcpAddress(state.settings || {}, lib.hubPath.replace(/\/+$/, ""));
 
-  // Connect to the hub: every agent magpie looks after first, each with
-  // where it stands (connected, connected with a click, or why it keeps
-  // each server's own entry), then the one address any other app connects
-  // at, with what adds it there. The agents are magpie's to connect, never
-  // a command for the user to run; Cursor is among them when it's here,
-  // and only an app magpie doesn't look after is set up by hand: by its
-  // install link, which magpie builds (servers/hub-open) and the app
-  // confirms, or by copying its entry.
-  let hubApp = "";
+  // Connect to the hub (#2679): two tabs. Agents: every agent magpie looks
+  // after, in three groups, each a switch of its own. Not connected
+  // comes first, then connected, then the agents that keep each server's
+  // own entry, with why. Over them is one line of how many go through
+  // magpie, and in the bar a Connect all for the rest. With many agents,
+  // the connected and the kept fold to one row each and a search narrows
+  // them all. Other apps: the one address, and a row per app with what
+  // adds it, by its install link (servers/hub-open, which the app
+  // confirms) or by copying its entry. The agents are magpie's to
+  // connect, never a command for the user to run; Cursor is among them
+  // when it's here.
+  let hubTab = "agents";
+  const hubFold = { on: true, kept: true };
   function connectHub() {
     const url = hubURL();
     const json = (o) => JSON.stringify(o, null, 2);
+    const served = () => lib.servers.filter((s) => !(s.transport === "stdio" && s.args?.[0] === "mcp" && s.args?.[1] === "image"));
     const ed = el("div", "editor lib-editor lib-hubsheet");
     const head = el("div", "ehead");
     head.append(glyph(GLYPH.hub), el("b", "", t("Connect an app")));
     ed.append(head);
-    ed.append(el("p", "lib-confirm lib-hublead", t("magpie connects the agents on this computer itself. Any other app that speaks MCP connects at the address below.")));
+    const pane = el("div", "lib-hubpane");
+    const bar = el("div", "bar");
+    let busy = false, changed = false, q = "";
+    const why = new Set();
+    if (!mcpAgents().length) hubTab = "apps";
+    if (mcpAgents().length) ed.append(segs([["agents", t("Agents")], ["apps", t("Other apps")]], hubTab, (k) => { hubTab = k; draw(); }));
+    ed.append(pane, bar);
 
-    // the agents: every one here that takes MCP servers
-    const list = el("div", "list lib-list lib-hubagents");
-    let busy = false;
-    const served = () => lib.servers.filter((s) => !(s.transport === "stdio" && s.args?.[0] === "mcp" && s.args?.[1] === "image"));
-    const drawAgents = () => list.replaceChildren(...mcpAgents().map((a) => {
-      // one given none of the hub's servers has no state of its own; one
-      // that reaches no server over HTTP couldn't take it either way
+    // posts agents-all for some agents, on or off, and says what came of it
+    const give = async (ids, on, b) => {
+      if (busy) return;
+      busy = true;
+      for (const x of ed.querySelectorAll(".lib-hubpane button, .bar button")) x.disabled = true;
+      b?.classList.add("busy");
+      const named = mcpAgents().filter((a) => ids.includes(a.id));
+      try {
+        take(await api("library/servers/agents-all", { agents: ids, on }));
+        changed = true;
+        const now = mcpAgents().filter((a) => ids.includes(a.id));
+        const failed = now.filter((a) => on ? a.hub !== "on" : a.hub === "on");
+        if (failed.length) status(t("{agent} couldn't be connected", { agent: failed.map((a) => a.name).join(", ") }), "warn", 8000);
+        else if (!on) status(t("{agent} no longer has the library's servers — restart it to read the change", { agent: named[0]?.name || "" }), "ok");
+        else if (named.length === 1) status(t("{agent} is connected — restart it to use magpie's tools", { agent: named[0].name }), "ok");
+        else status(t("{n} agents are connected — restart them to use magpie's tools", { n: named.length }), "ok");
+        render();
+      } catch (e) {
+        status(e.message, "err", 6000);
+      }
+      busy = false;
+      if (ed.isConnected) draw();
+    };
+
+    // an agent's row: a switch, or, kept, why in a word and in full
+    const agentRow = (a) => {
       const st = a.hub || (a.noRemote ? "no-remote" : "");
       const row = el("div", "row lib-row lib-hubagent");
       row.dataset.agent = a.id;
       row.dataset.state = st || "none";
       const who = el("div", "who");
       who.append(el("div", "name", a.name));
-      const n = served().filter((s) => s.agents?.includes(a.id)).length;
-      const line = {
-        on: n === 1 ? t("1 server, through magpie") : t("{n} servers, through magpie", { n }),
+      if (a.aside && st !== "no-remote") who.append(el("div", "sub", a.aside));
+      row.append(agentIcon(a.icon), who);
+      if (st === "on" || !st) {
+        const sw = toggle(st === "on", t("{agent} through magpie", { agent: a.name }), (on) => give([a.id], on, sw));
+        if (!st && !served().length) { sw.disabled = true; sw.title = t("The library has no MCP servers yet"); }
+        row.append(sw);
+        return [row];
+      }
+      row.classList.add("lib-hubkept");
+      row.append(el("span", "lib-hubtag", { "no-remote": t("No HTTP"), own: t("Has its own magpie"), taken: t("Name taken") }[st]));
+      const open = why.has(a.id);
+      const i = el("button", "lib-hubinfo");
+      i.type = "button";
+      i.setAttribute("aria-expanded", open ? "true" : "false");
+      i.setAttribute("aria-label", t("Why"));
+      i.title = t("Why");
+      i.append(svg("M8 2.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11z M8 7.2v3.6 M8 5.2v.1", 14, 1.3));
+      i.onclick = (e) => { e.stopPropagation(); open ? why.delete(a.id) : why.add(a.id); draw(); };
+      row.append(i);
+      if (!open) return [row];
+      const p = el("p", "lib-hubwhy", {
         "no-remote": t("It reaches no MCP server over HTTP, so it keeps each server's own entry"),
         own: t("It has a server called magpie of its own, which magpie leaves as it is"),
         taken: t("A server in the library is called magpie: give it another name to connect"),
-        "": served().length ? t("None of the library's servers is on for it yet") : t("The library has no MCP servers yet"),
-      }[st];
-      who.append(el("div", "sub", a.aside && st === "on" ? line + " · " + a.aside : line));
-      row.append(agentIcon(a.icon), who);
-      if (st === "on") {
-        const ok = el("span", "lib-hubok", t("On the hub"));
-        ok.prepend(svg("M3.5 8.5l3 3 6-7", 12, 1.8));
-        row.append(ok);
-      } else if (!st && served().length) {
-        const go = button(t("Connect"), "action lib-updall lib-hubgo", async (e, b) => {
-          if (busy) return;
-          busy = true;
-          for (const x of list.querySelectorAll("button")) x.disabled = true;
-          b.classList.add("busy");
-          try {
-            take(await api("library/servers/agents-all", { agents: [a.id], on: true }));
-            const now = mcpAgents().find((x) => x.id === a.id);
-            if (now?.hub === "on") status(t("{agent} is connected — restart it to use magpie's tools", { agent: a.name }), "ok");
-            else status(t("{agent} couldn't be connected", { agent: a.name }), "warn", 8000);
-            render();
-          } catch (e) {
-            status(e.message, "err", 6000);
-          }
-          busy = false;
-          if (list.isConnected) drawAgents();
-        });
-        go.title = t("Give {agent} every server it can reach, through magpie", { agent: a.name });
-        row.append(go);
+      }[st]);
+      p.dataset.why = st;
+      return [row, p];
+    };
+    // a group: its name and count, a fold when there are many, its rows
+    const group = (key, title, list, many) => {
+      if (!list.length) return [];
+      const sec = el("div", "lib-hubgrp");
+      sec.dataset.group = key;
+      const h = el("div", "lib-hubsec");
+      h.append(el("span", "", title), el("span", "lib-hubn", String(list.length)));
+      const folds = many && key !== "off" && !q;
+      const folded = folds && hubFold[key];
+      if (folds) {
+        const f = button(folded ? t("Show all") : t("Hide"), "lib-hubfold", () => { hubFold[key] = !hubFold[key]; draw(); });
+        f.setAttribute("aria-expanded", folded ? "false" : "true");
+        h.append(f);
       }
-      return row;
-    }));
-    if (mcpAgents().length) {
-      ed.append(el("div", "lib-hubsec", t("Agents magpie looks after")), list);
-      drawAgents();
-    }
+      const box = el("div", "list lib-list lib-hubagents");
+      if (folded) {
+        // one row for them all: a few icons, a couple of names, how many
+        const row = el("button", "row lib-row lib-hubfolded");
+        row.type = "button";
+        const stack = el("span", "lib-hubstack");
+        for (const a of list.slice(0, 4)) stack.append(agentIcon(a.icon));
+        const names = list.length > 2
+          ? t("{first} and {n} more", { first: list.slice(0, 2).map((a) => a.name).join(", "), n: list.length - 2 })
+          : list.map((a) => a.name).join(", ");
+        row.append(stack, el("span", "name", names), svg("M6 3.5l4.5 4.5L6 12.5", 12, 1.6));
+        row.onclick = (e) => { e.stopPropagation(); hubFold[key] = false; draw(); };
+        box.append(row);
+      } else box.append(...list.flatMap(agentRow));
+      sec.append(h, box);
+      return [sec];
+    };
 
-    // any other app: the address, and what adds it
-    ed.append(el("div", "lib-hubsec", t("Any other app")));
-    const addr = el("div", "lib-hubaddr");
-    addr.append(el("code", "", url), copyBtn(url, t("Address")));
-    ed.append(addr);
-    const apps = {
-      ...(mcpAgents().some((a) => a.id === "cursor") ? {} : { cursor: { name: "Cursor", link: true, where: t("Or add it to ~/.cursor/mcp.json:"), text: json({ mcpServers: { magpie: { url } } }) } }),
-      vscode: { name: "VS Code", link: true, where: t("Or add it to .vscode/mcp.json, or to your user mcp.json:"), text: json({ servers: { magpie: { type: "http", url } } }) },
-      json: { name: t("Other"), where: t("For any app that takes MCP servers as JSON (Windsurf, Cline, LM Studio and more):"), text: json({ mcpServers: { magpie: { type: "http", url } } }) },
-    };
-    if (!apps[hubApp]) hubApp = Object.keys(apps)[0];
-    const pane = el("div", "lib-hubpane");
-    const draw = () => {
-      const a = apps[hubApp];
-      pane.replaceChildren();
-      if (a.link && !web) {
-        const go = button(t("Add to {app}", { app: a.name }), "primary lib-hubadd", async () => {
-          go.disabled = true;
-          try {
-            await api("library/servers/hub-open", { app: hubApp });
-            status(t("{app} asks you to confirm adding magpie", { app: a.name }));
-          } catch (e) { status(e.message, "err"); }
-          go.disabled = false;
-        });
-        pane.append(go);
+    const drawAgents = () => {
+      const all = mcpAgents();
+      const st = (a) => a.hub || (a.noRemote ? "no-remote" : "");
+      const can = all.filter((a) => st(a) === "on" || !st(a));
+      const on = can.filter((a) => st(a) === "on");
+      const kept = all.filter((a) => !can.includes(a));
+      const many = all.length > 8;
+      // agents → magpie → servers, and the one line of where things stand
+      const flow = el("div", "lib-hubflow");
+      const route = el("div", "lib-hubroute");
+      const ends = (items, more) => {
+        const s = el("span", "lib-hubstack");
+        s.append(...items);
+        if (more > 0) s.append(el("span", "ic lib-hubmore", "+" + more));
+        return s;
+      };
+      // magpie itself in the middle: the bird the sidebar shows, on a plain tile
+      const node = el("span", "lib-hubnode");
+      node.innerHTML = '<svg viewBox="0 0 44 44" width="22" height="22" aria-hidden="true"><use href="#bird"/></svg>';
+      const srv = served();
+      route.append(ends(on.slice(0, 3).map((a) => agentIcon(a.icon)), on.length - 3), el("span", "lib-hubwire"), node, el("span", "lib-hubwire"),
+        ends(srv.slice(0, 3).map((s) => mark(s.icon, s.transport === "stdio" ? GLYPH.cmd : GLYPH.web)), srv.length - 3));
+      flow.append(route);
+      flow.append(el("p", "lib-hublead", !srv.length ? t("The library has no MCP servers yet")
+        : can.length === 1 ? t(on.length ? "{agent} uses the library's servers through magpie" : "{agent} can use the library's servers through magpie", { agent: can[0].name })
+        : t("{on} of {all} agents use the library's servers through magpie", { on: on.length, all: can.length })));
+      const left = can.length - on.length;
+      const sub = [left ? t("{n} more can be connected", { n: left }) : t("Each server runs once, for all of them")];
+      if (kept.length) sub.push(kept.length === 1 ? t("1 keeps each server's own entry") : t("{n} keep each server's own entry", { n: kept.length }));
+      // each part whole on its line, the dot kept with the part before it
+      const line = el("p", "lib-hubsub");
+      sub.forEach((x, i) => line.append(...(i ? [" "] : []), el("span", "", x + (i < sub.length - 1 ? "\u00a0·" : ""))));
+      flow.append(line);
+      const out = [flow];
+      if (many) {
+        const box = el("label", "lib-hubsearch");
+        box.append(svg("M7 2.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9z M10.3 10.3l3.2 3.2", 13, 1.5));
+        const inp = el("input");
+        inp.type = "search";
+        inp.id = "lib-hubq";
+        inp.placeholder = t("Find an agent");
+        inp.setAttribute("aria-label", t("Find an agent"));
+        inp.value = q;
+        inp.oninput = () => { q = inp.value.trim(); draw(); };
+        box.append(inp);
+        out.push(box);
       }
-      pane.append(el("p", "lib-hubwhere", a.where));
-      const block = el("div", "lib-hubcode");
-      block.append(el("pre", "", a.text), copyBtn(a.text, a.name));
-      pane.append(block);
-      if (hubApp === "json") pane.append(el("p", "lib-aside", t("Its transport is Streamable HTTP. From another computer, use the address magpie is reached at there, with a gateway key: Authorization: Bearer <key>.")));
+      const m = (a) => !q || a.name.toLowerCase().includes(q.toLowerCase());
+      const groups = [
+        ...group("off", t("Not connected"), can.filter((a) => !st(a) && m(a)), many),
+        ...group("on", t("Connected"), on.filter(m), many),
+        ...group("kept", t("Keep each server's own entry"), kept.filter(m), many),
+      ];
+      out.push(...(groups.length ? groups : [el("p", "lib-hubnone", t("No agent called “{q}”", { q }))]));
+      return out;
     };
-    ed.append(segs(Object.entries(apps).map(([k, a]) => [k, a.name]), hubApp, (k) => { hubApp = k; draw(); }), pane);
+
+    // any other app: the address, and a row per app with what adds it
+    const drawApps = () => {
+      const out = [el("p", "lib-hublead lib-hubapps", t("Any app that speaks MCP connects at this address"))];
+      const addr = el("div", "lib-hubaddr");
+      addr.append(el("code", "", url), copyBtn(url, t("Address")));
+      out.push(addr, el("p", "lib-hubcap", t("From another computer, use the address magpie is reached at there, with a gateway key: Authorization: Bearer <key>.")));
+      const apps = [
+        ...(mcpAgents().some((a) => a.id === "cursor") ? [] : [{ id: "cursor", icon: "cursor", name: "Cursor", link: true, where: t("Or add it to ~/.cursor/mcp.json"), text: json({ mcpServers: { magpie: { url } } }) }]),
+        { id: "vscode", icon: "vscode", name: "VS Code", link: true, where: t("Or add it to .vscode/mcp.json, or to your user mcp.json"), text: json({ servers: { magpie: { type: "http", url } } }) },
+        { id: "windsurf", icon: "windsurf", name: "Windsurf", where: t("Paste it into ~/.codeium/windsurf/mcp_config.json"), text: json({ mcpServers: { magpie: { serverUrl: url } } }) },
+        { id: "json", icon: "generic", name: t("Other"), where: t("Cline, LM Studio and any app that takes MCP servers as JSON"), text: json({ mcpServers: { magpie: { type: "http", url } } }) },
+      ];
+      const sec = el("div", "lib-hubgrp");
+      sec.append(el("div", "lib-hubsec", t("Add to an app")));
+      const box = el("div", "list lib-list lib-hubappl");
+      for (const a of apps) {
+        const row = el("div", "row lib-row lib-hubapp");
+        row.dataset.app = a.id;
+        const who = el("div", "who");
+        const link = a.link && !web;
+        who.append(el("div", "name", a.name), el("div", "sub", link ? t("{app} asks you to confirm, then it's ready", { app: a.name }) : a.where));
+        row.append(icon(a.icon), who);
+        if (link) {
+          const go = button(t("Add"), "lib-hubpill lib-hubadd", async () => {
+            go.disabled = true;
+            try {
+              await api("library/servers/hub-open", { app: a.id });
+              status(t("{app} asks you to confirm adding magpie", { app: a.name }));
+            } catch (e) { status(e.message, "err"); }
+            go.disabled = false;
+          });
+          go.title = t("Add to {app}", { app: a.name });
+          row.append(go);
+        }
+        const cp = button(t("Copy entry"), "lib-hubpill lib-hubcopy", () => copy(a.text, a.name, cp, t("{app}'s entry copied", { app: a.name })));
+        cp.title = a.text;
+        if (link) cp.classList.add("quiet");
+        row.append(cp);
+        box.append(row);
+      }
+      sec.append(box);
+      out.push(sec);
+      return out;
+    };
+
+    const done = button(t("Done"), "", () => closeLibModal(true));
+    const draw = () => {
+      const top = pane.scrollTop;
+      const focus = document.activeElement?.id === "lib-hubq";
+      pane.replaceChildren(...(hubTab === "agents" ? drawAgents() : drawApps()));
+      pane.scrollTop = top;
+      if (focus) { const i = pane.querySelector("#lib-hubq"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
+      // the one primary action: Connect all while there are agents to connect
+      const rest = hubTab === "agents" && served().length ? mcpAgents().filter((a) => !a.hub && !a.noRemote) : [];
+      bar.replaceChildren(el("span", "grow lib-hubnote", changed ? t("Restart an agent for it to read the change") : ""), done);
+      done.className = "text" + (rest.length ? "" : " primary");
+      done.disabled = false;
+      if (rest.length) {
+        const all = button(t("Connect all"), "primary lib-huball", (e, b) => give(rest.map((a) => a.id), true, b));
+        all.title = rest.map((a) => a.name).join(", ");
+        bar.append(all);
+      }
+    };
     draw();
-    const bar = el("div", "bar");
-    const done = button(t("Done"), "primary", () => closeLibModal(true));
-    bar.append(el("span", "grow"), done);
-    ed.append(bar);
-    modal = { save: () => done.click() };
+    modal = { save: () => (bar.querySelector(".lib-huball") || done).click() };
     openLib(ed);
   }
 

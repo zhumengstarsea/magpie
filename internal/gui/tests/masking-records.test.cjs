@@ -158,7 +158,7 @@ const shot = (page, name) => process.env.MASK_SHOTS && page.screenshot({ path: p
 // English that a translated page must not show
 const english = ["Kept from vendors", "By request", "By value", "masked these on this computer", "Different values", "values masked", "Held back",
   "Request content", "How it was masked", "What happened", "Side by side", "Only the parts masking changed", "parts unchanged", "Found by", "In the answer",
-  "This request was not sent", "Mask it instead", "See the rules", "Nothing to put back", "no longer in memory", "Masked most", "Local model"];
+  "This request was not sent", "Mask it instead", "See the rules", "Nothing to put back", "no longer in memory", "never on disk", "Masked most", "Local model"];
 const untranslated = async (page, lang) => {
   if (lang === "en") return;
   const said = await page.locator("#view-masking").innerText();
@@ -461,6 +461,39 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await stillClick(page, one.locator(".msk-val").first());
       assert.equal(await one.locator("mark.lit").count(), 4);
       await untranslated(page, lang);
+      assert.deepEqual(errors, []);
+    });
+  }
+}
+
+// After a restart a record has no text left at all: the request's text,
+// the lines around its values and the values are memory's alone, never on
+// disk (maskrec). The page says that once, and doesn't say the lines are
+// still there (brianeee2 on X, in Docker, took it for a missing volume).
+const restarted = {
+  records: [{ key: K1, t: ago(300e3), route: "chat", what: "chat", agent: "claude", provider: "anthropic", model: "claude-opus-4-1", n: 1,
+    values: [{ p: NAME, k: "PERSON", b: "model", h: "", l: 3, n: 1 }] }],
+  sent: {},
+};
+for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
+  for (const lang of ["en", "zh", "zh-TW", "ja", "de"]) {
+    test(`${engine} ${lang}: a request from before a restart says its text was in memory only, once`, async (t) => {
+      const { browser, page, errors, asked } = await open(engine, lang, 640, summary, "", restarted);
+      t.after(() => browser.close());
+      await page.locator("#maskList .msk-row").first().click();
+      const one = page.locator("#maskOne");
+      await until(() => asked.includes("sent " + K1));
+      await one.locator(".msk-gone").waitFor();
+      assert.equal(await one.locator(".msk-gone").count(), 1, "one message");
+      assert.equal(await one.locator(".msk-none").count(), 0, "no second message");
+      assert.equal(await one.locator(".msk-msg").count(), 0);
+      const said = await one.locator(".msk-gone").innerText();
+      if (lang === "en") {
+        assert.match(said, /never on disk/);
+        assert.doesNotMatch(said, /line around each placeholder/, "no line is left to show");
+      }
+      await untranslated(page, lang);
+      assert.deepEqual(await wide(page), { page: false, over: [] });
       assert.deepEqual(errors, []);
     });
   }

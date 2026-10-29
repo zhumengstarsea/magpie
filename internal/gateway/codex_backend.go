@@ -1123,6 +1123,16 @@ func (s *Server) codexUpstreamOn(w http.ResponseWriter, r *http.Request, rest st
 	}
 	var sniff *usageSniffer
 	var refusal []byte // what OpenAI said, of a request it turned away
+	if rest == "/responses" && base != codexAPIBase {
+		// the account goes on its credits, its week used up: a reset it
+		// spends by itself when the week runs out goes first
+		// (resetBeforeCredits)
+		if who, out, ok := s.resetBeforeCreditsOn(r.Context(), on); ok {
+			autoReset = true
+			s.trace.update(tr, func(t *Route) { t.Tries[len(t.Tries)-1].Reset = &AutoReset{Who: who, Text: out.Text()} })
+			resetNote = "openai (" + who + "): used one of its resets by itself before its credits (" + out.Text() + ")"
+		}
+	}
 	for {
 		// the try's own, which a stream that failed before its reply ends
 		// (holdWriter.stop)
@@ -1463,12 +1473,7 @@ func (s *Server) codexFallsBack(model string, body []byte) bool {
 	if !ok || p.Account == nil || p.Account.Agent != "codex" {
 		return false
 	}
-	for _, id := range p.Fallback {
-		if _, _, ok := provider.ResolveRoute(id); ok {
-			return true
-		}
-	}
-	return false
+	return len(provider.FallbackModels(p)) > 0
 }
 
 // codexFallBack serves Codex's turn on its own sign-in, which the backend

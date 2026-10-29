@@ -110,6 +110,10 @@ var store struct {
 	sent   []kept             // the latest records' Sent, oldest first
 	// sentBytes is their bodies in all, as stored
 	sentBytes int
+	// first is each placeholder by the key of the first record that had
+	// it, and firstRead whether the days on disk are in it (first.go)
+	first     map[string]int64
+	firstRead bool
 }
 
 // kept is a record's Sent, zstd.
@@ -186,6 +190,9 @@ func Hold(r Record) (Record, func(provider, model string)) {
 		store.sent = store.sent[1:]
 	}
 	store.snips = append(store.snips, r)
+	if store.first != nil {
+		noteFirst(store.first, r)
+	}
 	if len(store.snips) > keepSnips {
 		store.snips = append([]Record(nil), store.snips[len(store.snips)-keepSnips:]...)
 	}

@@ -265,10 +265,17 @@ func (o routeRows) handedOn(c *rowChunk, r *Record) {
 // rows of its own, the Sessions, Usage and Routing pages' reads of the
 // log allocated ~800 MB of rows a minute while calls came in (#2278). A
 // record's strings are the block's own, not the buffer's.
-func (s *logSnapshot) visit(since time.Time, fn func(Record)) {
+func (s *logSnapshot) visit(since time.Time, fn func(Record)) { visitBlocks(s.blocks, since, fn) }
+
+// blockReader reads blocks as visit reads the log's.
+func blockReader(blocks []*rowChunk, since time.Time) func(func(Record)) {
+	return func(fn func(Record)) { visitBlocks(blocks, since, fn) }
+}
+
+func visitBlocks(blocks []*rowChunk, since time.Time, fn func(Record)) {
 	rows := chunkRows{}
 	defer rows.release()
-	for _, packed := range s.blocks {
+	for _, packed := range blocks {
 		if !since.IsZero() && packed.Latest.Before(since) {
 			continue
 		}

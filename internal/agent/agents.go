@@ -199,6 +199,7 @@ func onMachine(home, cfg string) []*Agent {
 		empryo(home),
 		ante(home),
 		astrbot(home),
+		openClaw(home),
 		jcode(home),
 		miniMax(home),
 		droid(home),

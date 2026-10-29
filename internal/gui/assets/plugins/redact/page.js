@@ -818,13 +818,17 @@ function maskContent(r, o, info) {
       fold.fold.push(l);
     }
   } else {
-    // only the lines around each value are left: the request's whole text
-    // was in memory, and is no longer
-    if (!r.blocked) sec.append(el("p", "msk-gone", o.vals.size
+    // only the lines around each value are left, while memory has the
+    // record: the request's whole text was in memory, and is no longer
+    items = maskSnipTexts(r).map((text) => ({ leaf: { path: "", role: "", text } }));
+    if (items.length && !r.blocked) sec.append(el("p", "msk-gone", o.vals.size
       ? t("This request's whole text is no longer in memory: magpie keeps it for the newest requests only. The lines around each value are still here.")
       : t("What was written is kept in memory only, and magpie has restarted since. Still here: each value's kind, length and first characters, and the line around each placeholder as the vendor got it.")));
-    items = maskSnipTexts(r).map((text) => ({ leaf: { path: "", role: "", text } }));
-    if (!items.length) sec.append(el("div", "msk-none", t("The text around them was kept in memory only, and magpie has restarted since")));
+    // after a restart nothing of the text is left, by design: the record on
+    // disk never holds it (maskrec), so no folder or volume brings it back
+    // (brianeee2 on X, in Docker). A request held back sent nothing, and
+    // its card says so.
+    else if (!items.length && !r.blocked) sec.append(el("p", "msk-gone", t("This request's text and the values masked in it were kept in memory only, never on disk, and magpie has restarted since. The record keeps each value's kind, length and first characters.")));
   }
   const list = el("div", "msk-msgs" + (view === "both" ? " both" : ""));
   if (view === "both") {

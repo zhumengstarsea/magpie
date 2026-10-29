@@ -7,18 +7,21 @@
 // (Claude Desktop reaches no server over HTTP; Codex has a "magpie" of its
 // own). On, it counts what it serves (servers, tools, the agents given it)
 // and shows the one address any other app connects at, with Connect…: a
-// sheet listing every agent magpie found that takes MCP servers, each with
-// where it stands (connected, why it keeps each server's own entry, or a
-// Connect that gives it every server, posting servers/agents-all, after
-// which it says connected), then that address and, for Cursor (when it
-// isn't one of the agents), VS Code and any JSON app, what adds it. Cursor
-// and VS Code get an "Add to" button in the app (it posts servers/hub-open
-// with the app's name, never a link) and none in a browser. No agent is
-// told to the user as a command to run. The address is the public one in a
-// browser and the gateway in the app. A
-// click again turns it off. In every language, both engines, a wide window
-// in the app and a narrow one in a browser: no sideways scroll, and the
-// switch beside its text.
+// sheet of two tabs. Agents: every agent magpie found that takes MCP
+// servers, in groups (not connected, connected, keeping each server's own
+// entry), each a switch that posts servers/agents-all, or a word for why it
+// keeps its entries with the reason in full behind (i); a Connect all in
+// the bar gives the rest at once. With 25 agents the connected and the
+// kept fold to a row each, a search narrows them, and the sheet still fits
+// the window. Other apps: the address and a row per app (Cursor when it
+// isn't one of the agents, VS Code, Windsurf, any JSON app) whose Copy
+// entry copies what adds it. Cursor and VS Code get an Add in the app (it
+// posts servers/hub-open with the app's name, never a link) and none in a
+// browser. No agent is told to the user as a command to run. The address
+// is the public one in a browser and the gateway in the app. A click again
+// turns it off. In every language, both engines, a wide window in the app
+// and a narrow one in a browser: no sideways scroll, and the switch beside
+// its text.
 // No backend: the API is faked here.
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
@@ -29,6 +32,8 @@ const { strings } = require("./strings.cjs");
 
 const assets = path.resolve(__dirname, "../assets");
 const HOME = "/Users/mg";
+// 21 more agents, for a sheet with 25: the first 17 are connected
+const MANY = Array.from({ length: 21 }, (_, i) => ({ id: "agent" + (i + 1), name: "Agent " + String(i + 1).padStart(2, "0"), icon: "generic", mcp: `${HOME}/.agent${i + 1}/mcp.json` }));
 const fixture = (on, st = {}) => ({
   dir: `${HOME}/.magpie/library`, backups: `${HOME}/.magpie/backups`, home: HOME,
   mcpHub: on, hubPath: "/mcp/magpie/hub/",
@@ -38,6 +43,7 @@ const fixture = (on, st = {}) => ({
     { id: "claude-desktop", name: "Claude Desktop", icon: "claude-color", mcp: `${HOME}/Library/Application Support/Claude/claude_desktop_config.json`, noRemote: true, ...(on ? { hub: "no-remote" } : {}) },
     // given none of the library's servers yet: Connect gives it them
     ...(st.cursor ? [{ id: "cursor", name: "Cursor", icon: "cursor", mcp: `${HOME}/.cursor/mcp.json`, ...(on && st.cursorOn ? { hub: "on" } : {}) }] : []),
+    ...(st.many ? MANY.map((a, i) => ({ ...a, ...(on && (i < 17 || st.manyOn) ? { hub: "on" } : {}) })) : []),
   ],
   instructions: { agents: [], sets: [] }, foundServers: [], projects: [], foundSkills: [], skills: [], problems: [],
   servers: [
@@ -75,9 +81,15 @@ function server(lang, st) {
       return json(fixture(st.on, st));
     }
     if (url.pathname === "/api/library/servers/agents-all") {
-      st.all.push(req.postDataJSON());
-      st.cursorOn = true;
-      return json({ ...fixture(st.on, st), result: { changed: ["cursor"] } });
+      const body = req.postDataJSON();
+      st.all.push(body);
+      if (body.agents.includes("cursor")) st.cursorOn = body.on;
+      if (body.agents.includes("agent18")) st.manyOn = body.on;
+      return json({ ...fixture(st.on, st), result: { changed: body.agents } });
+    }
+    if (url.pathname === "/api/copy") {
+      st.copied.push(req.postDataJSON().text);
+      return json({});
     }
     if (url.pathname === "/api/library/mcp/check") return json({ servers: Object.fromEntries(req.postDataJSON().names.map((n) => [n, { state: "ok", tools: 2 }])) });
     if (url.pathname === "/api/plugins") return json({ plugins: [] });
@@ -92,11 +104,19 @@ function server(lang, st) {
   };
 }
 
+// ARTIFACT_DIR keeps a picture of the sheet at each step
+const shot = async (page, name) => {
+  if (!process.env.ARTIFACT_DIR) return;
+  await fs.mkdir(process.env.ARTIFACT_DIR, { recursive: true });
+  await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => {}))));
+  await page.screenshot({ path: path.join(process.env.ARTIFACT_DIR, `hub-${name}.png`) });
+};
+
 const sideways = (page) => page.evaluate(() => {
   const over = [];
   const w = document.documentElement.clientWidth;
   if (document.documentElement.scrollWidth > w) over.push("page " + document.documentElement.scrollWidth);
-  for (const e of document.querySelectorAll("#view-library .lib-hub, #view-library .lib-hub .lib-switch, #view-library .lib-hub-why, #view-library .lib-hubat, #view-library .lib-hubat .lib-hubconnect, #view-library .lib-hubat .copy, .lib-hubsheet, .lib-hubsheet .segs, .lib-hubsheet .lib-hubcode, .lib-hubsheet .lib-hubagent, .lib-hubsheet .lib-hubagent .lib-hubgo, .lib-hubsheet .lib-hubok, .lib-hubsheet .bar button")) {
+  for (const e of document.querySelectorAll("#view-library .lib-hub, #view-library .lib-hub .lib-switch, #view-library .lib-hub-why, #view-library .lib-hubat, #view-library .lib-hubat .lib-hubconnect, #view-library .lib-hubat .copy, .lib-hubsheet, .lib-hubsheet .segs, .lib-hubsheet .lib-hubroute, .lib-hubsheet .lib-hubsearch, .lib-hubsheet .lib-hubagent, .lib-hubsheet .lib-hubagent .lib-switch, .lib-hubsheet .lib-hubinfo, .lib-hubsheet .lib-hubfolded, .lib-hubsheet .lib-hubaddr, .lib-hubsheet .lib-hubapp, .lib-hubsheet .lib-hubpill, .lib-hubsheet .bar button")) {
     const r = e.getBoundingClientRect();
     if (r.width && (r.right > w + 0.5 || r.left < -0.5)) over.push((e.className || e.tagName) + " " + Math.round(r.left) + "–" + Math.round(r.right));
   }
@@ -115,7 +135,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const w = (key, vars) => tr(lang, key, vars);
         const web = width < 800;
         // Cursor is one of the agents in the app, and not in a browser
-        const st = { on: false, sent: [], opened: [], all: [], web, cursor: !web };
+        const st = { on: false, sent: [], opened: [], all: [], copied: [], web, cursor: !web };
         const url = (web ? "https://mac.tail0.ts.net" : "http://127.0.0.1:3425") + "/mcp/magpie/hub";
         const errors = [];
         const ctx = await browser.newContext({ viewport: { width, height: 900 }, reducedMotion: "reduce" });
@@ -174,36 +194,62 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.ok(fits, "the switch is outside its row");
         assert.deepEqual(await sideways(page), [], "sideways scroll, on");
 
-        // Connect…: every agent here and where it stands, then the address
-        // and what adds it, app by app
+        // Connect…: the agents, in their groups, each with where it stands
         await at.locator(".lib-hubconnect").click();
         const sheet = page.locator(".lib-hubsheet");
         await sheet.waitFor();
         assert.equal((await sheet.locator(".ehead b").textContent()).trim(), w("Connect an app"));
-        assert.equal((await sheet.locator(".lib-hublead").textContent()).trim(), w("magpie connects the agents on this computer itself. Any other app that speaks MCP connects at the address below."));
-        assert.deepEqual((await sheet.locator(".lib-hubsec").allTextContents()).map((x) => x.trim()), [w("Agents magpie looks after"), w("Any other app")]);
+        const tabs = sheet.locator(".ebody > .segs .opt");
+        assert.deepEqual((await tabs.allTextContents()).map((x) => x.trim()), [w("Agents"), w("Other apps")]);
+        const lead = () => sheet.locator(".lib-hublead").textContent().then((x) => x.trim());
+        // one agent that can be: named, not counted
+        assert.equal(await lead(), web ? w("{agent} uses the library's servers through magpie", { agent: "Claude Code" }) : w("{on} of {all} agents use the library's servers through magpie", { on: 1, all: 2 }));
+        assert.equal((await sheet.locator(".lib-hubsub").textContent()).trim().replace(/\u00a0/g, " "),
+          [web ? w("Each server runs once, for all of them") : w("{n} more can be connected", { n: 1 }), w("{n} keep each server's own entry", { n: 2 })].join(" · "));
+        // a few agents: no search, nothing folded
+        assert.equal(await sheet.locator(".lib-hubsearch, .lib-hubfolded, .lib-hubfold").count(), 0);
+        const groups = () => sheet.locator(".lib-hubgrp").evaluateAll((gs) => gs.map((g) => [g.dataset.group, [...g.querySelectorAll(".lib-hubagent")].map((r) => r.dataset.agent)]));
+        assert.deepEqual(await groups(), [...(web ? [] : [["off", ["cursor"]]]), ["on", ["claude"]], ["kept", ["codex", "claude-desktop"]]]);
+        assert.deepEqual((await sheet.locator(".lib-hubsec > span:first-child").allTextContents()).map((x) => x.trim()),
+          [...(web ? [] : [w("Not connected")]), w("Connected"), w("Keep each server's own entry")]);
         const rows = sheet.locator(".lib-hubagent");
         const states = () => rows.evaluateAll((rs) => rs.map((r) => [r.dataset.agent, r.dataset.state]));
-        assert.deepEqual(await states(), [["claude", "on"], ["codex", "own"], ["claude-desktop", "no-remote"], ...(web ? [] : [["cursor", "none"]])]);
-        const line = (id) => sheet.locator(`.lib-hubagent[data-agent="${id}"] .sub`).textContent().then((x) => x.trim());
-        assert.equal(await line("claude"), w("{n} servers, through magpie", { n: 2 }));
-        assert.equal((await sheet.locator('.lib-hubagent[data-agent="claude"] .lib-hubok').textContent()).trim(), w("On the hub"));
-        assert.equal(await line("codex"), w("It has a server called magpie of its own, which magpie leaves as it is"));
-        assert.equal(await line("claude-desktop"), w("It reaches no MCP server over HTTP, so it keeps each server's own entry"));
-        // only the one with nothing yet can be connected, and nothing is a command to run
-        assert.equal(await sheet.locator(".lib-hubgo").count(), web ? 0 : 1);
-        assert.equal(await sheet.locator(".lib-hubok").count(), 1);
+        assert.deepEqual(await states(), [...(web ? [] : [["cursor", "none"]]), ["claude", "on"], ["codex", "own"], ["claude-desktop", "no-remote"]]);
+        const agent = (id) => sheet.locator(`.lib-hubagent[data-agent="${id}"]`);
+        assert.equal(await agent("claude").locator(".lib-switch").getAttribute("aria-checked"), "true");
+        // the kept: a word for why, the reason in full behind (i)
+        assert.equal(await agent("codex").locator(".lib-switch").count(), 0);
+        assert.equal((await agent("codex").locator(".lib-hubtag").textContent()).trim(), w("Has its own magpie"));
+        assert.equal((await agent("claude-desktop").locator(".lib-hubtag").textContent()).trim(), w("No HTTP"));
+        assert.equal(await sheet.locator(".lib-hubwhy").count(), 0);
+        await agent("claude-desktop").locator(".lib-hubinfo").click();
+        assert.equal((await sheet.locator('.lib-hubwhy[data-why="no-remote"]').textContent()).trim(), w("It reaches no MCP server over HTTP, so it keeps each server's own entry"));
+        assert.equal(await agent("claude-desktop").locator(".lib-hubinfo").getAttribute("aria-expanded"), "true");
+        await agent("codex").locator(".lib-hubinfo").click();
+        assert.equal((await sheet.locator('.lib-hubwhy[data-why="own"]').textContent()).trim(), w("It has a server called magpie of its own, which magpie leaves as it is"));
         assert.doesNotMatch(await sheet.textContent(), /mcp add/);
-        if (!web) {
-          assert.equal(await line("cursor"), w("None of the library's servers is on for it yet"));
-          const go = sheet.locator('.lib-hubagent[data-agent="cursor"] .lib-hubgo');
-          assert.equal((await go.textContent()).trim(), w("Connect"));
-          await go.click();
+        await shot(page, `${engine}-${lang}-${width}-agents`);
+        const bar = sheet.locator(".bar");
+        if (web) {
+          // nothing to connect: Done is the one primary
+          assert.equal(await bar.locator(".lib-huball").count(), 0);
+          assert.equal((await bar.locator("button.primary").textContent()).trim(), w("Done"));
+        } else {
+          // one switch on, then off, then Connect all
+          assert.equal((await bar.locator(".lib-huball").textContent()).trim(), w("Connect all"));
+          await agent("cursor").locator(".lib-switch").click();
           await page.waitForFunction((x) => document.querySelector("#status")?.textContent === x, w("{agent} is connected — restart it to use magpie's tools", { agent: "Cursor" }));
-          assert.deepEqual(st.all, [{ agents: ["cursor"], on: true }]);
           await page.waitForFunction(() => document.querySelector('.lib-hubagent[data-agent="cursor"]')?.dataset.state === "on");
-          assert.equal(await line("cursor"), w("{n} servers, through magpie", { n: 2 }));
-          assert.equal(await sheet.locator(".lib-hubgo").count(), 0);
+          assert.deepEqual(await groups(), [["on", ["claude", "cursor"]], ["kept", ["codex", "claude-desktop"]]]);
+          assert.equal(await lead(), w("{on} of {all} agents use the library's servers through magpie", { on: 2, all: 2 }));
+          assert.equal(await bar.locator(".lib-huball").count(), 0);
+          assert.equal((await bar.locator(".lib-hubnote").textContent()).trim(), w("Restart an agent for it to read the change"));
+          await agent("cursor").locator(".lib-switch").click();
+          await page.waitForFunction((x) => document.querySelector("#status")?.textContent === x, w("{agent} no longer has the library's servers — restart it to read the change", { agent: "Cursor" }));
+          await page.waitForFunction(() => document.querySelector('.lib-hubagent[data-agent="cursor"]')?.dataset.state === "none");
+          await bar.locator(".lib-huball").click();
+          await page.waitForFunction(() => document.querySelector('.lib-hubagent[data-agent="cursor"]')?.dataset.state === "on");
+          assert.deepEqual(st.all, [{ agents: ["cursor"], on: true }, { agents: ["cursor"], on: false }, { agents: ["cursor"], on: true }]);
           // the sheet stays open over the page drawn again
           assert.ok(await sheet.isVisible());
         }
@@ -215,36 +261,83 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.deepEqual(beside, [], "an agent's icon isn't beside its name");
         assert.deepEqual(await sideways(page), [], "sideways scroll, agents");
 
+        // Other apps: the address, and a row per app with what adds it
+        await tabs.last().click();
         assert.equal((await sheet.locator(".lib-hubaddr code").textContent()).trim(), url);
-        const opts = sheet.locator(".segs .opt");
+        const apps = sheet.locator(".lib-hubapp");
         // Cursor is set up by hand only when magpie doesn't look after it
-        assert.deepEqual((await opts.allTextContents()).map((x) => x.trim()), [...(web ? ["Cursor"] : []), "VS Code", w("Other")]);
-        const pane = sheet.locator(".lib-hubpane");
-        const code = async () => JSON.parse(await pane.locator(".lib-hubcode pre").textContent());
+        assert.deepEqual(await apps.evaluateAll((rs) => rs.map((r) => r.dataset.app)), [...(web ? ["cursor"] : []), "vscode", "windsurf", "json"]);
+        const app = (id) => sheet.locator(`.lib-hubapp[data-app="${id}"]`);
+        const copied = async (id, name) => {
+          await app(id).locator(".lib-hubcopy").click();
+          await page.waitForFunction((x) => document.querySelector("#status")?.textContent === x, w("{app}'s entry copied", { app: name }));
+          return JSON.parse(st.copied.at(-1));
+        };
         if (web) {
-          assert.equal((await pane.locator(".lib-hubwhere").textContent()).trim(), w("Or add it to ~/.cursor/mcp.json:"));
-          assert.deepEqual(await code(), { mcpServers: { magpie: { url } } });
-          assert.equal(await pane.locator(".lib-hubadd").count(), 0);
-          await opts.nth(1).click();
-        }
-        // VS Code: its install link in the app, its file either way
-        assert.equal((await pane.locator(".lib-hubwhere").textContent()).trim(), w("Or add it to .vscode/mcp.json, or to your user mcp.json:"));
-        assert.deepEqual(await code(), { servers: { magpie: { type: "http", url } } });
-        if (web) assert.equal(await pane.locator(".lib-hubadd").count(), 0);
-        else {
-          assert.equal((await pane.locator(".lib-hubadd").textContent()).trim(), w("Add to {app}", { app: "VS Code" }));
-          await pane.locator(".lib-hubadd").click();
+          assert.equal(await sheet.locator(".lib-hubadd").count(), 0);
+          assert.equal((await app("cursor").locator(".sub").textContent()).trim(), w("Or add it to ~/.cursor/mcp.json"));
+          assert.deepEqual(await copied("cursor", "Cursor"), { mcpServers: { magpie: { url } } });
+          assert.equal((await app("vscode").locator(".sub").textContent()).trim(), w("Or add it to .vscode/mcp.json, or to your user mcp.json"));
+        } else {
+          assert.equal((await app("vscode").locator(".sub").textContent()).trim(), w("{app} asks you to confirm, then it's ready", { app: "VS Code" }));
+          assert.equal((await app("vscode").locator(".lib-hubadd").textContent()).trim(), w("Add"));
+          await app("vscode").locator(".lib-hubadd").click();
           await page.waitForFunction((x) => document.querySelector("#status")?.textContent === x, w("{app} asks you to confirm adding magpie", { app: "VS Code" }));
-          assert.deepEqual(st.opened, [{ app: "vscode" }]);
         }
-        assert.deepEqual(await sideways(page), [], "sideways scroll, VS Code");
-        await opts.last().click();
-        assert.deepEqual(await code(), { mcpServers: { magpie: { type: "http", url } } });
-        assert.equal((await pane.locator(".lib-aside").textContent()).trim(), w("Its transport is Streamable HTTP. From another computer, use the address magpie is reached at there, with a gateway key: Authorization: Bearer <key>."));
-        assert.deepEqual(await sideways(page), [], "sideways scroll, Other");
         assert.deepEqual(st.opened, web ? [] : [{ app: "vscode" }]);
-        await sheet.locator(".bar button").click();
+        assert.deepEqual(await copied("vscode", "VS Code"), { servers: { magpie: { type: "http", url } } });
+        assert.equal((await app("windsurf").locator(".sub").textContent()).trim(), w("Paste it into ~/.codeium/windsurf/mcp_config.json"));
+        assert.deepEqual(await copied("windsurf", "Windsurf"), { mcpServers: { magpie: { serverUrl: url } } });
+        assert.deepEqual(await copied("json", w("Other")), { mcpServers: { magpie: { type: "http", url } } });
+        assert.equal((await sheet.locator(".lib-hubcap").textContent()).trim(), w("From another computer, use the address magpie is reached at there, with a gateway key: Authorization: Bearer <key>."));
+        assert.deepEqual(await sideways(page), [], "sideways scroll, apps");
+        await shot(page, `${engine}-${lang}-${width}-apps`);
+        await bar.locator("button.primary").click();
         await sheet.waitFor({ state: "hidden" });
+
+        // 25 agents: the connected and the kept fold, a search narrows
+        // them, and the sheet still fits the window
+        st.many = true;
+        await page.reload();
+        await page.locator('button[data-view="library"]').click();
+        await v.locator(".lib-hubconnect").click();
+        await sheet.waitFor();
+        await tabs.first().click();
+        const can = web ? 22 : 23, on = web ? 18 : 19;
+        assert.equal(await lead(), w("{on} of {all} agents use the library's servers through magpie", { on, all: can }));
+        assert.equal(await sheet.locator(".lib-hubsearch input").count(), 1);
+        assert.deepEqual(await sheet.locator(".lib-hubgrp").evaluateAll((gs) => gs.map((g) => [g.dataset.group, g.querySelectorAll(".lib-hubagent").length, g.querySelectorAll(".lib-hubfolded").length])),
+          [["off", 4, 0], ["on", 0, 1], ["kept", 0, 1]]);
+        assert.equal((await sheet.locator('.lib-hubgrp[data-group="on"] .lib-hubfolded .name').textContent()).trim(),
+          w("{first} and {n} more", { first: web ? "Claude Code, Agent 01" : "Claude Code, Cursor", n: on - 2 }));
+        const inWindow = await page.evaluate(() => {
+          const d = document.querySelector(".lib-hubsheet").getBoundingClientRect();
+          return d.top >= 0 && d.bottom <= innerHeight;
+        });
+        assert.ok(inWindow, "the sheet is taller than the window");
+        assert.deepEqual(await sideways(page), [], "sideways scroll, 25 agents");
+        await shot(page, `${engine}-${lang}-${width}-many`);
+        // unfold the connected: every one, each a switch
+        await sheet.locator('.lib-hubgrp[data-group="on"] .lib-hubfold').click();
+        assert.equal(await sheet.locator('.lib-hubgrp[data-group="on"] .lib-hubagent .lib-switch[aria-checked="true"]').count(), on);
+        assert.equal((await sheet.locator('.lib-hubgrp[data-group="on"] .lib-hubfold').textContent()).trim(), w("Hide"));
+        // search: across every group, folded or not, and none
+        await sheet.locator(".lib-hubsearch input").fill("agent 2");
+        assert.deepEqual(await rows.evaluateAll((rs) => rs.map((r) => r.dataset.agent)), ["agent20", "agent21"]);
+        assert.equal(await sheet.locator(".lib-hubsearch input").evaluate((i) => i === document.activeElement), true);
+        await shot(page, `${engine}-${lang}-${width}-search`);
+        await sheet.locator(".lib-hubsearch input").fill("zzz");
+        assert.equal((await sheet.locator(".lib-hubnone").textContent()).trim(), w("No agent called “{q}”", { q: "zzz" }));
+        await sheet.locator(".lib-hubsearch input").fill("");
+        // Connect all: the four given nothing yet, in one post
+        st.all.length = 0;
+        await bar.locator(".lib-huball").click();
+        await page.waitForFunction((x) => document.querySelector("#status")?.textContent === x, w("{n} agents are connected — restart them to use magpie's tools", { n: 4 }));
+        assert.deepEqual(st.all, [{ agents: ["agent18", "agent19", "agent20", "agent21"], on: true }]);
+        assert.equal(await bar.locator(".lib-huball").count(), 0);
+        await bar.locator("button.primary").click();
+        await sheet.waitFor({ state: "hidden" });
+        st.many = false;
 
         // off again
         await v.locator(".lib-hub .lib-switch").click();

@@ -105,6 +105,9 @@ type partCache struct {
 	old, next map[uint64]*chunkPart
 	// pairs is the last pairing of the period, and pairsNext this page's
 	pairs, pairsNext *pairMemo
+	// heatOld is the heatmap's days before its last few the page before
+	// kept, and heatOldNext this page's (heatSplit)
+	heatOld, heatOldNext *heatOld
 }
 
 // partSets bounds the partKeys kept: a page is open on one period and
