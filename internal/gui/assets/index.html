@@ -176,6 +176,10 @@
         <div class="who"><div class="name" data-t>Reduce motion</div></div>
         <div id="reduceMotionSegs"></div>
       </div>
+      <div class="row pref" id="birdRow">
+        <div class="who"><div class="name" data-t>Loading bird</div></div>
+        <div id="birdSegs"></div>
+      </div>
       <div class="row pref">
         <div class="who"><div class="name" data-t>Language</div></div>
         <button type="button" id="langPick" class="sess-pick pref-pick" aria-label="Language" aria-haspopup="menu" aria-expanded="false"></button>
@@ -329,6 +333,10 @@
         <div class="who"><div class="name" data-t>Daily warm-up</div><div class="sub" id="warmAtSub"></div></div>
         <div id="warmAtSegs" class="warm-at"></div>
       </div>
+      <div class="row pref warm-now" id="warmNowRow" hidden>
+        <div class="who"><div class="name" data-t>Warm up now</div><div class="sub" id="warmNowSub"></div></div>
+        <div id="warmNowBox"></div>
+      </div>
     </div>
     <div class="list prefs" id="claudeWarmList" role="tabpanel" aria-labelledby="warmTab-claude">
       <div class="row pref">
@@ -338,6 +346,10 @@
       <div class="row pref">
         <div class="who"><div class="name" data-t>Daily warm-up</div><div class="sub" id="claudeWarmAtSub"></div></div>
         <div id="claudeWarmAtSegs" class="warm-at"></div>
+      </div>
+      <div class="row pref warm-now" id="claudeWarmNowRow" hidden>
+        <div class="who"><div class="name" data-t>Warm up now</div><div class="sub" id="claudeWarmNowSub"></div></div>
+        <div id="claudeWarmNowBox"></div>
       </div>
     </div>
     <div class="list prefs" id="wbList" role="tabpanel" aria-labelledby="warmTab-wb">
@@ -525,6 +537,7 @@
 <script src="plugins/redact/demo.js"></script>
 <script src="plugins/otel/page.js"></script>
 <script src="plugins/gateway/settings.js"></script>
+<script src="plugins/search/settings.js"></script>
 <script src="start.js"></script>
 </body>
 </html>

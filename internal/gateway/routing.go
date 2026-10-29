@@ -300,6 +300,9 @@ const (
 	// failFloor: the request asked for a shorter reply than the provider
 	// gives, and is sent again asking for the least it takes
 	failFloor = "floor"
+	// failSight: the model turned an image away (imageRefused), and is
+	// asked again with the request's images described (refuseSight)
+	failSight = "sight"
 	// failUpdate: the upstream turned away the configuration_update items
 	// a changed effort went as (#617), and the request is sent again
 	// without them

@@ -378,7 +378,7 @@ func RegroupSkills() (int, error) {
 			continue
 		}
 		fetched++
-		noted += noteFrom(src, root, candidates(root, ""))
+		noted += noteFrom(src, root, candidates(root, "", srcFolder(src)))
 		os.RemoveAll(root)
 	}
 	if fetched == 0 && first != nil {

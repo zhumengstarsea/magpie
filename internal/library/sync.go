@@ -31,6 +31,9 @@ type Result struct {
 	// Unremoved are, for skills or servers taken out together, the ones
 	// that couldn't be (What is skill:<name> or mcp:<name>)
 	Unremoved []Problem `json:"unremoved,omitempty"`
+	// Unmoved are, for skills handed over from ~/.agents/skills, the ones
+	// that couldn't be moved and stay where they were (What is skill:<name>)
+	Unmoved []Problem `json:"unmoved,omitempty"`
 	// Installed, Had and Skipped are, for skills installed together, the
 	// ones added, the ones the library had already from the same source,
 	// and the ones left out with why: another skill by that name, the
@@ -429,6 +432,12 @@ type SkillView struct {
 	// Always are the agents that have it whatever the library gives them:
 	// it is kept in ~/.agents/skills, which they read themselves (#595)
 	Always []string `json:"always,omitempty"`
+	// Shared is its entry in ~/.agents/skills when it is kept there:
+	// HandOverSkills moves it into the library's own folder
+	Shared string `json:"shared,omitempty"`
+	// SharedElsewhere: that entry only links to a folder kept elsewhere,
+	// which stays there when it's handed over; only the link goes
+	SharedElsewhere bool `json:"sharedElsewhere,omitempty"`
 	// Behind are the agents given it as a copy whose copy differs from it,
 	// till the next sync makes it again
 	Behind []string `json:"behind,omitempty"`
@@ -610,7 +619,8 @@ func readView(problems []Problem, glance bool) (*View, error) {
 		} else if _, err := os.Lstat(p); err == nil && sv.Kind == "folder" {
 			sv.Kind, sv.Source = "", ""
 		}
-		if sharedHas(s.Name) {
+		if sv.Shared = sharedEntry(s.Name); sv.Shared != "" {
+			sv.SharedElsewhere = !within(realDir(skillDir(s.Name)), realDir(sharedSkillsDir()))
 			for _, t := range targets {
 				if t.Skills != "" && (slices.Contains(readsShared, t.Agent.ID) || realDir(t.Skills) == realDir(sharedSkillsDir())) {
 					sv.Always = append(sv.Always, t.Agent.ID)

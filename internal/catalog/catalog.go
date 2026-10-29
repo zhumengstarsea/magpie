@@ -525,6 +525,13 @@ var (
 	// under, which no catalog lists by it. One is a model as a listed one
 	// is, so it is never taken for another either (renamed)
 	canonical map[string]bool
+	// normal is the spelling, of the bare ids models.dev knows (listed,
+	// canonical or a lab's), that a model's SameModel name is looked up
+	// by when no spelling matches as given: kimi-k3.1-pro for Volcengine
+	// Ark's kimi-k3-1-pro-261024 (xyenon on Discord). Of several
+	// spellings, the one the most entries give (kimi-k3.1-pro over
+	// Venice's kimi-k3-1-pro); a tie goes to the first in order.
+	normal map[string]string
 
 	syncCh = make(chan struct{}, 1)
 )
@@ -573,6 +580,7 @@ func loadGen() (map[string]mdProvider, int) {
 					sizes, outs := map[string]map[int]int{}, map[string]map[int]int{}
 					levels := map[string]map[string]int{}
 					voted := map[string]bool{}
+					spelt := map[string]int{}
 					listed = map[string]bool{}
 					canonical = map[string]bool{}
 					// vote is what one entry says of a model, counted for
@@ -583,6 +591,7 @@ func loadGen() (map[string]mdProvider, int) {
 					// deepinfra/…, xiaomi/…) votes its levels once, not
 					// once a host.
 					vote := func(who, own, by string, x mdModel) {
+						spelt[who]++
 						if x.Name != "" && x.Name != own && x.Name != who {
 							if named[who] == nil {
 								named[who] = map[string]int{}
@@ -689,6 +698,13 @@ func loadGen() (map[string]mdProvider, int) {
 					for id, by := range levels {
 						efforts[id] = strings.Split(mostListed(by), ",")
 					}
+					normal = map[string]string{}
+					for id, n := range spelt {
+						k := SameModel(id)
+						if was, ok := normal[k]; !ok || n > spelt[was] || n == spelt[was] && id < was {
+							normal[k] = id
+						}
+					}
 					names = map[string]string{}
 					for id, by := range named {
 						names[id] = mostNamed(by)
@@ -723,7 +739,7 @@ func Reset() {
 	loaded = false
 	built = nil
 	gen++
-	mdev, images, windows, outputs, efforts, thinks, names, listed, canonical, labs = nil, nil, nil, nil, nil, nil, nil, nil, nil, nil
+	mdev, images, windows, outputs, efforts, thinks, names, listed, canonical, labs, normal = nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil
 	loadMu.Unlock()
 	if Forget != nil {
 		Forget()
@@ -1123,8 +1139,26 @@ func fillNames(ms []Model, fallback []string, reserved ...Model) {
 
 // Knows reports whether models.dev lists a model of this id at all, under
 // any provider, as ContextOf and EffortsOf match it.
+//
+// A model it lists under another spelling alone (normalFor) counts.
 func Knows(id string) bool {
 	return ContextOf(id) > 0 || len(EffortsOf(id)) > 0 || Thinks(id)
+}
+
+// KnowsAsWritten is Knows without another spelling (normalFor): the
+// usage report sends a model's id only when models.dev knows it as
+// written, so an id a user typed that only folds into a known one
+// ("Kimi K3.1 Pro 261024") is not sent.
+func KnowsAsWritten(id string) bool {
+	if contextAs(id, false) > 0 {
+		return true
+	}
+	load()
+	if e, _ := lookupAs(id, efforts, false); len(e) > 0 {
+		return true
+	}
+	v, _ := lookupAs(id, thinks, false)
+	return v
 }
 
 // Lists reports whether models.dev lists a model by this very id (its
@@ -1155,7 +1189,15 @@ func SeesImages(id string) bool {
 // A relay's rename of a model it knows (renamed) that names its window
 // ("[1M]", "[200K]", Claude Code's "[1m]") has the window it names: what
 // the relay serves it at, as Claude Code takes claude-opus-5[1m] for 1M.
-func ContextOf(id string) int {
+//
+// Last, a model it lists under another spelling (normalFor): Volcengine
+// Ark's kimi-k3-1-pro-261024 has kimi-k3.1-pro's window. A window the
+// vendor's own list gives is read before this, by the caller, and stays.
+func ContextOf(id string) int { return contextAs(id, true) }
+
+// contextAs is ContextOf, with another spelling (normalFor) only when
+// spellings is true.
+func contextAs(id string, spellings bool) int {
 	load()
 	b := bareID(id)
 	if w, ok := found(b, windows); ok {
@@ -1165,7 +1207,12 @@ func ContextOf(id string) int {
 		if w > 0 {
 			return w
 		}
-		w, _ = found(r, windows)
+		if w, ok := found(r, windows); ok {
+			return w
+		}
+	}
+	if n, ok := normalFor(b); spellings && ok {
+		w, _ := found(n, windows)
 		return w
 	}
 	return 0
@@ -1192,19 +1239,45 @@ func EffortsOf(id string) []string {
 }
 
 // lookup is what table holds for a model of this id: as found finds it,
-// else as the relay's rename of a model found finds (renamed). Every
-// capability is looked up the same way, so a model the catalog knows has
-// all of them or none.
+// else as the relay's rename of a model found finds (renamed), else as
+// the spelling models.dev lists it by (normalFor). Every capability is
+// looked up the same way, so a model the catalog knows has all of them
+// or none.
 func lookup[T any](id string, table map[string]T) (T, bool) {
+	return lookupAs(id, table, true)
+}
+
+// lookupAs is lookup, with another spelling (normalFor) only when
+// spellings is true.
+func lookupAs[T any](id string, table map[string]T, spellings bool) (T, bool) {
 	b := bareID(id)
 	if v, ok := found(b, table); ok {
 		return v, true
 	}
 	if r, _, ok := renamed(b); ok {
-		return found(r, table)
+		if v, ok := found(r, table); ok {
+			return v, true
+		}
+	}
+	if n, ok := normalFor(b); spellings && ok {
+		return found(n, table)
 	}
 	var zero T
 	return zero, false
+}
+
+// normalFor is the bare id models.dev knows a model by when it knows it
+// under another spelling alone: the same SameModel name, so a version's
+// dot or dash ("kimi-k3.1-pro", "kimi-k3-1-pro"), case and gaps, and a
+// snapshot date (Ark's six digits, "-261024"; "-20260801") don't keep
+// them apart, while a variant does (-pro-max is not -pro, -mini not the
+// model, k3.1 not k3). False for an id it knows as given, or none.
+func normalFor(b string) (string, bool) {
+	n, ok := normal[SameModel(b)]
+	if !ok || n == b {
+		return "", false
+	}
+	return n, true
 }
 
 // found is what table holds for a bare id: by the id itself, a Bedrock
@@ -1357,19 +1430,47 @@ func listedBy(providers []string, id string, providerOverrides bool) ([]string, 
 	if r, ok := unprofiled(b); ok {
 		b = r
 	}
+	pick := func(pid string, m mdModel) ([]string, bool) {
+		providerID := ""
+		if providerOverrides {
+			providerID = pid
+		}
+		if e := all[pid].levels(m, providerID); len(e) > 0 || !m.budgeted() {
+			return slices.Clone(e), true
+		}
+		return nil, false
+	}
 	for _, want := range []string{b, cutAt(b, '('), cutAt(b, ':')} {
 		for _, pid := range providers {
 			for key, m := range all[pid].Models {
 				if bareID(key) != want {
 					continue
 				}
-				providerID := ""
-				if providerOverrides {
-					providerID = pid
+				if e, ok := pick(pid, m); ok {
+					return e, true
 				}
-				if e := all[pid].levels(m, providerID); len(e) > 0 || !m.budgeted() {
-					return slices.Clone(e), true
-				}
+			}
+		}
+	}
+	// and last under another spelling (SameModel), only where no provider
+	// lists it as given, and only for a name models.dev knows (normal): Ark
+	// lists glm-5.3 on its plan, glm-5-3-flash-260828 pay-as-you-go. Of a
+	// provider's several such entries, the first in key order.
+	n := SameModel(b)
+	if _, ok := normal[n]; !ok {
+		return nil, false
+	}
+	for _, pid := range providers {
+		var keys []string
+		for key := range all[pid].Models {
+			if SameModel(bareID(key)) == n {
+				keys = append(keys, key)
+			}
+		}
+		slices.Sort(keys)
+		for _, key := range keys {
+			if e, ok := pick(pid, all[pid].Models[key]); ok {
+				return e, true
 			}
 		}
 	}

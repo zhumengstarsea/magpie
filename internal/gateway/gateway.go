@@ -32,6 +32,7 @@ import (
 	"github.com/yetone/magpie/internal/access"
 	"github.com/yetone/magpie/internal/awake"
 	"github.com/yetone/magpie/internal/catalog"
+	"github.com/yetone/magpie/internal/codexrelay"
 	"github.com/yetone/magpie/internal/filememo"
 	"github.com/yetone/magpie/internal/gwbudget"
 	"github.com/yetone/magpie/internal/gwmw"
@@ -465,6 +466,10 @@ type Server struct {
 	sightMu    sync.Mutex
 	sights     map[string]*sight
 	sightOrder []string
+	// blind are the models that turned an image away while this server
+	// ran, by "<provider>/<model>" (refuseSight): kept for the run alone,
+	// so a vendor that adds sight is asked again after a restart
+	blind sync.Map
 	// the requests out at each key or account with a MaxConcurrency, and
 	// those waiting their turn (concurrency.go)
 	lanes lanes
@@ -585,6 +590,11 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	s.lnMu.Lock()
 	s.tls = cfg
 	s.lnMu.Unlock()
+	// the Codex relay a magpie quitting left at the port (codexrelay)
+	// lets go of it, finishing the turns it streams
+	if !Handover && !Inherited() {
+		codexrelay.Leave()
+	}
 	ln, err := s.listen(listenAddr())
 	if err != nil {
 		return err
@@ -1135,7 +1145,8 @@ func drawerObjects(r *http.Request) []map[string]any {
 		if !p.On() || p.DecideOnly() {
 			continue
 		}
-		for _, m := range Drawers(p) {
+		// less those unticked in its editor, as Settings › Images lists them
+		for _, m := range OfferedDrawers(p) {
 			if held && (!modelAllowed(who, p, m.ID) || !accountServes(who, p, m.ID)) {
 				continue
 			}
@@ -1519,10 +1530,12 @@ func (s *Server) countOn(w http.ResponseWriter, r *http.Request, p provider.Prov
 				}
 			}
 			keepRetryOut(w.Header(), res.Header, b)
+			passReplyHeaders(w.Header(), c.p, res)
 			writeError(w, provider.Anthropic, res.StatusCode, c.p.Explain(c.p.Name+": "+provider.APIError(b, res.Status), res.StatusCode, b))
 			return
 		}
 		defer res.Body.Close()
+		passReplyHeaders(w.Header(), c.p, res)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(res.StatusCode)
 		io.Copy(w, res.Body)
@@ -2159,11 +2172,16 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	// a model its list says nothing of is text-only to a describer, as
 	// agents are told: while one describes images they are told every
 	// model takes them, and send the images on to be described
+	//
+	// One that turned an image away since magpie started is text-only
+	// whatever its list or models.dev says, with a model to describe the
+	// image: the model picked is given the description, not left to fail
+	// over to the same model at another provider that sees (xyenon)
 	unknownSight := false
-	if imageInput == nil && !isGroup && hasImage(from, body) && blindTo(p.ID, model, nil) {
+	if !isGroup && (imageInput == nil || *imageInput) && hasImage(from, body) && s.blindTo(p.ID, model, imageInput) {
 		if _, ok := seeing(); ok {
 			no := false
-			imageInput, unknownSight = &no, true
+			imageInput, unknownSight = &no, imageInput == nil && !s.sightRefused(p.ID, model)
 		}
 	}
 	if imageInput != nil && !*imageInput {
@@ -2454,7 +2472,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			for i, c := range cands {
 				in := membersImageInput([]provider.Member{{Provider: c.p, Model: c.model}})
 				switch {
-				case !blindTo(c.p.ID, c.model, in):
+				case !s.blindTo(c.p.ID, c.model, in):
 					sees, seesAt = append(sees, c), append(seesAt, pl.order[i])
 				case in == nil:
 					unknown, unknownAt = append(unknown, c), append(unknownAt, pl.order[i])
@@ -2779,7 +2797,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		}
 		if isGroup {
 			in := membersImageInput([]provider.Member{{Provider: c.p, Model: c.model}})
-			if seenGroup != nil && blindTo(c.p.ID, c.model, in) {
+			if seenGroup != nil && s.blindTo(c.p.ID, c.model, in) {
 				groupUnknown = in == nil
 				b, err := seenGroup()
 				if err != nil {
@@ -3007,6 +3025,12 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			if ultra && from == provider.Anthropic {
 				ctx = withUltra(ctx)
 			}
+			if !last {
+				// another candidate is asked if this one can't answer
+				// now: a plugin whose vendor queues the request says so
+				// at once instead of waiting in the queue (FallbackHeader)
+				ctx = withFallback(ctx)
+			}
 			hw.stop = stop
 			if autoPicks(c) {
 				// the reply names the pick it went as last (#256: it
@@ -3021,6 +3045,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			// step of its way out, for the Routing page to say whose time
 			// a slow turn was (TryNet)
 			ctx = httptrace.WithClientTrace(ctx, nt.hooks(&asking, &asked, &wrote))
+			// the headers of its vendor's reply the provider passes on go
+			// with the try's own, to the agent if it is the one it gets
+			// (#4145)
+			ctx = withReplySink(ctx, c.p.ID, hw.heardUpstream)
 			// a key or account with a MaxConcurrency is asked once one of
 			// its slots is free, in turn; the agent gone while it waits,
 			// nothing is sent (the 499 below)
@@ -3285,6 +3313,33 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		}
 		if plainFor == c.who()+"|"+c.model && call.Status > 0 && call.Status < 400 {
 			effortUpdatesRefused(c.who(), c.model)
+		}
+		if !hw.passing && !s.sightRefused(c.p.ID, c.model) && imageRefused(hw.code(), hw.errBody()) && hasImage(from, attemptBody) {
+			// the model turned the image away, its list or models.dev
+			// having said it sees: it is text-only from now on (blindTo),
+			// and with a model to describe images it is asked again with
+			// them described, before any other candidate — the user picked
+			// this one, and the Image recognition model is what they set
+			// for it. A pick of DeepSeek-V4.1-Flash at a relay serving it
+			// text-only went on to the same model at another provider
+			// (xyenon). With nothing to describe them it goes on as
+			// before, to a candidate that may see.
+			s.refuseSight(c.p.ID, c.model)
+			if isGroup && seenGroup != nil {
+				try.Fail = failSight
+				s.trace.update(tr, func(t *Route) { t.Tries[len(t.Tries)-1] = try })
+				i--
+				continue
+			}
+			if see, ok := seeing(); ok && !isGroup {
+				if seen, err := s.seenBody(withDescribeFor(r.Context(), call.Agent, call.Model, sessionOf(r.Header), false), from, body, see); err == nil {
+					body = seen
+					try.Fail = failSight
+					s.trace.update(tr, func(t *Route) { t.Tries[len(t.Tries)-1] = try })
+					i--
+					continue
+				}
+			}
 		}
 		if !floored && !hw.passing && hw.code() == 400 {
 			// asked for fewer tokens than this provider answers with (#64)
@@ -4346,8 +4401,15 @@ func markAntigravityRefused(w http.ResponseWriter, p provider.Provider, system, 
 // Unexpected value(s) `x` for the `anthropic-beta` header) is asked again
 // once without them, and they're left out for it from then on. An account's
 // 403 or 400 it can mend (Provider.Retry) is asked again, a few times at most.
-func (s *Server) forward(ctx context.Context, p provider.Provider, to provider.Protocol, path string, body []byte, in http.Header) (*http.Response, error) {
-	res, err := s.forwardOnce(ctx, p, to, path, body, in)
+func (s *Server) forward(ctx context.Context, p provider.Provider, to provider.Protocol, path string, body []byte, in http.Header) (res *http.Response, err error) {
+	// the reply it returns says which of its headers go to the agent
+	// (#4145), not one asked before it
+	defer func() {
+		if err == nil {
+			heardReply(ctx, p, res)
+		}
+	}()
+	res, err = s.forwardOnce(ctx, p, to, path, body, in)
 	if err == nil && mantleRoutes(p, to) {
 		res, err = s.mantleReroute(ctx, p, to, path, body, in, res)
 	}
@@ -4565,6 +4627,10 @@ func (s *Server) forwardOnce(ctx context.Context, p provider.Provider, to provid
 	if p.IsPlugin() {
 		req.Header.Set(provider.ConversationHeader, conversationID(in, body))
 		tellWorkPlace(req.Header, to, body)
+		req.Header.Del(provider.FallbackHeader)
+		if hasFallback(ctx) {
+			req.Header.Set(provider.FallbackHeader, "1")
+		}
 	}
 	if p.IsRemoteMagpie() {
 		passOnCaller(ctx, req)
@@ -5196,6 +5262,8 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 				// other API left, a group's next member is asked, and the
 				// agent is told the Responses URL to set
 				s.markUnfit(p.ID, offRefused(model), proto)
+				// the refusal is the reply, its headers the ones passed on
+				heardReply(r.Context(), p, res)
 			} else {
 				res = off
 			}
@@ -5319,13 +5387,23 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 	if proto == provider.Responses && sse {
 		ids = &idTidy{}
 	}
-	// out is what a filter let through, through ids and phases
+	// a thinking block with no signature, which a Messages client may read
+	// as required (Grok Build), gets an empty one, as Anthropic's own
+	// blocks start (thinking_signature.go)
+	var thinkSigs *sigFieldTidy
+	if proto == provider.Anthropic {
+		thinkSigs = &sigFieldTidy{sse: sse}
+	}
+	// out is what a filter let through, through ids, phases and thinkSigs
 	out := func(b []byte) []byte {
 		if ids != nil {
 			b = ids.write(b)
 		}
 		if phases != nil {
-			return phases.write(b)
+			b = phases.write(b)
+		}
+		if thinkSigs != nil {
+			b = thinkSigs.write(b)
 		}
 		return b
 	}
@@ -5383,6 +5461,9 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 			}
 			if phases != nil {
 				out = phases.write(out)
+			}
+			if thinkSigs != nil {
+				out = thinkSigs.write(out)
 			}
 			if _, werr := write(out); werr != nil {
 				return res.StatusCode, "", true
@@ -5452,6 +5533,9 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 	}
 	if phases != nil {
 		write(phases.flush())
+	}
+	if thinkSigs != nil {
+		write(thinkSigs.flush())
 	}
 	if sse {
 		sniff.drain()
@@ -7557,7 +7641,9 @@ var otherOffNamed = map[string]*regexp.Regexp{
 var noneQuoted = regexp.MustCompile(`(?i)['"]none\\?['"]`)
 
 // bodyEffort is the reasoning effort a Chat or Responses request asks for,
-// or an Anthropic one in its output_config.
+// or an Anthropic one in its output_config. A Responses request that
+// changed it mid-thread asks for its last configuration_update's
+// (effortUpdated).
 func bodyEffort(proto provider.Protocol, body []byte) string {
 	var v struct {
 		ReasoningEffort string `json:"reasoning_effort"`
@@ -7575,6 +7661,9 @@ func bodyEffort(proto provider.Protocol, body []byte) string {
 	case proto == provider.Chat:
 		return v.ReasoningEffort
 	case proto == provider.Responses && v.Reasoning != nil:
+		if e := effortUpdated(body); e != "" {
+			return e
+		}
 		return v.Reasoning.Effort
 	case proto == provider.Anthropic && v.OutputConfig != nil:
 		return v.OutputConfig.Effort
@@ -7605,6 +7694,10 @@ func withBodyEffort(proto provider.Protocol, body []byte, effort string) []byte 
 		}
 		if decodeJSON(body, &v) != nil || v.Reasoning == nil {
 			return body
+		}
+		if effortUpdated(body) != "" {
+			// changed mid-thread: where the agent's last change went
+			return withEffortUpdated(body, effort)
 		}
 		v.Reasoning["effort"] = effort
 		return withFields(body, map[string]any{"reasoning": v.Reasoning})

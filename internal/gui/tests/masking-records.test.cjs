@@ -400,14 +400,61 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     });
     test(`${engine} ${lang}: your own words alone are masking on`, async (t) => {
       const empty = (d) => ({ ...summary(d), requests: 0, n: 0, distinct: 0, blocked: 0, kinds: [], agents: [], providers: [], values: [], by: {} });
-      const { browser, page, errors } = await open(engine, lang, 640, empty, null, { off: true, none: true, settings: { redactWords: ["Nightjar"] } });
+      const { browser, page, errors, asked } = await open(engine, lang, 640, empty, null, { off: true, none: true, settings: { redactWords: ["Nightjar"] } });
       t.after(() => browser.close());
       await page.locator("#maskCard .msk-head").waitFor();
       assert.equal(await page.locator("#maskCard.off").count(), 0, "words alone mask, the card says off");
-      assert.equal(await page.locator("#maskCard .msk-head button").count(), 0, "no Turn on masking while words mask");
+      // the way off is Settings › Privacy, where the words are: a click
+      // here that turned the switches off would leave words masking
+      const off = page.locator("#maskCard .msk-head button");
+      assert.equal(await off.count(), 1, "one way off, no Turn on masking while words mask");
+      if (lang === "en") assert.equal(await off.innerText(), "Turn off in Settings");
+      else assert(!(await off.innerText()).includes("Turn"), "Turn off in Settings left in English");
       assert(!(await page.locator("#maskCard .msk-flow-none").innerText()).includes("Only keys"), "words alone: not the secrets-only line");
+      await off.click();
+      await page.locator("#view-settings").waitFor({ state: "visible" });
+      assert(!asked.some((x) => x.startsWith("settings")), "opening Settings saves nothing");
       assert.deepEqual(errors, []);
     });
+    // masking on, the page turns it off as it turns it on (ZekeXiao on X:
+    // "脱敏好像只有一个打开开关，不能关？"): both switches go off, the page
+    // then says off, and Turn on masking brings back what was on
+    for (const width of [1100, 640]) {
+      test(`${engine} ${lang} ${width}px: masking on, the page turns it off and on again`, async (t) => {
+        const { browser, page, errors, asked } = await open(engine, lang, width, summary);
+        t.after(() => browser.close());
+        const head = page.locator("#maskCard .msk-head");
+        await page.locator("#maskCard .msk-num").waitFor();
+        const off = head.locator("button.text");
+        assert.equal(await off.count(), 1, "a way off while masking is on");
+        if (lang === "en") assert.equal(await off.innerText(), "Turn off masking");
+        else assert(!(await off.innerText()).includes("Turn"), "Turn off masking left in English");
+        assert.deepEqual(await wide(page), { page: false, over: [] });
+        await shot(page, `${engine}-${lang}-${width}-on-off`);
+        const offText = await off.innerText();
+        await stillClick(page, off);
+        await until(() => asked.some((x) => x.startsWith("settings")));
+        const sent = JSON.parse(asked.find((x) => x.startsWith("settings")).slice(9));
+        assert.equal(sent.redact, false);
+        assert.equal(sent.redactPersonal, false);
+        // what the page says after is true: off, and the way back on
+        const on = head.locator("button.text");
+        await page.waitForFunction((was) => { const b = document.querySelector("#maskCard .msk-head button.text"); return b && !b.disabled && b.textContent !== was; }, offText);
+        if (lang === "en") {
+          assert.equal(await head.locator(".msk-sub").innerText(), "Masking is off: requests go to vendors as they are");
+          assert.equal(await on.innerText(), "Turn on masking");
+        }
+        assert.deepEqual(await wide(page), { page: false, over: [] });
+        asked.length = 0;
+        await stillClick(page, on);
+        await until(() => asked.some((x) => x.startsWith("settings")));
+        const back = JSON.parse(asked.find((x) => x.startsWith("settings")).slice(9));
+        assert.equal(back.redact, true);
+        assert.equal(back.redactPersonal, true, "personal data comes back on as it was");
+        await page.waitForFunction((was) => document.querySelector("#maskCard .msk-head button.text")?.textContent === was, offText);
+        assert.deepEqual(errors, []);
+      });
+    }
   }
 
   test(`${engine}: a masked call on the Gateway page, and a key in the address, open its request`, async (t) => {

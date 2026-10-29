@@ -3,6 +3,9 @@
 magpie.strings({
   zh: {
     "Turn on masking": "打开脱敏",
+    "Turn off masking": "关闭脱敏",
+    "Turn off in Settings": "去设置里关闭",
+    "Your own masked words still mask until you take them out, in Settings › Privacy": "你自己加的脱敏词会一直脱敏，要在「设置 › 隐私」里删掉",
     "You can also change it in": "也可以在这里调整：",
     "Requests go to vendors as they are": "请求按原样发给厂商",
     "Turned on, keys, passwords and tokens become placeholders before they leave this computer, and are put back in each answer. Emails and phone numbers too once Mask personal data is on. What each request had masked shows here.": "打开脱敏后，密钥、密码、令牌这些值在离开这台电脑前会换成占位符，回复里再换回来。打开「脱敏个人信息」后，邮箱和手机号也会。每条请求遮了什么，都会显示在这里。",
@@ -95,6 +98,9 @@ magpie.strings({
   },
   "zh-TW": {
     "Turn on masking": "開啟脫敏",
+    "Turn off masking": "關閉脫敏",
+    "Turn off in Settings": "到設定裡關閉",
+    "Your own masked words still mask until you take them out, in Settings › Privacy": "你自己加的脫敏詞會一直脫敏，要在「設定 › 隱私」裡刪掉",
     "You can also change it in": "也可以在這裡調整：",
     "Requests go to vendors as they are": "請求照原樣發給廠商",
     "Turned on, keys, passwords and tokens become placeholders before they leave this computer, and are put back in each answer. Emails and phone numbers too once Mask personal data is on. What each request had masked shows here.": "開啟脫敏後，金鑰、密碼、權杖這些值在離開這台電腦前會換成佔位符，回覆裡再換回來。開啟「脫敏個人資訊」後，電子郵件和手機號碼也會。每則請求遮了什麼，都會顯示在這裡。",
@@ -187,6 +193,9 @@ magpie.strings({
   },
   ja: {
     "Turn on masking": "マスクをオンにする",
+    "Turn off masking": "マスクをオフにする",
+    "Turn off in Settings": "設定でオフにする",
+    "Your own masked words still mask until you take them out, in Settings › Privacy": "自分で追加したマスクする語は、設定 › プライバシーで削除するまでマスクされ続けます",
     "You can also change it in": "こちらでも変更できます：",
     "Requests go to vendors as they are": "リクエストはそのままベンダーに送られます",
     "Turned on, keys, passwords and tokens become placeholders before they leave this computer, and are put back in each answer. Emails and phone numbers too once Mask personal data is on. What each request had masked shows here.": "オンにすると、キー・パスワード・トークンはこのコンピュータを出る前にプレースホルダーに置き換わり、返答の中で元に戻されます。「個人情報をマスク」をオンにすると、メールアドレスと電話番号も対象になります。各リクエストで何をマスクしたかがここに表示されます。",
@@ -279,6 +288,9 @@ magpie.strings({
   },
   de: {
     "Turn on masking": "Maskierung einschalten",
+    "Turn off masking": "Maskierung ausschalten",
+    "Turn off in Settings": "In den Einstellungen ausschalten",
+    "Your own masked words still mask until you take them out, in Settings › Privacy": "Ihre eigenen maskierten Wörter werden weiter maskiert, bis Sie sie unter Einstellungen › Datenschutz entfernen",
     "You can also change it in": "Auch zu ändern unter",
     "Requests go to vendors as they are": "Anfragen gehen unverändert an die Anbieter",
     "Turned on, keys, passwords and tokens become placeholders before they leave this computer, and are put back in each answer. Emails and phone numbers too once Mask personal data is on. What each request had masked shows here.": "Eingeschaltet werden Schlüssel, Passwörter und Tokens zu Platzhaltern, bevor sie diesen Computer verlassen, und in jeder Antwort zurückgesetzt. E-Mails und Telefonnummern ebenso, sobald „Personenbezogene Daten maskieren“ an ist. Was jede Anfrage maskiert hatte, steht hier.",

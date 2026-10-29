@@ -354,10 +354,10 @@ func (s *Server) jevLevelled(ctx context.Context, p provider.Provider, model str
 // says which provider and how long it was given.
 var errNoAnswer = errors.New("no answer in the classifier's wait")
 
-// askJev asks a decision provider's model through its System One API.
-func (s *Server) askJev(p provider.Provider, model string, intents []string, prev before, effort bool, text string) (v verdict, err error) {
-	wait := classifyTimeout()
-	ctx, cancel := context.WithTimeout(context.Background(), wait)
+// askJev asks a decision provider's model through its System One API,
+// within ctx: the classifier's wait, which is wait long, that every try
+// of askDecideTries shares.
+func (s *Server) askJev(ctx context.Context, wait time.Duration, p provider.Provider, model string, intents []string, prev before, effort bool, text string) (v verdict, err error) {
 	defer func() {
 		// only a call cut off by the wait is reworded: a refusal or an
 		// answer read as the wait ran out keeps its own type, which
@@ -365,7 +365,6 @@ func (s *Server) askJev(p provider.Provider, model string, intents []string, pre
 		if errors.Is(err, errNoAnswer) {
 			err = fmt.Errorf("%s gave no answer in %s", p.Name, wait)
 		}
-		cancel()
 	}()
 	if model == "" {
 		model = p.Jev()
@@ -735,7 +734,9 @@ func withFixedEffort(proto provider.Protocol, body []byte, effort string) []byte
 			v.Reasoning = map[string]any{}
 		}
 		v.Reasoning["effort"] = effort
-		return withFields(body, map[string]any{"reasoning": v.Reasoning})
+		// and the agent's last change of effort mid-thread, which an
+		// upstream reading the items would take over the top's
+		return withEffortUpdated(withFields(body, map[string]any{"reasoning": v.Reasoning}), effort)
 	case provider.Anthropic:
 		var v struct {
 			Thinking *struct {

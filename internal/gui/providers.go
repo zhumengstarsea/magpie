@@ -87,6 +87,8 @@ type providerJSON struct {
 	Headers   map[string]string `json:"headers,omitempty"`
 	// JSON fields added to each request's body (provider.ExtraBody, #1604)
 	ExtraBody provider.ExtraBody `json:"extraBody,omitempty"`
+	// headers of the vendor's reply passed on (provider.ReplyHeaders, #4145)
+	ReplyHeaders []string `json:"replyHeaders,omitempty"`
 	// the API the user gave a custom provider's Base URL as (BaseAPI)
 	BaseAPI string `json:"baseAPI,omitempty"`
 	// the vendor searches the web by itself (provider.Searches)
@@ -247,8 +249,10 @@ type providerJSON struct {
 	Exposed   int         `json:"exposed"`           // how many reach the agents
 	Draws     int         `json:"draws,omitempty"`   // how many of its models draw images (gateway.Drawers)
 	DrawIDs   []string    `json:"drawIds,omitempty"` // those models' ids, listed apart in its editor
-	Unlisted  bool        `json:"unlisted"`          // its models serve only through routing groups
-	NoModels  bool        `json:"noModels"`          // Select none: none of its models served (#1818)
+	// those of them unticked in its editor (provider.HiddenDrawers)
+	HiddenDrawers []string `json:"hiddenDrawers,omitempty"`
+	Unlisted      bool     `json:"unlisted"` // its models serve only through routing groups
+	NoModels      bool     `json:"noModels"` // Select none: none of its models served (#1818)
 	// Groups are the routing groups ("group/<id>") each of its models is
 	// in, by model id: what an unlisted one is still used through, and the
 	// editor names those in none
@@ -603,7 +607,7 @@ func providerInfoWith(p provider.Provider, agents []agentUse, desktop map[string
 		ID: p.ID, Name: p.Name, Icon: p.Icon, Preset: p.Preset, Host: p.Host(),
 		Chat: p.Chat, Responses: p.Responses, Anthropic: p.Anthropic, Gemini: p.Gemini, Decide: p.Decide, BaseAPI: p.BaseAPI, ModelTest: p.ModelTest(), TestsAs: p.TestClients(), DecideTest: p.AsksDecideModels(), MarksKinds: p.MarksKinds(),
 		Catalog: p.Catalog, Website: p.Website, KeysURL: p.KeysURL,
-		Proxy: p.Proxy, AccountProxies: p.AccountProxies, AccountModels: p.AccountModels, AccountCaps: p.AccountCaps, AccountWindowCaps: p.AccountWindowCaps, AccountNames: p.AccountNames, Headers: p.Headers, ExtraBody: p.ExtraBody, Searches: p.Searches, Cline: p.ClinePinnable(), PinUpstream: p.PinUpstream, Unredacted: p.Unredacted, InsecureTLS: p.InsecureTLS, TakesInsecureTLS: p.TakesInsecureTLS(), LimitRestOff: p.LimitRestOff, NativeCompaction: p.NativeCompaction, CarriesCompaction: p.CarriesCompaction(), PassUserAgent: p.PassUserAgent, OwnClient: p.OwnClient(), AuthHeader: p.AuthHeader, BothAuth: p.BothAuth(), BalanceURL: p.BalanceURL, BalancePath: p.BalancePath, BalanceMethod: p.BalanceMethod, ModelsURL: p.ModelsURL,
+		Proxy: p.Proxy, AccountProxies: p.AccountProxies, AccountModels: p.AccountModels, AccountCaps: p.AccountCaps, AccountWindowCaps: p.AccountWindowCaps, AccountNames: p.AccountNames, Headers: p.Headers, ExtraBody: p.ExtraBody, ReplyHeaders: p.ReplyHeaders, Searches: p.Searches, Cline: p.ClinePinnable(), PinUpstream: p.PinUpstream, Unredacted: p.Unredacted, InsecureTLS: p.InsecureTLS, TakesInsecureTLS: p.TakesInsecureTLS(), LimitRestOff: p.LimitRestOff, NativeCompaction: p.NativeCompaction, CarriesCompaction: p.CarriesCompaction(), PassUserAgent: p.PassUserAgent, OwnClient: p.OwnClient(), AuthHeader: p.AuthHeader, BothAuth: p.BothAuth(), BalanceURL: p.BalanceURL, BalancePath: p.BalancePath, BalanceMethod: p.BalanceMethod, ModelsURL: p.ModelsURL,
 		Ready: p.Ready(), Chosen: p.Picks(), Models: []modelJSON{}, Agents: []providerAgent{},
 		Fallback: p.Fallback, Routing: p.Routing, Sink: p.Sink, Affinity: p.Affinity, KeepLogin: p.KeepLogin, KeepLoginAs: p.KeepLoginAs, SwitchOnly: p.SwitchOnly, CapStop: p.CapStop, CapCareful: p.CapCareful, Unlisted: p.Unlisted, NoModels: p.ServesNone(), Off: p.Off, Contexts: p.Contexts,
 		MaxConcurrency: p.MaxConcurrency, PluginConcurrency: p.PluginConcurrency(), PriceRate: p.PriceRate,
@@ -827,6 +831,11 @@ func providerInfoWith(p provider.Provider, agents []agentUse, desktop map[string
 		out.DrawIDs = append(out.DrawIDs, m.ID)
 	}
 	out.Draws = len(out.DrawIDs)
+	for _, id := range out.DrawIDs {
+		if p.DrawerHidden(id) {
+			out.HiddenDrawers = append(out.HiddenDrawers, id)
+		}
+	}
 	if t, ok := p.Listed(); ok {
 		out.Fetched = &t
 	}
@@ -998,6 +1007,10 @@ var (
 func moveContext(r *http.Request) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Minute)
 }
+
+// appLink hands an app's import link over once something here opens it
+// (agent.OpenAppLink); tests stand in for the system's answer.
+var appLink = agent.OpenAppLink
 
 func providerRoutes(mux *http.ServeMux, w Windows) {
 	importAppsRoutes(mux)
@@ -1388,6 +1401,7 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 				pr.ZhipuTeam = in.ZhipuTeam
 				pr.NoModels = in.NoModels
 				pr.ExtraBody = in.ExtraBody
+				pr.ReplyHeaders = in.ReplyHeaders
 				pr.SecretAccessKey = in.SecretAccessKey
 				pr.Vertex = in.Vertex
 				pr.Searches = in.Searches
@@ -1404,6 +1418,7 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 				// back to Smart (fflake33 on Discord)
 				pr.Routing, pr.Affinity, pr.Sink = in.Routing, in.Affinity, in.Sink
 				pr.Unlisted = in.Unlisted
+				pr.HiddenDrawers = in.HiddenDrawers
 				pr.AccountProxies = in.AccountProxies
 				if in.Name != "" {
 					pr.Name = in.Name
@@ -1421,6 +1436,11 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 			// fields the body can't be given are refused, not dropped
 			// unseen (#1604)
 			if why := provider.ExtraBodyOK(in.ExtraBody); why != "" {
+				fail(rw, errors.New(why))
+				return
+			}
+			// and reply headers magpie never passes on (#4145)
+			if why := provider.ReplyHeadersOK(in.ReplyHeaders); why != "" {
 				fail(rw, errors.New(why))
 				return
 			}
@@ -1599,6 +1619,11 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 					in.AccountConcurrency = old.AccountConcurrency
 					in.AccountNames = old.AccountNames // with accountname
 				}
+				// the image models unticked in its editor likewise: []
+				// shows them all (321sssrt on X)
+				if in.HiddenDrawers == nil && old != nil {
+					in.HiddenDrawers = old.HiddenDrawers
+				}
 				// a Zhipu key's team likewise: {} clears it
 				if in.ZhipuTeam == nil && old != nil {
 					in.ZhipuTeam = old.ZhipuTeam
@@ -1606,6 +1631,10 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 				// and its extra body fields: {} clears them
 				if in.ExtraBody == nil && old != nil {
 					in.ExtraBody = old.ExtraBody
+				}
+				// and the reply headers passed on: [] clears them
+				if in.ReplyHeaders == nil && old != nil {
+					in.ReplyHeaders = old.ReplyHeaders
 				}
 				// Select none likewise, while nothing is picked (#1818)
 				if req.NoModels == nil && old != nil {
@@ -2383,10 +2412,17 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 		// again: that one pane, not System Settings' scheme at large
 		if strings.HasPrefix(in.URL, "https://") || strings.HasPrefix(in.URL, "http://") || strings.HasPrefix(in.URL, agent.CindyScheme) || strings.HasPrefix(in.URL, agent.LodyScheme) || strings.HasPrefix(in.URL, agent.AionUiScheme) || in.URL == autostart.LoginItemsURL {
 			open := w.OpenURL
-			if strings.HasPrefix(in.URL, agent.LodyScheme) {
+			// an app's import link is handed over only when something
+			// here opens it: the system says nothing when nothing does,
+			// and Add magpie did nothing at all (sungt, 10-29)
+			app := func(u string) error { return appLink(u, w.OpenURL) }
+			switch {
+			case strings.HasPrefix(in.URL, agent.LodyScheme):
 				// Lody on Linux is run with the link, which xdg-open
 				// turned away (agent.OpenLody)
-				open = func(u string) error { return agent.OpenLody(u, w.OpenURL) }
+				open = func(u string) error { return agent.OpenLody(u, app) }
+			case strings.HasPrefix(in.URL, agent.CindyScheme), strings.HasPrefix(in.URL, agent.AionUiScheme):
+				open = app
 			}
 			// Open again on a sign-in says why it didn't open (#2043)
 			if err := open(in.URL); err != nil {

@@ -52,6 +52,13 @@ func init() {
 	// and when Codex is connected or disconnected, or its route otherwise
 	// changes, so a running app sends where its config now says
 	provider.CodexAppRoute = codexAppRoute
+	// and what the Codex app holds is read while Codex takes magpie's
+	// models beside its sign-in, Codex switched off in magpie or not
+	provider.CodexHoldMatters = func() bool {
+		home, _ := homes()
+		a := codex(home)
+		return a.HoldMatters != nil && a.HoldMatters()
+	}
 }
 
 // codexAppRoute is where Codex's config sends it, as the app-server reads
@@ -105,6 +112,10 @@ var others = []*Agent{
 	// ("pi-desktop/0.1.0"), it is told apart from Pi by that name, which
 	// Pi's "pi-" would take otherwise (#1966, dgmico)
 	{ID: "pi-desktop", Name: "PI-Desktop", Icon: "pi", UA: []string{"pi-desktop"}},
+	// Raft (slock's raft-computer) runs Pi in each of its agents' folders;
+	// Sessions lists those as Raft's (internal/sessions/raft.go), while
+	// their requests say "pi (…)" and are Pi's
+	{ID: "raft", Name: "Raft", Icon: "generic"},
 }
 
 // Clients is everyone whose requests the gateway knows by name: every

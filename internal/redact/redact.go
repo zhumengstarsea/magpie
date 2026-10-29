@@ -163,7 +163,7 @@ var rules = append([]rule{
 	{kind: "TOKEN", re: regexp.MustCompile(`eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}`), markers: []string{"eyJ"}, bound: tokenCh},
 	// the password of user:password@host, or of :password@host as a Redis
 	// URL has it with no user
-	{kind: "PASSWORD", re: regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s:@/?#"'<>]*:([^\s@/?#"'<>]{3,})@`), markers: []string{"://"}, ok: notAVariable},
+	{kind: "PASSWORD", re: regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s:@/?#"'<>]*:([^\s@/?#"'<>]{3,})@`), markers: []string{"://"}, ok: notAVariable, at: hiddenInURL},
 	// password = …, API_KEY: "…", as .env files and configs have them
 	{kind: "SECRET", re: regexp.MustCompile(`(?i)[A-Za-z0-9_.-]*(?:` + secretNames.pattern() + `)[A-Za-z0-9_.-]*` + quote + `[ \t]*[:=][ \t]*` + quote + `(` + secretCh + `{8,})`),
 		markers: secretNames.markers(), ok: secretValue, at: fieldAt},
@@ -407,6 +407,46 @@ func inUserinfo(s string, a int) bool {
 		k++ // a scheme starts with a letter
 	}
 	return k < j
+}
+
+// hiddenInURL says the password at s[a:b], in a URL's user:password@,
+// is hidden by masking it: it is not also written as it is elsewhere in
+// the same URL, as its user name, a part of its host or of its path. A
+// test database's URL often gives one word for all three:
+// postgresql://geodatafusion:geodatafusion@127.0.0.1:55432/geodatafusion
+// is the PostGIS test of the geodatafusion repo. Its password was masked
+// while the URL still had it twice as written, and once masked the word
+// was known (knownSpans): the project's folders, its crate, its .toml
+// and cargo test -p geodatafusion went to the vendor as a made-up word
+// for the rest of the run, as a password (xuanwo on X, 10-29: "很多项目名
+// 被识别成了 password", 26M masked in a day). postgres:postgres,
+// root:root and guest:guest are the same: anyone who reads the user
+// reads the password. A password not written elsewhere in its URL is
+// masked as before, whatever it looks like: app:geodatafusion@ masks it
+// there and, as known, wherever it is next.
+func hiddenInURL(s string, a, b int) bool {
+	pw := s[a:b]
+	i := strings.LastIndex(s[:a], "//")
+	if i < 0 || s[a-1] != ':' {
+		return true
+	}
+	if s[i+2:a-1] == pw {
+		return false // the user name
+	}
+	// the host and the path, to the URL's end
+	end := b + 1
+	for end < len(s) && !strings.ContainsRune(" \t\r\n\"'<>`\\)]}", rune(s[end])) {
+		end++
+	}
+	if b+1 > end {
+		return true
+	}
+	for _, part := range strings.FieldsFunc(s[b+1:end], func(r rune) bool { return strings.ContainsRune("/:.?#&=;,@", r) }) {
+		if part == pw {
+			return false
+		}
+	}
+	return true
 }
 
 // realEmail is whether v, matched as an address, is someone's. git@ is

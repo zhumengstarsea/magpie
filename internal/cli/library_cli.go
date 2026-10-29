@@ -26,6 +26,9 @@ const libraryUsage = `magpie library                     what the library gives 
   magpie library skill agents <name> <a,b…|none>
   magpie library skill off-here <name>   turn it off on this computer only: a sync neither carries that nor turns it back on
   magpie library skill on-here <name>    …and on again here
+  magpie library skill hand-over <name…>|--all   move skills kept in ~/.agents/skills into the library's folder: the agents that read them
+                                     there keep them, ticked, and you can turn each off
+  magpie library skill hand-back <name>  …and back into ~/.agents/skills, where those agents read it whatever is ticked
   magpie library skill rm <name>     (skills are installed from the app's Library page)
   magpie library skill rm --all [--yes]   every skill out of the library and the agents (asks first; --yes doesn't)
   magpie library skill rm --gone [--yes]  every skill an update found removed from its source (asks first; --yes doesn't)
@@ -142,6 +145,14 @@ func libraryCmd(args []string) error {
 			}
 		case len(rest) == 2 && (rest[0] == "off-here" || rest[0] == "on-here") && !strings.HasPrefix(rest[1], "-"):
 			res, err = library.SkillHere(rest[1], rest[0] == "on-here")
+		case len(rest) >= 2 && rest[0] == "hand-over":
+			if res, err = handOverSkills(rest[1:]); res == nil && err == nil {
+				return nil
+			}
+		case len(rest) == 2 && rest[0] == "hand-back" && !strings.HasPrefix(rest[1], "-"):
+			if res, err = library.HandBackSkill(rest[1]); err == nil {
+				fmt.Println(green.Render("✓"), rest[1], "is back in", filepath.Join("~", ".agents", "skills", rest[1]))
+			}
 		case len(rest) == 2 && rest[0] == "rm":
 			res, err = library.RemoveSkill(rest[1])
 		case len(rest) == 3 && rest[0] == "use-library":
@@ -582,4 +593,40 @@ func rtkCmd(args []string) error {
 		fmt.Println(muted.Render("  what was there before is kept in " + v.Backup))
 	}
 	return nil
+}
+
+// handOverSkills is magpie library skill hand-over: the skills named, or
+// with --all every one the library keeps in ~/.agents/skills, moved into
+// the library's folder. Each moved is said, and where it went.
+func handOverSkills(args []string) (*library.Result, error) {
+	names := args
+	if slices.Contains(args, "--all") {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("usage:\n  %s", libraryUsage)
+		}
+		var err error
+		if names, err = library.SharedSkills(); err != nil {
+			return nil, err
+		}
+		if len(names) == 0 {
+			fmt.Println(muted.Render("No skill of the library's is kept in ~/.agents/skills."))
+			return nil, nil
+		}
+	} else if slices.ContainsFunc(args, func(a string) bool { return strings.HasPrefix(a, "-") }) {
+		return nil, fmt.Errorf("usage:\n  %s", libraryUsage)
+	}
+	res, err := library.HandOverSkills(names)
+	if err != nil {
+		return nil, err
+	}
+	for _, n := range names {
+		if slices.ContainsFunc(res.Unmoved, func(p library.Problem) bool { return p.What == "skill:"+n }) {
+			continue
+		}
+		fmt.Println(green.Render("✓"), n, "is in the library's folder:", library.SkillPath(n))
+	}
+	for _, p := range res.Unmoved {
+		fmt.Println(amber.Render("!"), strings.TrimPrefix(p.What, "skill:"), "stays where it was:", p.Error)
+	}
+	return res, nil
 }

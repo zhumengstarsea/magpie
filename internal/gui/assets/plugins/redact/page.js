@@ -112,7 +112,7 @@ function drawMaskCard() {
   if (!box) return;
   // until the window's state is read, agents would show as their ids
   const on = maskOn(), sum = maskSumDays === maskDays && load.done ? maskSum : null;
-  const key = JSON.stringify([document.documentElement.lang, maskDays, on, sum, state?.agents?.length, (providers || maskProv)?.providers?.length]);
+  const key = JSON.stringify([document.documentElement.lang, maskDays, on, !!maskSettings().redactWords?.length, sum, state?.agents?.length, (providers || maskProv)?.providers?.length]);
   if (key === maskDrawn && box.firstChild) return;
   maskDrawn = key;
   // it moves when it first has numbers to say, and for other days: not
@@ -133,7 +133,7 @@ function drawMaskCard() {
     b.type = "button";
     b.onclick = maskTurnOn;
     head.append(b);
-  }
+  } else head.append(maskOffButton());
   if (sum?.requests || maskDays === 30) head.append(segs([["7", t("7 days")], ["30", t("30 days")]], String(maskDays), (v) => {
     maskDays = +v;
     try { localStorage.setItem("magpie.maskDays", v); } catch {}
@@ -201,11 +201,44 @@ function maskNone() {
   box.append(" ", link);
   return box;
 }
+// the way off, beside the way on (ZekeXiao on X: "脱敏好像只有一个打开
+// 开关，不能关？"). Both switches go off at once. Your own words mask with neither
+// on, and only Settings › Privacy can take them out, so with words the
+// button opens it there, and says so, rather than leave the page
+// saying off while words still mask
+function maskOffButton() {
+  const words = maskSettings().redactWords?.length;
+  const b = el("button", "text", t(words ? "Turn off in Settings" : "Turn off masking"));
+  b.type = "button";
+  if (words) {
+    b.title = t("Your own masked words still mask until you take them out, in Settings › Privacy");
+    b.onclick = (e) => openSettingsAt(e, "privacy");
+    return b;
+  }
+  b.onclick = () => {
+    b.disabled = true;
+    (prefs ? Promise.resolve() : loadSettings())
+      .then(() => {
+        // turned on again from this page, it comes back as it was
+        maskWasPersonal = !!prefs.redactPersonal;
+        return savePrefs({ ...prefsKeep(prefs), redact: false, redactPersonal: false });
+      })
+      .then(() => { maskDrawn = ""; drawMaskCard(); })
+      .finally(() => { b.disabled = false; });
+  };
+  return b;
+}
+let maskWasPersonal = false;
 function maskTurnOn(e) {
   const b = e.currentTarget;
   b.disabled = true;
   (prefs ? Promise.resolve() : loadSettings())
-    .then(() => savePrefs({ ...prefsKeep(prefs), redact: true }))
+    .then(() => {
+      const back = maskWasPersonal;
+      maskWasPersonal = false;
+      if (back) window.hideAccounts?.set(true);
+      return savePrefs({ ...prefsKeep(prefs), redact: true, ...(back ? { redactPersonal: true } : {}) });
+    })
     .then(() => { maskDrawn = ""; drawMaskCard(); })
     .finally(() => { b.disabled = false; });
 }

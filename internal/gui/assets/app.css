@@ -3566,6 +3566,8 @@ input.words.search-key, input.words.search-url { flex: 1 1 120px; width: auto; m
 .prefs .row.rule-editing .val.rule-add { flex-wrap: wrap; row-gap: 6px; }
 .prefs .row.rule-editing .rule-tail { display: flex; align-items: center; gap: 6px; flex: 1 1 240px; min-width: 0; }
 .row.pref .sub.err { color: var(--red); white-space: normal; }
+/* Warm up now's line holds a vendor's reason, which can be one long word */
+.row.warm-now .sub { white-space: normal; overflow-wrap: anywhere; }
 .warm-at { display: flex; align-items: center; gap: 8px; margin-left: auto; flex: none; }
 .warm-at input.at { width: auto; height: 27px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--line); background: var(--card); color: var(--fg); font: inherit; font-size: 12.5px; font-variant-numeric: tabular-nums; outline: none; transition: border-color .12s, box-shadow .12s; }
 .warm-at input.at:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }

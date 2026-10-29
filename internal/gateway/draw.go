@@ -90,7 +90,7 @@ func drawer() (string, bool) {
 		return "", false
 	case "":
 	default:
-		if pickedMissing(v) == "" {
+		if drawerMissing(v) == "" {
 			return v, true
 		}
 	}
@@ -109,7 +109,44 @@ func Drawer() string {
 // when magpie can't find it any more, so that AutoDrawer's draws in its
 // place, as VisionMissing is Image recognition's. "" when none is named,
 // it is off, or it resolves.
-func DrawerMissing() string { return pickedMissing(settings.Load().ImageGen) }
+func DrawerMissing() string { return drawerMissing(settings.Load().ImageGen) }
+
+// drawerMissing is v, an Image generation pick, when magpie can't draw
+// with it: pickedMissing's, and a routing group ("group/<id>", 7up6666 on
+// X) none of whose members draws any more.
+func drawerMissing(v string) string {
+	if m := pickedMissing(v); m != "" || !provider.IsGroupRef(v) {
+		return m
+	}
+	if !GroupDraws(v) {
+		return v
+	}
+	return ""
+}
+
+// GroupDraws is whether the routing group ref ("group/<id>") has a member
+// that draws: a model among its provider's Drawers. Such a group may be
+// picked in Settings › Images, and draws on those members in its routing's
+// order, moving on while one fails (drawingGroup, #2005).
+func GroupDraws(ref string) bool {
+	_, ms, ok := provider.FindGroup(ref)
+	if !ok {
+		return false
+	}
+	for _, m := range ms {
+		if drawsModel(m.Provider, m.Model) {
+			return true
+		}
+	}
+	return false
+}
+
+// drawsModel is whether model is one of p's Drawers, a ChatGPT account's
+// other GPT Image names as its one (ListedDrawer).
+func drawsModel(p provider.Provider, model string) bool {
+	_, id, _ := strings.Cut(ListedDrawer(p.ID+"/"+model), "/")
+	return slices.ContainsFunc(Drawers(p), func(m catalog.Model) bool { return m.ID == id })
+}
 
 func resolveDrawing(id string) (provider.Provider, string, bool) {
 	if strings.Contains(id, "/") {
@@ -313,6 +350,32 @@ func Drawers(p provider.Provider) []catalog.Model {
 	return slices.DeleteFunc(out, func(m catalog.Model) bool { return p.ModelKind(m.ID) == provider.KindVideo })
 }
 
+// OfferedDrawers are Drawers less those the user unticked in p's editor
+// (provider.HiddenDrawers, 321sssrt on X): the image models a list offers
+// to pick from and Automatic picks among. A request that names a hidden
+// one still draws with it (resolveDrawing reads Drawers), as does a
+// Settings › Images pick of one made before it was hidden.
+func OfferedDrawers(p provider.Provider) []catalog.Model {
+	ms := Drawers(p)
+	if len(p.HiddenDrawers) == 0 {
+		return ms
+	}
+	return slices.DeleteFunc(slices.Clone(ms), func(m catalog.Model) bool { return p.DrawerHidden(m.ID) })
+}
+
+// DrawerHidden is whether ref (provider/model), a model Settings › Images
+// names, is one the user unticked in its provider's editor: it still draws,
+// and the Settings row says it is hidden. A ChatGPT account's other GPT
+// Image names stand for its one (ListedDrawer).
+func DrawerHidden(ref string) bool {
+	pid, id, ok := strings.Cut(ListedDrawer(ref), "/")
+	if !ok {
+		return false
+	}
+	p, err := provider.Find(pid)
+	return err == nil && p.DrawerHidden(id)
+}
+
 // kindModel is p's model id, one the user said makes images or videos
 // (provider.SetModelKind), as its list names it.
 func kindModel(p provider.Provider, id string) catalog.Model {
@@ -338,7 +401,8 @@ func AutoDrawer() string {
 			// with its model picked or named
 			continue
 		}
-		for _, m := range Drawers(p) {
+		// one unticked in its editor isn't Automatic's choice
+		for _, m := range OfferedDrawers(p) {
 			if drawsCodex(p) && m.ID != codexDrawer {
 				// Codex CLI draws with gpt-image-2 only; a plan may be
 				// refused the others (chatgpt.com: 403, #545)
@@ -489,9 +553,16 @@ func (s *Server) images(edit bool) http.HandlerFunc {
 			fail(maskStatus(err), err.Error())
 			return
 		}
-		noteMasked(r, "image", hits, d.Prompt, 0, p.ID, call.Model)
+		// the Routing page lists it as it does a chat, each account or
+		// member asked a try of its one route (sideRoute)
+		var grp *GroupRef
+		if isGroup {
+			grp = groupRef(g, ms)
+		}
+		side := s.beginSide(r, start, call.Model, p.ID, grp)
+		side.masked(noteMasked(r, "image", hits, d.Prompt, side.id(), p.ID, call.Model))
 		call.Provider, call.To = p.ID, provider.Chat
-		ctx, cancel := drawWithin(r.Context(), drawTimeout())
+		ctx, cancel := drawWithin(withSide(r.Context(), side), drawTimeout())
 		defer cancel()
 		// the account that drew, or refused last, is the one recorded
 		var (
@@ -524,7 +595,8 @@ func (s *Server) images(edit bool) http.HandlerFunc {
 		if p.Account == nil && p.Key != "" {
 			providerKeyID, providerKeyName = provider.KeyID(p.Key), p.KeyName
 		}
-		appendUsage(r, usage.Record{Operation: "generate_content", Time: start, Agent: call.Agent, Via: call.Via, Provider: p.ID, Host: p.Where(), Model: model, Requested: call.Model, ProviderKeyID: providerKeyID, ProviderKeyName: providerKeyName, ProviderAccount: accountOf(p),
+		side.end(p, model, call.Status, err, Usage{Input: out.Input, Output: out.Output})
+		appendUsage(r, usage.Record{RouteID: side.id(), Operation: "generate_content", Time: start, Agent: call.Agent, Via: call.Via, Provider: p.ID, Host: p.Where(), Model: model, Requested: call.Model, ProviderKeyID: providerKeyID, ProviderKeyName: providerKeyName, ProviderAccount: accountOf(p),
 			Input: out.Input, Output: out.Output, Millis: call.Millis, Status: call.Status, Session: sessionOf(r.Header)})
 		if err != nil {
 			call.Error = err.Error()
@@ -854,7 +926,9 @@ func viaFor(p provider.Provider, model string) drawVia {
 func (s *Server) drawOnAccounts(ctx context.Context, r *http.Request, p provider.Provider, model string, d drawing) (provider.Provider, drawn, int, time.Time, error) {
 	if p.Account == nil && p.Key == "" {
 		// no key and no account (a local ollama): nothing to go over
+		tried := sideOf(ctx).try(candidateOf(p, model))
 		out, code, err := s.draw(ctx, p, model, d)
+		tried(code, err)
 		return p, out, code, time.Time{}, err
 	}
 	q := p
@@ -906,7 +980,9 @@ func (s *Server) drawOnAccounts(ctx context.Context, r *http.Request, p provider
 	var err error
 	for i, c := range cs {
 		p = c.p
+		tried := sideOf(ctx).try(c)
 		out, code, err = s.draw(ctx, p, model, d)
+		tried(code, err)
 		if err != nil && ctx.Err() == nil {
 			restDrawer(c, code, err.Error())
 		}

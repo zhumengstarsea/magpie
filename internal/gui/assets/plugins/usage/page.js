@@ -130,7 +130,7 @@ async function loadUsage(asked) {
   // the page's way in (#4064)
   if (asked && usageTab === "usage") quotasOpened();
   if (usageTab === "sessions") return loadSessions();
-  if (usageTab === "requests") return loadLedger();
+  if (usageTab === "requests") return loadLedger(asked && ledger && ledgerWant === ledParams({ offset: ledOffset, limit: LED_PAGE }) ? "open" : false);
   if (usageTab === "context") return window.loadContext?.();
   renderUsageLoading();
   if (!asked) loadQuotas();
@@ -822,6 +822,7 @@ async function hideUsageAgent(id, hide) {
 // server pages it (/api/usage/requests) and saves it whole as CSV.
 
 let ledger = null; // the page shown: { rows, offset, total, agents, …totals }
+let ledgerWant = ""; // the ledParams it was read with
 let ledOffset = 0, ledPurpose = "", ledAgent = "", ledProvider = "", ledAccount = "", ledCallerKey = "", ledFailed = false, ledRetried = false, ledQuery = "", ledModel = "", ledRoute = 0, ledComputer = "", ledDay = "", ledVia = "";
 
 const LED_PAGE = 100;
@@ -936,7 +937,11 @@ function ledRead(kind, path, want) {
 }
 const ledAborted = (e) => e?.name === "AbortError";
 
-// quiet: a refresh while it's looked at, redrawn only on a change
+// quiet: a refresh while it's looked at, redrawn only on a change.
+// "open": the page opened again on the rows it showed (#4064, xisdumpling):
+// they stay as they are while read, are drawn again only on a change, and
+// that redraw (a hundred rows, their chart and heatmap) waits for the
+// sidebar to settle on the page, not stopping it halfway
 async function loadLedger(quiet) {
   if (!ledger && !quiet) renderLedgerLoading();
   // a pick over rows shown: they stay, dimmed, till its answer comes, so
@@ -955,8 +960,23 @@ async function loadLedger(quiet) {
   if (want !== ledParams({ offset: ledOffset, limit: LED_PAGE })) return; // another page or filter was picked meanwhile
   ledPending(false);
   if (quiet && JSON.stringify(l) === JSON.stringify(ledger)) return;
+  if (quiet === "open") {
+    const was = ledger;
+    await navSettled();
+    if (ledger !== was || want !== ledParams({ offset: ledOffset, limit: LED_PAGE })) return; // read again or drawn meanwhile
+  }
   ledger = l;
+  ledgerWant = want;
   if (view === "usage" && usageTab === "requests") renderLedger();
+}
+// navSettled: the sidebar's move to a page opened (navTopStep's spring,
+// navSubEnter's tabs coming in) has run its course, or 700ms have passed
+function navSettled() {
+  const until = performance.now() + 700;
+  return new Promise((done) => {
+    const look = () => performance.now() < until && (window.navTop?.raf || document.querySelector("#nav .nav-sub.moving")) ? requestAnimationFrame(look) : done();
+    look();
+  });
 }
 
 function ledPending(on) {
@@ -1686,6 +1706,10 @@ new ResizeObserver(() => {
   ledFitFrame = requestAnimationFrame(() => {
     ledFitFrame = 0;
     const wrap = $("#ledWrap");
+    // out of sight it has no width: what was fit stays, so the page shown
+    // again at the width it had fits nothing again (#4064: each fit of a
+    // hundred rows restyles them twice and lays them out)
+    if (!wrap.clientWidth) return;
     wrap.style.setProperty("--ledw", wrap.clientWidth + "px");
     if (wrap.clientWidth !== ledFitW) { ledFitW = wrap.clientWidth; ledFit(); }
     ledHScroll();

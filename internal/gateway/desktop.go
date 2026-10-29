@@ -213,9 +213,14 @@ func DesktopNumber(e provider.Entry) string {
 // one, which such a build would drop whole (#2426).
 func desktopModels(entries []provider.Entry, knowsMythos bool) []map[string]any {
 	names := desktopNames(entries)
-	// the tier each model stands in for: the user's pick (a model picked
-	// for two is tagged with the first, desktopTierTurn sends the other),
-	// else a Claude model's own
+	// the tier each model stands in for: the user's pick only (a model
+	// picked for two is tagged with the first, desktopTierTurn sends the
+	// other). A Claude model is never tagged with its own tier unasked:
+	// Desktop's Claude Code then sent every haiku call (its small, fast
+	// model) to whichever provider served a claude-haiku, Leee's while the
+	// chat was on AgentRouter's gpt-6.1-sol (cybercaius on Discord).
+	// Untagged, Claude Code asks for its own id of the tier, which
+	// desktopTurn keeps on the chat's provider (servedBeside).
 	picked := DesktopTiers()
 	tierOf := map[string]string{}
 	for _, t := range DesktopTierNames {
@@ -239,8 +244,6 @@ func desktopModels(entries []provider.Entry, knowsMythos bool) []map[string]any 
 		}
 		if t := tierOf[e.ID]; t != "" {
 			m["anthropic_family_tier"], m["is_family_default"] = t, true
-		} else if t := claudeTier(e.ID); t != "" && picked[t] == "" {
-			m["anthropic_family_tier"] = t
 		}
 		data = append(data, m)
 	}
@@ -287,8 +290,9 @@ const desktop1MSaid = "1M context window"
 // a subagent on "sonnet" or "haiku" asked for Claude Code's own
 // claude-sonnet-… and that, unserved, went to the chat's model: every
 // subagent ran on it, whatever its tier (WilianWeng on Discord). The user
-// picks a model per tier in magpie; a Claude model magpie serves stands in
-// for its own tier while its tier has none picked.
+// picks a model per tier in magpie; a tier with none picked runs on the
+// chat's provider's model of that tier, else on the chat's model
+// (servedBeside).
 var DesktopTierNames = []string{"opus", "sonnet", "haiku", "fable"}
 
 func desktopTiersPath() string { return filepath.Join(settings.Dir(), "claude-desktop.tiers.json") }
@@ -510,10 +514,22 @@ func desktopTurn(asked string, body []byte, byClaudeCode, bySubagent bool) strin
 	}
 	title := !tools && aside && desktopAccepts(asked)
 	gone := unserved(asked)
-	if gone && !title {
+	// Claude Code's own id of a Claude model (claude-haiku-5-5), asked for
+	// a background call or a subagent, that some provider serves under
+	// that model while the chat is on another: it stays with the chat's
+	// provider, as an unserved one does. The user picked one model in
+	// Desktop and expects one provider billed, not a Leee haiku beside an
+	// AgentRouter chat (cybercaius on Discord). A tier the user picked a
+	// model for is tagged in /v1/models, so Claude Code asks for that
+	// model by its own id, which is a catalog id and stays as asked.
+	elsewhere := !gone && !title && picked != "" && (!tools || bySubagent) && claudeOwnID(asked)
+	if (gone || elsewhere) && !title {
 		if m := servedBeside(asked, picked); m != "" {
 			return m
 		}
+	}
+	if elsewhere {
+		return picked
 	}
 	if gone || title {
 		if picked != "" {
@@ -533,9 +549,26 @@ func desktopTurn(asked string, body []byte, byClaudeCode, bySubagent bool) strin
 	return asked
 }
 
+// claudeOwnID: asked is a Claude model by Claude's own id
+// (claude-haiku-5-5, claude-sonnet-4-6[1m]), which no entry has as its
+// catalog id; one may still have it as its model.
+func claudeOwnID(asked string) bool {
+	bare := strings.TrimSuffix(asked, "[1m]")
+	if strings.Contains(bare, "/") || claudeTier(bare) == "" {
+		return false
+	}
+	for _, e := range provider.Catalog() {
+		if e.ID == bare {
+			return false
+		}
+	}
+	return true
+}
+
 // servedBeside is the catalog id the session's provider serves a Claude
-// model by that Claude Code asked for by Claude's own id, which no entry
-// has as its id or model: another magpie (a Remote magpie provider) lists
+// model by that Claude Code asked for by Claude's own id. The provider
+// may list it as that model (claude-sonnet-5), or, where no entry has it
+// as its id or model: another magpie (a Remote magpie provider) lists
 // it under its own provider's prefix, office/claude/claude-sonnet-5 with
 // the model claude/claude-sonnet-5. Its auto mode's classifier asks for
 // its sonnet by name while the session is on office/claude/claude-opus-5-5,
@@ -543,16 +576,36 @@ func desktopTurn(asked string, body []byte, byClaudeCode, bySubagent bool) strin
 // (#2187, SuInk). Only the provider picked is looked at, so another
 // provider's model of the same name doesn't take it; of that provider's,
 // the one beside the picked model (the same subscription there) comes
-// first. "" when the session's provider serves no such model.
+// first. With no such model, the provider's newest Claude model of the
+// same tier stands in (claude-haiku-5-5 for Claude Code's
+// claude-haiku-4-5-20251001), so its small calls stay small and on the
+// chat's provider. "" when the session's provider serves no model of the
+// tier.
 func servedBeside(asked, picked string) string {
 	bare := strings.TrimSuffix(asked, "[1m]")
-	if picked == "" || strings.Contains(bare, "/") || claudeTier(bare) == "" {
+	tier := claudeTier(bare)
+	if picked == "" || strings.Contains(bare, "/") || tier == "" {
 		return ""
 	}
 	cat := provider.Catalog()
 	var pid, dir string
+	picked = strings.TrimSuffix(picked, "[1m]")
 	for _, e := range cat {
-		if e.ID == strings.TrimSuffix(picked, "[1m]") && e.Group == "" {
+		if e.ID == picked && e.Group == "" {
+			pid = e.Provider.ID
+			if i := strings.LastIndex(e.Model, "/"); i >= 0 {
+				dir = e.Model[:i+1]
+			}
+			break
+		}
+	}
+	// a session on a model asked for by its bare name (one an entry has
+	// as its model, not its id)
+	for _, e := range cat {
+		if pid != "" {
+			break
+		}
+		if e.Model == picked && e.Group == "" {
 			pid = e.Provider.ID
 			if i := strings.LastIndex(e.Model, "/"); i >= 0 {
 				dir = e.Model[:i+1]
@@ -564,18 +617,39 @@ func servedBeside(asked, picked string) string {
 		return ""
 	}
 	found := ""
+	var tierID, tierModel string
+	tierBeside := false
 	for _, e := range cat {
-		if e.Group != "" || e.Provider.ID != pid || !strings.HasSuffix(e.Model, "/"+bare) {
+		if e.Group != "" || e.Provider.ID != pid {
 			continue
 		}
-		if dir != "" && e.Model == dir+bare {
-			return e.ID + strings.TrimPrefix(asked, bare)
+		if e.Model == bare || strings.HasSuffix(e.Model, "/"+bare) {
+			if e.Model == bare || dir != "" && e.Model == dir+bare {
+				return e.ID + strings.TrimPrefix(asked, bare)
+			}
+			if found == "" {
+				found = e.ID + strings.TrimPrefix(asked, bare)
+			}
+			continue
 		}
-		if found == "" {
-			found = e.ID + strings.TrimPrefix(asked, bare)
+		// the tier's stand-in: beside the picked model first, then the
+		// newest version
+		m := claudeModel(e)
+		if m == "" || claudeTier(m) != tier {
+			continue
+		}
+		beside := dir != "" && strings.HasPrefix(e.Model, dir)
+		if tierID == "" || beside && !tierBeside || beside == tierBeside && m > tierModel {
+			tierID, tierModel, tierBeside = e.ID, m, beside
 		}
 	}
-	return found
+	if found != "" {
+		return found
+	}
+	if tierID != "" {
+		return tierID + strings.TrimPrefix(asked, bare)
+	}
+	return ""
 }
 
 // desktopDefault is the model a request Desktop sends before any turn has

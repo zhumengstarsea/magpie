@@ -1527,7 +1527,10 @@
     const box = el("div", "pm-bounce"), s = document.createElementNS("http://www.w3.org/2000/svg", "svg"), b = el("div", "sk-bird");
     s.innerHTML = "<path/><path/><path/><path/>";
     b.innerHTML = BIRD;
-    box.append(s, b);
+    // with Settings' Loading bird off, the strings stand still, birdless
+    const off = birdOff();
+    box.append(s);
+    if (!off) box.append(b);
     const ps = [...s.children], ws = [1, .94, .6, .82], at = [.16, .44, .3, .58];
     const L = ws.map((w, i) => ({ y: 31 + i * 22, d: 0, v: 0, bx: 0, hold: false }));
     // the bird is placed by its feet: f faces it, r leans it, sx/sy squash it
@@ -1553,6 +1556,7 @@
       await new Promise(requestAnimationFrame);
       if (!box.isConnected || gone) return;
       W = box.clientWidth;
+      if (off) return draw();
       if (calm()) return draw(), put({ x: at[0] * W, y: L[0].y - 5 });
       // each string a damped spring, let go of when the bird leaves it
       (async () => {
@@ -1595,6 +1599,7 @@
       }
     })().catch(() => {});
     box.leave = () => {
+      if (off) return box.remove();
       gone = true;
       box.dataset.gone = b.dataset.flap = "";
       const xa = x, ya = y;

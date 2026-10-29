@@ -339,7 +339,7 @@ func modelFits(s string, a, b int, kind string) bool {
 	case "ADDRESS":
 		// a path is no address (-Users-x-projects-a/2b1a….jsonl); a Chinese
 		// one has no spaces, a Latin one has them
-		if isASCII(v) && !strings.ContainsAny(v, " \t\n") && strings.ContainsAny(v, `/\`) {
+		if isASCII(v) && !strings.ContainsAny(v, " \t\n") && strings.ContainsAny(v, `/\`) || programWords(v) {
 			return false
 		}
 		return strings.IndexFunc(v, unicode.IsLetter) >= 0
@@ -371,9 +371,27 @@ func modelFits(s string, a, b int, kind string) bool {
 	return true
 }
 
+// programWords says v, which the model took for a person's or a place's,
+// is a program's words: it has an underscore (node_modules, __pycache__,
+// node_modules 太, the model running on into the sentence after it), or
+// it is Latin letters in lower case with no digit (dist, vendor,
+// site-packages, ls node_modules). No name and no address is written so:
+// a name has its capitals (personFits), an address its number or its
+// capitals (42 Wallaby Way), a Chinese one its characters. The model took
+// such a folder for personal data and the agent read a placeholder where
+// the folder was ("node_modules给识别成姓名了", kekek711 on X, 10-29).
+func programWords(v string) bool {
+	if strings.Contains(v, "_") {
+		return true
+	}
+	return isASCII(v) && strings.IndexFunc(v, unicode.IsLetter) >= 0 && strings.IndexFunc(v, func(r rune) bool { return unicode.IsUpper(r) || unicode.IsDigit(r) }) < 0
+}
+
 // wordsOnlyRe is words in lower case and nothing else, joined by - . or
-// _: drizzle-orm, reflect-metadata, lodash.merge, secretstorage.
-var wordsOnlyRe = regexp.MustCompile(`^[a-z]+(?:[-._][a-z]+)*$`)
+// _: drizzle-orm, reflect-metadata, lodash.merge, secretstorage; and a
+// folder's name as a path or Python writes it, with the slash after it
+// or underscores around it: node_modules/, __pycache__.
+var wordsOnlyRe = regexp.MustCompile(`^_*[a-z]+(?:[-._][a-z]+)*_*/?$`)
 
 // wordsOnly says v, which the model took for a secret, is made of words
 // in lower case alone, as a package's, a tool's or a setting's name is.

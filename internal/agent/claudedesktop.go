@@ -318,8 +318,9 @@ func desktopKeyApplied(p desktopPaths) error {
 
 // desktopTierFields pick the model each of Claude Code's tiers runs on in
 // Desktop's Code tab, its subagents' sonnet, haiku or opus among them
-// (gateway.DesktopTiers). Unset, a Claude model magpie serves stands in for
-// its own tier, else the chat's model does. Desktop reads them from the
+// (gateway.DesktopTiers). Unset, the chat's provider's model of the tier
+// stands in, else the chat's model does: another provider's Claude model
+// is never used unpicked. Desktop reads them from the
 // gateway's /v1/models when it starts.
 func desktopTierFields(ps []desktopPaths) []Field {
 	var fields []Field

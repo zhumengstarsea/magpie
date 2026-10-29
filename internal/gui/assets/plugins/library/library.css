@@ -198,6 +198,10 @@ button.row.lib-hubfolded:hover { background: var(--pill); }
 .lib-src > .lib-path, .lib-src > .lib-srclink { flex: 0 1 auto; min-width: 0; }
 .lib-srclink { font: var(--code-style, normal) var(--code-weight, 400) 11px var(--code-font, var(--code)); font-stretch: var(--code-stretch, 100%); color: var(--muted); text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lib-srclink:hover { color: var(--fg); text-decoration: underline; text-underline-offset: 2px; }
+/* kept in ~/.agents/skills: moved into the library on a click (tnt1223) */
+.lib-src > .lib-handover { flex: 0 2 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; height: auto; border: 0; background: none; font-size: 11px; color: var(--accent); padding: 0 2px; margin-left: 4px; border-radius: 3px; white-space: nowrap; }
+.lib-src > .lib-handover:hover { text-decoration: underline; text-underline-offset: 2px; }
+.lib-confirm.lib-muted { color: var(--muted); }
 
 /* a path: shown in the file manager on a click */
 .lib-path { font: var(--code-style, normal) var(--code-weight, 400) 11px var(--code-font, var(--code)); font-stretch: var(--code-stretch, 100%); color: var(--muted); padding: 0; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left; border-radius: 3px; }

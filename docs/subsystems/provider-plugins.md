@@ -111,6 +111,16 @@ Each is left off when it isn't known: no folder said, or a folder not on this co
 
 `TestPluginToldWhereTheAgentWorks` ([`plugin_workdir_test.go`](../../internal/gateway/plugin_workdir_test.go)) sends Claude Code's and Codex's captured requests and Pi-style ones from a folder in a repository and one not, through the fake plugin, and checks what the plugin read and that the vendor got neither header.
 
+## Whether another candidate follows
+
+A free model's vendor may queue a request for minutes: Qoder answers its code 10605 and its plugin waits in Qoder's queue as Qoder's client does (up to 4 minutes), CodeArts answers a 429 with `queue-status: queued` and its plugin polls the trace for up to 5 minutes. While another account, provider or routing group member could answer at once, that wait only keeps the agent waiting (axuhere on X: "模型请求正在排队 · 预计等待超过 10 分钟").
+
+So the try loop marks a try that isn't the last candidate (`withFallback` in [`continuation.go`](../../internal/gateway/continuation.go), from `!last` in the loop), and `forwardOnce` sets `x-magpie-fallback: 1` (`provider.FallbackHeader`) on that plugin request; a header the agent sent under that name is dropped first. A plugin told so answers a queued request at once, a 503 with the queue's Retry-After and a message that says the queue (Qoder 0.2.40: "Qoder queued the request for dfmodel (this plan's queue: p3, 3 ahead); try again in 30s"; CodeArts 0.2.3 leaves the queue first). The 503 is `busy`, so the next candidate is asked, the trace shows the try's reason, and the queued one may be asked again in a replan round after its Retry-After. The last candidate is never told, and its plugin waits in the queue as the vendor's client does. `unsaid` in `host.js` takes the header off whatever the plugin sends on. A plugin model's test sends it as well, so a queued model is said at once there too (`probe` in [`test.go`](../../internal/provider/test.go), `TestPluginModelTestSaysQueued`).
+
+`TestPluginToldAnotherFollows` ([`plugin_fallback_test.go`](../../internal/gateway/plugin_fallback_test.go)) sends a group of two members through the fake plugin: the first is told, gives way with a 503, and the second answers untold; a lone model is never told, and the vendor never gets the header.
+
+Trae's plugin doesn't give way yet: Trae.app reads a `queue_info.position` on its own chat stream, but no real queued reply on the `llm_utils_chat` path the plugin uses has been captured, so its queue events stay ignored.
+
 ## Two plugins for one provider id
 
 The host runs one plugin per provider id. When two installed plugins have `auth` hooks for the same id, such as a third-party plugin and the user's own copy added by its folder, `auths()` in `host.js` takes the one picked for that id in `plugins.json`'s `prefer` map (provider id → spec). Without a pick it takes the last one in the list, as OpenCode does. Only the serving plugin's `provider.models` hook runs for that id. Every plugin's `config` hook still runs, so another plugin can still add models or a name to `config.provider[id]`.
@@ -147,6 +157,10 @@ A 401 marks the account's sign-in by default (`notePluginSignIn` in [`plugins.go
 ## A model's free and rate
 
 magpie never reads `free` from `rate`: `rate` 0 is none given (`plugin.Model.Rate` in [`providers.go`](../../internal/plugin/providers.go)), and a model is free only by its own `free: true` or a $0 list price (`FreeModel` in [`models.go`](../../internal/provider/models.go)). A plugin sets `free` from the vendor's word; the guide says so ([magpie-community/plugins#468](https://github.com/magpie-community/plugins/issues/468)).
+
+## A model that gives no text
+
+A model's `capabilities.output` says what it gives. The host passes on the kinds marked `true` (`kinds` in [`host.js`](../../internal/plugin/host.js), `plugin.Model.Outputs`) and whether the object said yes or no to any kind at all (`kindsSaid`, `plugin.Model.OutputsSaid`), so an embedding's `{"text": false}` is a model said to give nothing, not one said nothing of. `pluginCatalog` leaves out a model whose outputs were said and name no text, image or video (`pluginTalks` in [`plugins.go`](../../internal/provider/plugins.go)): an embedding, a TTS that gives audio alone. Every chat list builds on that list (`/v1/models`, the agents' `provider.Catalog`, `Available` and the editor's chips, routing), as the catalog's own lists leave such models out (`textModel`), #3279. A model whose plugin says nothing of its outputs is kept, whatever its id; an image or video model alone is kept where it is until #2792 places it. Tests: `TestPluginModelGivingNoTextLeavesTheChatLists` (gateway, a real host), `TestPluginModelSayingNoTextLeavesTheChatList`, `TestPluginAccountListLeavesTheSpeechlessOut`.
 
 ## A GitHub listing's licence
 

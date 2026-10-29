@@ -3056,6 +3056,10 @@ magpie.plugin("library", (ctx) => {
       }
       if (lib.skills.length > 1 && all.length) rh.append(pickButton("skills"), ...everyButtons("skills", all));
       if (byAgentRows("skills").length) rh.append(byAgentButton("skills"));
+      // every one kept in ~/.agents/skills, moved into the library at once
+      // (tnt1223); a row moves its own
+      const kept = lib.skills.filter((s) => s.shared);
+      if (kept.length > 1) rh.append(handOverButton(kept));
       if (lib.skills.length > 1) rh.append(removeEveryButton("skills"));
       if (lib.skills.some((s) => s.kind === "github" || s.kind === "git")) {
         const c = button(checking ? t("Checking…") : t("Check for updates"), "lib-updall", () => checkSkills());
@@ -5007,6 +5011,9 @@ magpie.plugin("library", (ctx) => {
       } else {
         src.append(el("span", "", t("linked from")), pathLink(s.source));
       }
+      // kept in ~/.agents/skills, which some agents read themselves: moved
+      // into the library, each of them can be turned off (tnt1223)
+      if (s.shared) src.append(handOverButton([s]));
       who.append(src);
     }
     const acts = el("div", "lib-rowacts");
@@ -5130,6 +5137,83 @@ magpie.plugin("library", (ctx) => {
     ed.append(bar);
     modal = { save: () => go.click() };
     openLib(ed);
+  }
+
+  // Skills kept in ~/.agents/skills (tnt1223 on Discord): agents that read
+  // that folder themselves have each whatever is ticked, so none can be
+  // turned off for one of them. Manage in magpie moves them into the
+  // library's own folder, asking first and saying where they go; the
+  // agents that read them there are ticked, and keep them till unticked.
+  function handOverButton(skills) {
+    const one = skills.length === 1;
+    const b = button(one ? t("Manage in magpie") : t("Manage {n} in magpie", { n: skills.length }), one ? "lib-handover" : "action lib-updall lib-handover", (e) => {
+      e.stopPropagation();
+      confirmHandOver(skills);
+    });
+    b.title = one ? t("Move it out of ~/.agents/skills into magpie's library, so you choose which agents get it")
+      : t("Move these {n} from ~/.agents/skills into magpie's library, so you choose which agents get them", { n: skills.length });
+    return b;
+  }
+
+  function confirmHandOver(skills) {
+    const one = skills.length === 1, s = skills[0];
+    const ed = el("div", "editor lib-editor lib-handover-ask");
+    const head = el("div", "ehead");
+    head.append(glyph(GLYPH.skill), el("b", "", one ? t("Manage {name} in magpie?", { name: s.name }) : t("Manage {n} skills in magpie?", { n: skills.length })));
+    ed.append(head);
+    const readers = [...new Set(skills.flatMap((x) => x.always || []))].map(nameOf).filter(Boolean).join(", ");
+    // the entry only links to a folder elsewhere: only the link goes
+    ed.append(el("p", "lib-confirm", one
+      ? (s.sharedElsewhere ? t("Its entry in ~/.agents/skills, a link to {path}, is taken away. The folder stays where it is, and the library links to it.", { path: tilde(s.source) })
+        : t("Its folder moves from {from} into magpie's library folder, {to}.", { from: tilde(s.shared), to: tilde(libSkillPath(s.name)) }))
+      : t("Their folders move from ~/.agents/skills into magpie's library folder, {to}. One that only links there to a folder elsewhere keeps that folder; only the link goes.", { to: tilde(libSkillPath("")) })));
+    if (readers) ed.append(el("p", "lib-confirm", one
+      ? t("{agents} read ~/.agents/skills themselves. They keep it, ticked here, and you can turn it off for any of them, or on this computer only.", { agents: readers })
+      : t("{agents} read ~/.agents/skills themselves. They keep them, ticked here, and you can turn each off for any of them, or on this computer only.", { agents: readers })));
+    ed.append(el("p", "lib-confirm lib-muted", one
+      ? t("To put it back: {cmd}", { cmd: "magpie library skill hand-back " + s.name })
+      : t("To put one back: {cmd}", { cmd: "magpie library skill hand-back <name>" })));
+    const bar = el("div", "bar");
+    const go = button(t("Move into the library"), "primary", async () => {
+      go.disabled = true;
+      if (await handOverSkills(skills.map((x) => x.name))) closeLibModal(true);
+      else go.disabled = false;
+    });
+    bar.append(el("span", "grow"), button(t("Cancel"), "", closeLibModal), go);
+    ed.append(bar);
+    modal = { save: () => go.click() };
+    openLib(ed);
+  }
+
+  // where the library keeps a skill's folder: skills/<name> in its own
+  function libSkillPath(name) {
+    const dir = lib.dir || "", sep = dir.includes("\\") ? "\\" : "/";
+    return dir + sep + "skills" + (name ? sep + name : "");
+  }
+
+  async function handOverSkills(names) {
+    if (changing) return false;
+    changing = true;
+    page.setAttribute("aria-busy", "true");
+    status(t("Saving…"), "", 120000);
+    try {
+      const v = await api("library/skills/hand-over", { names });
+      take(v);
+      status("");
+      const res = v.result || {}, no = res.unmoved || [];
+      const moved = names.filter((x) => !no.some((p) => p.what === "skill:" + x));
+      const done = moved.length === 1 ? t("{name} is in magpie's library now", { name: moved[0] }) : t("{n} skills are in magpie's library now", { n: moved.length });
+      if (no.length) status((moved.length ? done + " · " : "") + t("{name} wasn't moved: {error}", { name: no[0].what.replace(/^skill:/, ""), error: no[0].error }) + (no.length > 1 ? " " + t("(and {n} more)", { n: no.length - 1 }) : ""), "warn", 10000);
+      else report(res, done);
+      return true;
+    } catch (e) {
+      status(e.message, "err", 6000);
+      return false;
+    } finally {
+      changing = false;
+      page.removeAttribute("aria-busy");
+      render();
+    }
   }
 
   function confirmRemoveSkill(s) {

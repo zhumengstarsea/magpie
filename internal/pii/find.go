@@ -64,6 +64,11 @@ type backend struct {
 	// queue are the requests waiting for turn, the least left to read
 	// first
 	queue queue
+	// reading are the texts and pieces requests read now: where turn
+	// lets more than one read at once, a request with one of them waits
+	// for that read instead of reading it beside it (subagents started
+	// at once send one system prompt each)
+	reading readingSet
 }
 
 func (b *backend) size() int {
@@ -225,13 +230,26 @@ func (b *backend) find(ctx context.Context, texts []string) ([][]redact.Found, e
 				}
 				units = keep
 			}
-			chunks, parts := joinAt(units, b.size())
+			chunks, parts, wait, release := b.reading.claim(units, b.size())
+			if len(chunks) == 0 && wait != nil {
+				// another request reads what is left: what it finds
+				// comes through the cache
+				select {
+				case <-wait:
+				case <-ctx.Done():
+					done <- result{nil, errWaitEnded}
+					return
+				}
+				miss = b.still(texts, miss, got, out)
+				continue
+			}
 			if len(chunks) == 0 {
 				done <- result{nil, fmt.Errorf("the local masking model has no text to read for %d texts", len(miss))}
 				return
 			}
 			found, err := b.classify(chunks[:1])
 			if err != nil {
+				release()
 				done <- result{nil, err}
 				return
 			}
@@ -245,22 +263,9 @@ func (b *backend) find(ctx context.Context, texts []string) ([][]redact.Found, e
 				b.cache.put(k, got[k])
 			}
 			b.cache.mu.Unlock()
+			release()
 			b.saveSoon()
-			// the texts still missing, with this chunk's answers and
-			// what others' requests found meanwhile
-			sub := make([]string, len(miss))
-			for j, i := range miss {
-				sub[j] = texts[i]
-			}
-			o, m := b.known(sub, got)
-			was := miss
-			miss = nil
-			for j, i := range was {
-				out[i] = o[j]
-			}
-			for _, j := range m {
-				miss = append(miss, was[j])
-			}
+			miss = b.still(texts, miss, got, out)
 		}
 		done <- result{out, nil}
 	}()
@@ -272,6 +277,76 @@ func (b *backend) find(ctx context.Context, texts []string) ([][]redact.Found, e
 		return r.out, r.err
 	case <-ctx.Done():
 		return b.partial(ctx, texts)
+	}
+}
+
+// still is which of texts' miss are still missing, with got (this
+// call's answers) and what others' requests found meanwhile; out gets
+// what is known of the rest.
+func (b *backend) still(texts []string, miss []int, got map[[32]byte][]redact.Found, out [][]redact.Found) []int {
+	sub := make([]string, len(miss))
+	for j, i := range miss {
+		sub[j] = texts[i]
+	}
+	o, m := b.known(sub, got)
+	for j, i := range miss {
+		out[i] = o[j]
+	}
+	var left []int
+	for _, j := range m {
+		left = append(left, miss[j])
+	}
+	return left
+}
+
+// readingSet are the texts and pieces requests read now, by hash, each
+// with what is closed when its read ends. Its zero value is empty.
+type readingSet struct {
+	mu sync.Mutex
+	m  map[[32]byte]chan struct{}
+}
+
+// claim leaves out of units those another request reads now, and
+// claims the first chunk of the rest for this one: the rest's chunks and
+// parts (joinAt, at size), what is closed when a read of one left out
+// ends (nil when none was), and release, which ends this one's claim
+// once what it found is in the cache.
+func (r *readingSet) claim(units []string, size int) (chunks []string, parts [][]part, wait <-chan struct{}, release func()) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var rest []string
+	for _, u := range units {
+		if c, ok := r.m[sha256.Sum256([]byte(u))]; ok {
+			if wait == nil {
+				wait = c
+			}
+			continue
+		}
+		rest = append(rest, u)
+	}
+	chunks, parts = joinAt(rest, size)
+	if len(chunks) == 0 {
+		return nil, nil, wait, func() {}
+	}
+	if r.m == nil {
+		r.m = map[[32]byte]chan struct{}{}
+	}
+	c := make(chan struct{})
+	var ks [][32]byte
+	for _, p := range parts[0] {
+		k := sha256.Sum256([]byte(p.s))
+		if _, ok := r.m[k]; !ok {
+			r.m[k] = c
+			ks = append(ks, k)
+		}
+	}
+	return chunks, parts, wait, func() {
+		r.mu.Lock()
+		for _, k := range ks {
+			delete(r.m, k)
+		}
+		r.mu.Unlock()
+		close(c)
 	}
 }
 

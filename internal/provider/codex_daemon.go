@@ -554,3 +554,23 @@ func splitExe(args string) (exe, rest string) {
 
 // CodexHome is the Codex home magpie wires and signs Codex in through.
 func CodexHome() string { return codexHome() }
+
+// CodexPIDs lists the Codex processes running now that may hold a thread
+// sending to magpie's gateway: the Codex app's app-server, the managed
+// daemon, the CLI's sessions, an editor's codex. A relay magpie leaves at
+// quit for them ends once they all have (codexrelay).
+func CodexPIDs(ctx context.Context) []int {
+	ps, err := listProcesses(ctx)
+	if err != nil {
+		return nil
+	}
+	var pids []int
+	for _, p := range ps {
+		exe, _ := splitExe(p.Args)
+		base := strings.ToLower(exe[strings.LastIndexAny(exe, `/\`)+1:])
+		if p.PID != os.Getpid() && (base == "codex" || base == "codex.exe" || isCodexAppServer(p.Args) || isManagedDaemon(p.Args)) {
+			pids = append(pids, p.PID)
+		}
+	}
+	return pids
+}

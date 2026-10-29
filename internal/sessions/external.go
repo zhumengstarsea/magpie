@@ -36,7 +36,9 @@ func MergeExternal(native []Session, external []ExternalSession) []Session {
 	names := desktopExternalTitles(external)
 	seen := map[string]bool{}
 	for _, s := range native {
-		seen[s.Agent+"|"+s.ID] = true
+		for _, k := range GatewayKeys(s) {
+			seen[k] = true
+		}
 		for _, id := range s.Copies {
 			seen[s.Agent+"|"+id] = true
 		}

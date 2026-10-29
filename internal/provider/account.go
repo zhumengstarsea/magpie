@@ -201,7 +201,7 @@ func (p Provider) ListedAPIs(model string) []Protocol {
 // Sign authenticates a request to the provider, refreshing what needs it.
 // Plain providers get their key; accounts get the agent's tokens.
 func (p Provider) Sign(ctx context.Context, req *http.Request, proto Protocol, body []byte) error {
-	if p.Account != nil && settings.AccountDiscoveryOff() {
+	if p.Account != nil && settings.AccountDiscoveryOff() && !p.publicAccount() {
 		return errAccountDiscoveryOff
 	}
 	ctx = p.Via(ctx) // a sign-in refreshed on the way goes through its proxy
@@ -866,7 +866,7 @@ func refreshFailed(status int, agent, msg string) error {
 // Accounts lists the signed-in agents as providers.
 func Accounts() []Provider {
 	if settings.AccountDiscoveryOff() {
-		return nil
+		return pluginAccounts() // the public plugins' alone (publicPlugin)
 	}
 	rememberLogins(false)
 	home, _ := os.UserHomeDir()
@@ -1052,6 +1052,24 @@ func codexAccount(home string) (Provider, bool) {
 // find.
 func codexToken(ctx context.Context, dir string) (tok, accountID string, err error) {
 	return codexTokenRenewing(ctx, dir, "")
+}
+
+// codexTokenAsKept is the access token Codex keeps in dir, as it is: an
+// expired one is an error, not refreshed, for a sign-in magpie leaves to
+// Codex (leftAlone), which renews it itself.
+func codexTokenAsKept(dir string) (tok, accountID string, err error) {
+	b, _, err := readCodexLogin(dir, false)
+	if err != nil {
+		return "", "", err
+	}
+	var a codexAuth
+	if json.Unmarshal(b, &a) != nil || a.Tokens.AccessToken == "" {
+		return "", "", errors.New("Codex is signed out; run codex login")
+	}
+	if exp, _ := jwtClaims(a.Tokens.AccessToken)["exp"].(float64); exp != 0 && !time.Now().Before(time.Unix(int64(exp), 0)) {
+		return "", "", errors.New("Codex's sign-in has expired; Codex renews it as it runs")
+	}
+	return a.Tokens.AccessToken, codexAccountID(a), nil
 }
 
 // codexTokenRenewing is codexToken, and with stale, the access token the

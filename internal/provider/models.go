@@ -1841,12 +1841,14 @@ var makerCatalogs = sync.OnceValue(func() []string {
 // account is at Anthropic's. A remote magpie's is what that magpie counts
 // the model at, as its list says (remotePrice). A model no catalog prices
 // is at the price its plugin lists it at (pluginListPrice), else, when the
-// plugin says the plan serves it free, costs nothing (pluginFree).
+// plugin says the plan serves it free, costs nothing (pluginFree). Codex's
+// auto-review through the Codex subscription costs nothing too, as OpenAI
+// serves it a ChatGPT sign-in (codexReviewFree).
 func (p Provider) ListPrice(model string) (catalog.Price, bool) {
 	if pr, ok := p.remotePrice(model); ok {
 		return pr, true
 	}
-	if p.clineFreeModel(model) || p.kiloFreeModel(model) {
+	if p.clineFreeModel(model) || p.kiloFreeModel(model) || p.codexReviewFree(model) {
 		// served at no cost: not at the price of the model it is free of
 		return catalog.Price{}, true
 	}
@@ -2223,6 +2225,9 @@ func priceOf(s settings.Settings, p Provider, known bool, model string) (catalog
 		}
 	}
 	if !known {
+		if p.codexReviewFree(model) { // signed out since: still a ChatGPT sign-in's
+			return catalog.Price{}, true
+		}
 		if pr, ok := MakerPrice(model); ok {
 			return pr, true
 		}
@@ -2362,7 +2367,14 @@ func PricedName(model string) string {
 // PricedNameFor is PricedName for a call to that provider: a Kimi Code
 // membership's k3 is priced as the API's kimi-k3 (kimiCodeAPI).
 func PricedNameFor(providerID, model string) string {
-	if p, ok := byIDOrWas(providerID); ok && p.kimiCodeMember() {
+	p, ok := byIDOrWas(providerID)
+	if !ok {
+		p = Provider{ID: providerID}
+	}
+	if p.codexReviewFree(model) {
+		return model // free, not priced as another model (codexReviewFree)
+	}
+	if ok && p.kimiCodeMember() {
 		if id, ok := kimiCodeAPI[strings.ToLower(strings.TrimSpace(model))]; ok {
 			return id
 		}

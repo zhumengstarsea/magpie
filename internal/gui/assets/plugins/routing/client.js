@@ -508,7 +508,7 @@ function routingPage(part) {
   const quota = (w, used, left, vars) => w.balance != null ? t(left, { n: balText(w), ...vars }) + lapses(w)
     : (w.limit > 0 ? quotaCount(w) + " · " : "") + t(quotaLeft ? left : used, { n: pct(share(w)), ...vars });
   const fill = (w) => Math.max(0, Math.min(100, share(w))) + "%";
-  const FAIL = { rate: "rate limited", credit: "out of credit", quota: "quota used up", other: "failed", auth: "sign-in required", canceled: "canceled", foreign: "another account's reasoning", floor: "reply too short", verify: "needs verification", refused: "refused (safety filter)", shape: "request not understood", proxy: "proxy not reachable", effort: "reasoning effort not in its plan", overflow: "too long for its model", room: "reply asked past the window left", slow: "slow to start", prompt: "agent's prompt turned away", restricted: "account restricted by the vendor" };
+  const FAIL = { rate: "rate limited", credit: "out of credit", quota: "quota used up", other: "failed", auth: "sign-in required", canceled: "canceled", foreign: "another account's reasoning", floor: "reply too short", verify: "needs verification", refused: "refused (safety filter)", shape: "request not understood", sight: "images not taken", proxy: "proxy not reachable", effort: "reasoning effort not in its plan", overflow: "too long for its model", room: "reply asked past the window left", slow: "slow to start", prompt: "agent's prompt turned away", restricted: "account restricted by the vendor" };
   const failWord = (why) => t(FAIL[why] || "failed");
   // a try that answered: one whose reply broke off after it began (its 200
   // sent, then the vendor's error, #733) didn't, and has a fail
@@ -1308,6 +1308,8 @@ function routingPage(part) {
       return r.tries[i + 1]
         ? t("{who} answered {status}: the vendor turns away {agent}'s system prompt whichever account it goes to, so it goes on to the next before any of the reply reaches {agent}. Nothing is wrong with {who}, so it doesn't rest.", { who: name, status: tr.status, agent })
         : t("{who} answered {status}: the vendor turns away {agent}'s system prompt whichever account it goes to, and nobody else is left to try, so {agent} gets the error. Nothing is wrong with {who}, so it doesn't rest.", { who: name, status: tr.status, agent });
+    if (tr.fail === "sight")
+      return t("{who} answered {status}: it takes no images, so it is asked again with the images described by the image recognition model, before any of the reply reaches {agent}. Later requests to it are described first. Nothing is wrong with {who}, so it doesn't rest.", { who: name, status: tr.status, agent });
     if (tr.fail === "shape")
       return t("{who} answered {status}: its API couldn't read something in the request that another's may, so it goes on to the next before any of the reply reaches {agent}. Nothing is wrong with {who}, so it doesn't rest.", { who: name, status: tr.status, agent });
     if (tr.fail === "effort")
@@ -1986,6 +1988,25 @@ function routingPage(part) {
     return r;
   };
 
+  // wayOf is the route a request went by, as the stage heads it: its
+  // routing group, or the provider its model is of. A key of its own, no
+  // ">" in it, as a group in the group's way down is joined by them.
+  const wayOf = (r) => "\u0002" + (r.group ? "g:" + r.group.id : "p:" + r.provider).replace(/>/g, "\u0003");
+  let ways = null; // with more than one route on the stage, each one's heading: way → info
+  // wayInfos tells of each route on the stage as its latest request found
+  // it, and of the agents sending to it, by name
+  function wayInfos(rs) {
+    const out = new Map();
+    for (const r of rs) {
+      const key = wayOf(r), g = r.group, f = r.order.find((x) => !x.fallback) || r.order[0];
+      const agents = [...new Set([...(out.get(key)?.agents || []), agentName(r.agent)])];
+      out.set(key, g ? { id: key, route: true, pk: "route/group/" + g.id, name: g.name, ref: g.ref || "group/" + g.id, routing: g.routing || "", agents }
+        : { id: key, route: true, pk: "route/" + r.provider, name: f?.name || r.provider, ref: r.model, routing: f?.routing || "", icon: f ? f.icon || f.preset || "generic" : "",
+          lone: r.order.filter((x) => !x.fallback).length <= 1, agents });
+    }
+    return out;
+  }
+
   // staged: the routes the stage shows — a picked one alone; else those
   // playing, and each agent's latest while it lingers, a few agents at most
   function staged() {
@@ -2046,7 +2067,9 @@ function routingPage(part) {
       const li = el("li", "rt-sub"), name = el("b"), id = el("code", "mdl"), mode = el("i"), n = el("span", "n"), chev = el("span", "chev");
       const st = el("em"), tg = el("span", "tag");
       chev.append(svg(CHEV, 12, 1.7));
-      li.append(svg(FAN, 14, 1.5), name, id, n, mode, chev, st, tg);
+      // a route's heading has its provider's logo, a group's the fan
+      li.append(info.route && info.icon ? icon(info.icon) : svg(FAN, 14, 1.5), name, id, n, mode, chev, st, tg);
+      li.classList.toggle("rt-route", !!info.route);
       li.tabIndex = 0;
       li.setAttribute("role", "button");
       s = { li, name, id, mode, n, st, tg, wire: path(), key, sub: true };
@@ -2055,12 +2078,14 @@ function routingPage(part) {
       subs.set(key, s);
     }
     s.up = d ? key.slice(0, key.lastIndexOf(">")) : null;
-    s.pk = "group/" + info.id;
+    s.pk = info.route ? info.pk : "group/" + info.id;
     s.li.style.setProperty("--depth", d);
-    s.name.textContent = info.name || info.id;
-    s.id.textContent = info.ref || "group/" + info.id;
-    s.mode.textContent = t(modeOf(info.routing || "")[0]);
-    s.rules = info.rules ? t(info.rules === 1 ? "1 rule" : "{n} rules", { n: info.rules }) : "";
+    setText(s.name, info.name || info.id);
+    setText(s.id, info.ref || "group/" + info.id);
+    // a provider with one key on routes nothing: no way to name
+    setText(s.mode, info.lone ? "" : t(modeOf(info.routing || "")[0]));
+    s.rules = info.route ? t("Sent by {agents}", { agents: info.agents.join(", ") })
+      : info.rules ? t(info.rules === 1 ? "1 rule" : "{n} rules", { n: info.rules }) : "";
     return s;
   }
   // shut marks a heading or a fold open or folded, as the reader sees it
@@ -2086,7 +2111,7 @@ function routingPage(part) {
       for (let d = 1; d <= via.length; d++) { const s = subs.get(via.slice(0, d).join(">")); if (s) out.push(s.wire); }
       return out;
     }
-    const via = row.w.via || [];
+    const via = row.path || [];
     for (let d = 1; d <= via.length; d++) { const s = subs.get(via.slice(0, d).join(">")); if (s) out.push(s.wire); }
     const f = row.fold && folds.get(row.fold);
     if (f?.open) out.push(f.wire);
@@ -2105,7 +2130,7 @@ function routingPage(part) {
   // foldKey: keys or accounts side by side that fold together — one
   // provider's, for one model at one effort, on one way down a group, all
   // fallbacks or none
-  const foldKey = (w) => [(w.via || []).join(">"), w.kind, w.provider, w.model || "", w.fixed || "", w.fallback ? 1 : 0, w.aside ? 1 : 0].join("\u0000");
+  const foldKey = (w, path = w.via || []) => [path.join(">"), w.kind, w.provider, w.model || "", w.fixed || "", w.fallback ? 1 : 0, w.aside ? 1 : 0].join("\u0000");
   const folding = (w) => w.kind === "key" || w.kind === "account";
   // what is remembered open: the provider and model, whichever request
   const openKey = (w) => w.provider + "/" + (w.model || "") + (w.fixed ? ":" + w.fixed : "");
@@ -2220,9 +2245,17 @@ function routingPage(part) {
     sets = [...sets.filter((k) => latest.has(k)), ...[...latest.keys()].filter((k) => !sets.includes(k))];
     // a Set beside the list: hundreds of keys looked each other up (#3164)
     const ids = [], has = new Set(), wOf = new Map(), rOf = new Map();
-    for (const k of sets) {
-      const r = latest.get(k);
-      for (const w of seated(r)) { const id = seat(w); if (!has.has(id)) { has.add(id); ids.push(id); } }
+    // the routes the sets are of, each its sets together. With more than
+    // one on the stage, each route's rows hang under a heading naming it:
+    // under a header naming one route, the rows of the other agents'
+    // routes read as that one's (hoobnn on Discord: a group "3 on" over
+    // five rows, Pi's zcode and OpenCode's Kimi Code among them)
+    const byWay = new Map();
+    for (const k of sets) { const w = wayOf(latest.get(k)); byWay.has(w) ? byWay.get(w).push(k) : byWay.set(w, [k]); }
+    ways = byWay.size > 1 ? wayInfos(rs) : null;
+    const wayAt = new Map();
+    for (const [w, ks] of byWay) for (const k of ks) {
+      for (const x of seated(latest.get(k))) { const id = seat(x); if (!has.has(id)) { has.add(id); ids.push(id); wayAt.set(id, w); } }
     }
     for (const r of rs) for (const w of [...r.order, ...(r.left || [])]) { wOf.set(seat(w), w); rOf.set(seat(w), r.id); }
     // where each was, of those on the stage: a key folded away was nowhere
@@ -2239,6 +2272,8 @@ function routingPage(part) {
       }
       row.w = wOf.get(id);
       row.rid = rOf.get(id);
+      // its way down: its route's heading, then the groups in the group
+      row.path = ways ? [wayAt.get(id), ...(row.w.via || [])] : row.w.via || [];
     }
     // a group in the group heads its models, which it routes by its own
     // routing, set in under it
@@ -2247,7 +2282,7 @@ function routingPage(part) {
     let run = [];
     const flush = () => {
       if (run.length >= FOLD_AT) {
-        const w = rows.get(run[0]).w, f = foldNode(foldKey(w), w), acct = w.kind === "account";
+        const w = rows.get(run[0]).w, f = foldNode(foldKey(w, rows.get(run[0]).path), w), acct = w.kind === "account";
         f.ids = run;
         shut(f, isOpen(f.pk, acct && run.length < LONG),
           acct ? "Fold these accounts into one row" : "Fold these keys into one row", acct ? "Show each account" : "Show each key");
@@ -2257,19 +2292,19 @@ function routingPage(part) {
     };
     for (const id of ids) {
       const w = rows.get(id).w;
-      if (folding(w) && run.length && foldKey(rows.get(run[0]).w) === foldKey(w)) run.push(id);
+      if (folding(w) && run.length && foldKey(rows.get(run[0]).w, rows.get(run[0]).path) === foldKey(w, rows.get(id).path)) run.push(id);
       else { flush(); if (folding(w)) run = [id]; }
     }
     flush();
     // how many each group in the group routes to, which folds it when LONG
     const under = new Map();
     for (const id of ids) {
-      const via = rows.get(id).w.via || [];
+      const via = rows.get(id).path;
       for (let d = 1; d <= via.length; d++) { const k = via.slice(0, d).join(">"); under.set(k, (under.get(k) || 0) + 1); }
     }
     const els = [], want = new Set(), infos = rs.flatMap((r) => r.group?.subs || []);
     for (const id of ids) {
-      const row = rows.get(id), via = row.w.via || [], f = foldOf.get(id);
+      const row = rows.get(id), via = row.path, f = foldOf.get(id);
       row.fold = f ? f.key : null;
       const depth = String(via.length + (f ? 1 : 0));
       if (row.li.style.getPropertyValue("--depth") !== depth) row.li.style.setProperty("--depth", depth);
@@ -2279,8 +2314,12 @@ function routingPage(part) {
         const key = via.slice(0, d + 1).join(">");
         if (!want.has(key)) {
           want.add(key);
-          const s = subNode(key, infos.find((x) => x.id === via[d]) || { id: via[d], name: via[d] }, d);
-          shut(s, isOpen(s.pk, under.get(key) < LONG), "Fold this group into one row", "Show what this group routes to");
+          const way = !d && ways?.get(via[0]);
+          const s = subNode(key, way || infos.find((x) => x.id === via[d]) || { id: via[d], name: via[d] }, d);
+          // a route's heading starts open, whatever its length: a second
+          // agent coming shouldn't fold the first's rows away
+          if (way) shut(s, isOpen(s.pk, true), "Fold this route into one row", "Show where this route goes");
+          else shut(s, isOpen(s.pk, under.get(key) < LONG), "Fold this group into one row", "Show what this group routes to");
           els.push(s.li);
         }
         // folded: what it routes to is its heading's
@@ -2855,6 +2894,11 @@ function routingPage(part) {
       if (tr.done && tryOk(tr) && tr.upstream) items.push([upstreamWhy(tr), "aside upstream-said", tr]);
     });
     if (r.done && !r.tries.length) items.push([t("Nothing was tried: {error}", { error: r.error || r.status }), "bad"]);
+    // one magpie held too long before routing it was stopped, and what
+    // held it saved to a report (the app's log goes only to stderr, which
+    // its user can't reach): its line copies it. Its name rides as the
+    // line's model, so another held request's line is drawn anew.
+    if (r.done && r.held) items.push([t("magpie saved a report of where it held this request. If it keeps happening, send the report with yours."), "aside held", { model: r.held }]);
     const aboutKey = (w) => w ? seat(w) : "";
     const logos = [...r.order, ...(r.left || [])].map(logoOf);
     const key = JSON.stringify([tagKind(r), items.map(([s, c, tr, w]) => [s, c, tr?.model, tr?.served, aboutKey(w)]), logos]);
@@ -2886,9 +2930,28 @@ function routingPage(part) {
       if (c === "aside kind") li.prepend(kindTag(r), " ");
       if (c === "swap") li.prepend(swapTag(tr), " ");
       if (c === "aside time") li.replaceChildren(timeElement(tr));
+      if (c === "aside held") li.append(" ", ...heldActions(tr.model));
       return li;
     }));
     keptIcons = null;
+  }
+
+  // heldActions are a held request's report's buttons: Copy Report, and
+  // the folder it is kept in, on this computer only
+  function heldActions(name) {
+    const cp = el("button", "link", t("Copy Report"));
+    cp.onclick = async () => {
+      try {
+        const got = await api("gateway/held/" + encodeURIComponent(name));
+        await copy(got.text, "", cp, t("Report copied"));
+      } catch (e) {
+        status(t("Couldn't read the report: {error}", { error: t(e.message) }), "err");
+      }
+    };
+    if (window.bootPrefs?.web) return [cp];
+    const open = el("button", "link", t("Open Folder"));
+    open.onclick = () => api("gateway/held/reveal", {}).catch((e) => status(e.message, "err"));
+    return [cp, " ", open];
   }
 
   // pick sets the stage to a past request, or back to live with the newest.

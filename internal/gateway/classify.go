@@ -368,7 +368,7 @@ func classifyEffort(model string) string {
 // request's route is begun.
 func askWaited(ctx context.Context, ask classifier) classifier {
 	return func(model string, intents []string, prev before, effort bool, text string) (verdict, error) {
-		defer noteWait(ctx)()
+		defer noteWait(ctx, "decision model")()
 		return ask(model, intents, prev, effort, text)
 	}
 }

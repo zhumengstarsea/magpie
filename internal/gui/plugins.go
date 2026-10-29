@@ -786,7 +786,11 @@ func pluginRoutes(mux *http.ServeMux, w Windows) {
 				fail(rw, err)
 				return
 			}
-			writeJSON(rw, provider.SignInState{Agent: id, State: "done", User: pp.Name})
+			// no account named: the provider's name as its user was taken
+			// for an account's by Hide accounts, and blurred wherever it
+			// showed (lileo0668 on Discord); the page names the sign-in
+			// by its subscription
+			writeJSON(rw, provider.SignInState{Agent: id, State: "done"})
 			return
 		}
 		st, err := provider.StartPluginSignInWith(in.Provider, in.Method, in.Inputs, provider.SignInOptions{Proxy: in.Proxy, User: in.User})

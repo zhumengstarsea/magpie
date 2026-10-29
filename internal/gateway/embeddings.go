@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -174,6 +175,13 @@ func (s *Server) serveRetrieval(w http.ResponseWriter, r *http.Request, path, op
 	tries = probeOne(tries) // of those resting, only the one back soonest (#1799)
 	var skipped []string
 	went := asked // the model the last try asked for
+	// the Routing page lists it as it does a chat, each account, key or
+	// member asked a try of its one route (sideRoute)
+	var grp *GroupRef
+	if isGroup {
+		grp = groupRef(g, ms)
+	}
+	side := s.beginSide(r, start, asked, tries[0].p.ID, grp)
 	// unless every try is on this machine or the local network, set
 	// to go unmasked (provider.SkipsRedaction)
 	if slices.ContainsFunc(tries, func(c candidate) bool { return !c.p.SkipsRedaction() }) {
@@ -185,6 +193,7 @@ func (s *Server) serveRetrieval(w http.ResponseWriter, r *http.Request, path, op
 		defer done()
 		if err != nil { // fails closed
 			call.Status, call.Error = maskStatus(err), err.Error()
+			side.end(tries[0].p, tries[0].model, call.Status, err, Usage{})
 			writeError(w, provider.Chat, call.Status, err.Error())
 			s.record(call)
 			return
@@ -195,35 +204,45 @@ func (s *Server) serveRetrieval(w http.ResponseWriter, r *http.Request, path, op
 		}
 		// the record names the try that had it last, not the first
 		// planned (noteMaskedUntil)
-		_, noted := noteMaskedUntil(r, what, hits, sent, 0, tries[0].p.ID, asked)
+		masked, noted := noteMaskedUntil(r, what, hits, sent, side.id(), tries[0].p.ID, asked)
+		side.masked(masked)
 		defer func() { noted(call.Provider, went) }()
 	}
 	for i, c := range tries {
 		last := i == len(tries)-1
 		call.Provider, went = c.p.ID, c.model
 		base := strings.TrimRight(c.p.Base(provider.Chat), "/")
+		tried := side.try(c)
 		if base == "" {
 			msg := fmt.Sprintf("%s has no OpenAI-style API for %s", c.p.Name, path)
+			tried(400, errors.New(msg))
 			if !last {
 				skipped = append(skipped, c.label()+": "+msg)
 				continue
 			}
 			call.Status, call.Error, call.Millis = 400, msg, time.Since(start).Milliseconds()
 			call.Fallback = strings.Join(skipped, "; ")
+			side.end(c.p, c.model, 400, errors.New(msg), Usage{})
 			writeError(w, provider.Chat, 400, msg)
 			s.record(call)
 			return
 		}
 		out, ctype, err := req.forModel(c.model)
 		if err != nil {
+			tried(400, err)
+			side.end(c.p, c.model, 400, err, Usage{})
 			call.Status, call.Error, call.Millis = 400, err.Error(), time.Since(start).Milliseconds()
 			writeError(w, provider.Chat, 400, err.Error())
 			s.record(call)
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), retrieveTimeout)
+		// the headers of the vendor's reply passed on (#4145)
+		var heard heardHeaders
+		ctx = withReplySink(ctx, c.p.ID, heard.put)
 		b, got, code, err := s.retrieveAs(ctx, c.p, base+path, ctype, out)
 		cancel()
+		tried(code, err)
 		call.Millis = time.Since(start).Milliseconds()
 		if err != nil && !last && r.Context().Err() == nil {
 			skipped = append(skipped, c.label()+": "+err.Error())
@@ -237,7 +256,8 @@ func (s *Server) serveRetrieval(w http.ResponseWriter, r *http.Request, path, op
 		if c.p.Account == nil && c.p.Key != "" {
 			providerKeyID, providerKeyName = provider.KeyID(c.p.Key), c.p.KeyName
 		}
-		appendUsage(r, usage.Record{Operation: operation, Time: start, Agent: call.Agent, Via: call.Via, Provider: c.p.ID, Host: c.p.Where(), Model: c.model, Requested: asked, ProviderKeyID: providerKeyID, ProviderKeyName: providerKeyName, ProviderAccount: accountOf(c.p),
+		side.end(c.p, c.model, code, err, Usage{Input: in, Output: outTokens})
+		appendUsage(r, usage.Record{RouteID: side.id(), Operation: operation, Time: start, Agent: call.Agent, Via: call.Via, Provider: c.p.ID, Host: c.p.Where(), Model: c.model, Requested: asked, ProviderKeyID: providerKeyID, ProviderKeyName: providerKeyName, ProviderAccount: accountOf(c.p),
 			Input: in, Output: outTokens, Millis: call.Millis, Status: code, Session: sessionOf(r.Header)})
 		if err != nil {
 			call.Error = err.Error()
@@ -246,10 +266,12 @@ func (s *Server) serveRetrieval(w http.ResponseWriter, r *http.Request, path, op
 			if len(skipped) > 0 {
 				msg += " (tried first: " + call.Fallback + ")"
 			}
+			heard.into(w.Header())
 			writeError(w, provider.Chat, code, msg)
 			return
 		}
 		s.record(call)
+		heard.into(w.Header())
 		w.Header().Set("Content-Type", req.answerType(got))
 		w.WriteHeader(code)
 		w.Write(b)
@@ -309,6 +331,7 @@ func (s *Server) retrieveAs(ctx context.Context, p provider.Provider, url, ctype
 		return nil, "", 502, err
 	}
 	res, err := p.Do(s.client, req)
+	heardReply(ctx, p, res)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, "", 504, fmt.Errorf("%s didn't answer in %s", p.Name, retrieveTimeout)

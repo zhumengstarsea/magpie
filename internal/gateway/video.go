@@ -802,7 +802,16 @@ func (s *Server) videosCreate(w http.ResponseWriter, r *http.Request) {
 		sent += " " + string(b)
 	}
 	// the record names the member that had it last (noteMaskedUntil)
-	_, noted := noteMaskedUntil(r, "video", hits, sent, 0, cmp.Or(call.Provider, p.ID), call.Model)
+	// the Routing page lists it as it does a chat, each member asked a
+	// try of its one route (sideRoute); its polls and download are the
+	// same video, and add none
+	var grp *GroupRef
+	if isGroup {
+		grp = groupRef(g, ms)
+	}
+	side := s.beginSide(r, start, call.Model, p.ID, grp)
+	masked, noted := noteMaskedUntil(r, "video", hits, sent, side.id(), cmp.Or(call.Provider, p.ID), call.Model)
+	side.masked(masked)
 	defer func() { noted(call.Provider, model) }()
 	if n > 0 && f.Prompt == prompt { // the prompt's mask wraps w already
 		var done func()
@@ -818,8 +827,10 @@ func (s *Server) videosCreate(w http.ResponseWriter, r *http.Request) {
 	)
 	for i, m := range tries {
 		model = m.Model
+		at := time.Now()
 		v, code, err = s.startVideo(ctx, r, m.Provider, m.Model, f)
 		p, call.Provider = v.p, v.p.ID
+		side.tryAt(candidateOf(v.p, m.Model), at)(code, err)
 		// a group's next member is asked as a chat's would be: while this
 		// one can't make videos, its vendor fails, is out of quota or
 		// doesn't serve the model; a refusal of the request is the request's
@@ -835,6 +846,7 @@ func (s *Server) videosCreate(w http.ResponseWriter, r *http.Request) {
 		if len(skipped) > 0 {
 			msg += " (tried first: " + call.Fallback + ")"
 		}
+		side.end(p, model, code, errors.New(msg), Usage{})
 		fail(code, msg)
 		return
 	}
@@ -849,7 +861,8 @@ func (s *Server) videosCreate(w http.ResponseWriter, r *http.Request) {
 			call.Status = code
 		}
 	}
-	appendUsage(r, usage.Record{Operation: "generate_content", Time: start, Agent: call.Agent, Via: call.Via, Provider: p.ID, Host: p.Where(), Model: model, Requested: call.Model, ProviderAccount: accountOf(p),
+	side.end(p, model, call.Status, err, Usage{})
+	appendUsage(r, usage.Record{RouteID: side.id(), Operation: "generate_content", Time: start, Agent: call.Agent, Via: call.Via, Provider: p.ID, Host: p.Where(), Model: model, Requested: call.Model, ProviderAccount: accountOf(p),
 		Millis: call.Millis, Status: call.Status, Session: sessionOf(r.Header)})
 	if err != nil {
 		call.Error = err.Error()

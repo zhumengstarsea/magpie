@@ -387,3 +387,39 @@ func RestartCodexApp(ctx context.Context, bundle string) error {
 		}
 	}
 }
+
+// RestartCodexAppWhenIdle ends the Codex app's own app-servers once, for a magpie
+// that won't be running to watch them (magpie uninstall): the app starts
+// a new one, which reads Codex's config as it is now. It waits up to wait
+// for a running Codex turn to end, and cuts none short: left says an
+// app-server was still on the old config when it gave up, or couldn't be
+// ended, so the user quits and opens the app.
+func RestartCodexAppWhenIdle(ctx context.Context, wait time.Duration) (ended int, left bool, err error) {
+	home := codexHome()
+	lctx, cancel := context.WithTimeout(ctx, codexAppListWait)
+	pids, err := codexAppServersOn(lctx, home)
+	cancel()
+	if err != nil || len(pids) == 0 {
+		return 0, false, err
+	}
+	until := time.Now().Add(wait)
+	for codexTurnRunning(home, time.Now()) {
+		if time.Now().After(until) {
+			return 0, true, nil
+		}
+		select {
+		case <-ctx.Done():
+			return 0, true, ctx.Err()
+		case <-time.After(codexAppEvery):
+		}
+	}
+	for _, p := range pids {
+		if err := endCodexAppServer(p); err != nil {
+			log.Printf("codex: restarting the Codex app's app-server %d: %v", p, err)
+			left = true
+			continue
+		}
+		ended++
+	}
+	return ended, left, nil
+}

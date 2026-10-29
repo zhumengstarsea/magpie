@@ -143,9 +143,10 @@ func toGuard() {
 // defaultWait is how long a request waits for the local model on by
 // default (not turned on by the user): its turn, its loading, its reading.
 // Past it the rules mask alone. AstrLink Guard reads on the CPU, a long
-// history it hasn't seen takes minutes there, and one request at a time
-// is read: unbounded, every request queued behind the first (shensmart
-// on Discord, 10-28: Codex's requests sat masking once the default's
+// history it hasn't seen takes minutes there, and a few requests at a
+// time are read, on 4 cores at most between them (pii's guardTurn):
+// unbounded, every request queued behind the first (shensmart on
+// Discord, 10-28: Codex's requests sat masking once the default's
 // download finished). What the model read meanwhile is kept, so the next
 // request finds it. A var for tests.
 var defaultWait = 2 * time.Second

@@ -118,6 +118,17 @@ func bailianWorkspace(region string) string {
 	return "https://" + WorkspaceID + "." + region + ".maas.aliyuncs.com/compatible-mode/v1"
 }
 
+// arkPlanModels are the text models of Volcengine Ark's Coding Plan and
+// Agent Plan, which list the same ones: the plans' /models doesn't give
+// them, so they are the docs' (套餐概览 docs/82379/1925114 and 2366394,
+// 快速开始 1928261), ark-code-latest first. doubao-seed-2.1-turbo and
+// kimi-k2.7-code are gone from the plans (xyenon, 10-29). minimax-m3 is
+// marked 即将下线 and stays until it goes (11-02, as reported), as the
+// accounts that have it are still served it.
+var arkPlanModels = []string{"ark-code-latest", "doubao-seed-evolving", "doubao-seed-2.1-pro", "doubao-seed-2.1-lite",
+	"doubao-seed-2.0-mini", "minimax-m3", "glm-5.3", "glm-5.3-flash", "deepseek-v4.1-flash", "deepseek-v4.1-flash-economy", "deepseek-v4-flash", "deepseek-v4-pro",
+	"kimi-k2.8-preview", "kimi-k3", "kimi-k3.1-pro"}
+
 // alibabaPlanModels are the text models of Alibaba's Token Plan, the same
 // on the Qwen AI platform's and on Bailian's, as their overviews list them.
 var alibabaPlanModels = []string{"auto", "qwen3.8-max", "qwen3.8-flash", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-flash",
@@ -333,16 +344,12 @@ var presets = []PresetDef{
 		Website: "https://www.volcengine.com/docs/82379/1925114", KeysURL: "https://ark.volcengine.com/region:cn-beijing/apikey",
 		RegionLabel: "Plan", KeyPlans: true, Regions: []Region{
 			{ID: "coding", Name: "Coding Plan", Chat: "https://ark.cn-beijing.volces.com/api/coding/v3", Responses: "https://ark.cn-beijing.volces.com/api/coding/v3", Anthropic: "https://ark.cn-beijing.volces.com/api/coding",
-				Models: []string{"ark-code-latest", "doubao-seed-evolving", "doubao-seed-2.1-pro", "doubao-seed-2.1-lite", "doubao-seed-2.1-turbo",
-					"doubao-seed-2.0-mini", "minimax-m3", "glm-5.3", "glm-5.3-flash", "deepseek-v4.1-flash", "deepseek-v4-flash", "deepseek-v4-pro",
-					"kimi-k2.7-code", "kimi-k2.8-preview", "kimi-k3"},
+				Models:     arkPlanModels,
 				Embeddings: []string{"doubao-embedding-vision"}},
 			{ID: "agent", Name: "Agent Plan", Chat: "https://ark.cn-beijing.volces.com/api/plan/v3", Responses: "https://ark.cn-beijing.volces.com/api/plan/v3", Anthropic: "https://ark.cn-beijing.volces.com/api/plan",
-				Models: []string{"ark-code-latest", "doubao-seed-evolving", "doubao-seed-2.1-pro", "doubao-seed-2.1-lite", "doubao-seed-2.1-turbo",
-					"doubao-seed-2.0-mini", "minimax-m3", "glm-5.3", "glm-5.3-flash", "deepseek-v4.1-flash", "deepseek-v4-flash", "deepseek-v4-pro",
-					"kimi-k2.7-code", "kimi-k2.8-preview", "kimi-k3"},
+				Models:     arkPlanModels,
 				Embeddings: []string{"doubao-embedding-vision"},
-				Drawers:    []string{"doubao-seedream-5-0-pro"},
+				Drawers:    []string{"doubao-seedream-5-0-pro", "doubao-seedream-5.0-flash"},
 				Videos:     []string{"doubao-seedance-2.0", "doubao-seedance-2.0-fast", "doubao-seedance-2.0-mini", "doubao-seedance-2.5"}},
 			{ID: "api", Name: "Pay as you go", Chat: "https://ark.cn-beijing.volces.com/api/v3", Responses: "https://ark.cn-beijing.volces.com/api/v3", Lists: true},
 		},

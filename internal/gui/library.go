@@ -550,6 +550,9 @@ func libraryRoutes(mux *http.ServeMux, w Windows) {
 			res, err = library.RemoveFoundSkill(in.Name)
 		case "skills/remove-found-some":
 			res, err = library.RemoveFoundSkills(in.Names)
+		case "skills/hand-over":
+			// out of ~/.agents/skills, into the library's own folder (tnt1223)
+			res, err = library.HandOverSkills(oneOrMore(in.Name, in.Names))
 		case "skills/use-library":
 			res, err = library.UseLibrarySkills(oneOrMore(in.Name, in.Names), in.Agent)
 		case "skills/how":

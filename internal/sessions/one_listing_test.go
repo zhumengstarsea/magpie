@@ -5,10 +5,22 @@ import (
 	"testing"
 )
 
+// holdsEnd ends, when the test does, every hold it left: one that fails
+// before its done() would otherwise have every later test in the package
+// read the listing it held (#4177).
+func holdsEnd(t *testing.T) {
+	t.Cleanup(func() {
+		held.Lock()
+		held.n, held.lists = 0, nil
+		held.Unlock()
+	})
+}
+
 // Under a hold a folder is listed once; a hold begun after a listing has
 // it listed again, so no request reads files from before it came; with
 // no hold left every read lists.
 func TestOneListing(t *testing.T) {
+	holdsEnd(t)
 	n := 0
 	list := func() []file { n++; return []file{{path: "a"}} }
 	read := func() {
@@ -54,6 +66,7 @@ func TestOneListing(t *testing.T) {
 // that listing; a shared hold reads the listing a hold before it took, and
 // begins one of its own when there is none.
 func TestShareListing(t *testing.T) {
+	holdsEnd(t)
 	var n atomic.Int32
 	listing, release := make(chan struct{}), make(chan struct{})
 	slow := func() []file {
@@ -69,7 +82,11 @@ func TestShareListing(t *testing.T) {
 	done := OneListing()
 	got := make(chan []file, 2)
 	go func() { got <- heldFiles("k", slow) }()
-	<-listing
+	select {
+	case <-listing:
+	case <-got:
+		t.Fatal("a hold's first read didn't list: a listing was left from before it")
+	}
 	shared := ShareListing()
 	go func() { got <- heldFiles("k", slow) }()
 	select {

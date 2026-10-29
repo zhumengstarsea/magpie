@@ -1422,7 +1422,12 @@
     const same = String(cur) === String(best);
     const saves = r.cost > 0 ? (r.cost - r.low) / r.cost : 0;
     const set = a.setting || {};
-    const applied = set.ours && String(set.value) === String(best);
+    // a model's own Compact at is where Codex runs, over Long conversations:
+    // the value put in there isn't "In use", and putting another in moves
+    // nothing (hoobnn on Discord: "In use" for 170K beside "Now 430K")
+    const own = a.own;
+    const held = !!(set.locked || own);
+    const applied = !own && set.ours && String(set.value) === String(best);
     const row = el("div", "ctx-tune-row" + (same || applied ? " done" : ""));
 
     const title = el("div", "ctx-tune-title");
@@ -1497,6 +1502,7 @@
     const note = el("div", "ctx-tune-src");
     title.after(note);
     if (set.locked) note.textContent = t("{name} is set and comes first", { name: set.locked });
+    else if (own) note.textContent = t("{model} compacts at its own {value}, which comes first", { model: own.model, value: fmtK(own.value) });
     else if (set.source == "long") note.textContent = t("Long conversations, shared by Codex, Claude Code and Grok Build");
     else if (set.ours) note.textContent = t("Set by magpie");
     else if (set.value && a.compact && +set.value > a.compact.window && a.compact.window) note.textContent = t("You set {value}; the model's {window} comes first", { value: show(set.value), window: fmtK(a.compact.window) });
@@ -1522,7 +1528,7 @@
       undo.onclick = () => send("undo");
       foot.append(undo);
     }
-    if (!same && !applied && !set.locked) {
+    if (!same && !applied && !held) {
       const go = el("button", "text primary", t("Use {value}", { value: show(best) }));
       go.type = "button";
       go.disabled = tuneBusy === key;
@@ -1530,7 +1536,7 @@
       go.onclick = () => send("apply", best);
       foot.append(go);
     }
-    if (lean && !set.locked) {
+    if (lean && !held) {
       const go = el("button", "text primary", t("Use {value}", { value: show(lean.value) }));
       go.type = "button";
       go.disabled = tuneBusy === key;
@@ -1543,7 +1549,7 @@
     // a window of the reader's own (#1860), from the same replay: each
     // value's tokens past the leanest and compactions, both estimates
     const pts = (a.compact && a.compact.curve) || [];
-    if (pts.length > 1 && !set.locked) {
+    if (pts.length > 1 && !held) {
       const other = el("button", "text ctx-tune-pick", t("Other window…"));
       other.type = "button";
       other.disabled = tuneBusy === key;

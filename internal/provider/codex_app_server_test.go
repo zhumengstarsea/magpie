@@ -512,3 +512,29 @@ func TestRestartCodexAppEndsOnlyItsServer(t *testing.T) {
 		t.Fatal("an app-server that stays: no error")
 	}
 }
+
+// magpie uninstall restarts the Codex app's app-server once, so the app
+// reads a config with magpie out of it with no magpie left to watch it;
+// a running turn is waited for, never cut short.
+func TestRestartCodexAppWhenIdle(t *testing.T) {
+	s := stubCodexApp(t)
+	oldEvery := codexAppEvery
+	codexAppEvery = time.Millisecond
+	t.Cleanup(func() { codexAppEvery = oldEvery })
+	if n, left, err := RestartCodexAppWhenIdle(context.Background(), time.Second); n != 0 || left || err != nil {
+		t.Fatalf("no app running: %d %v %v", n, left, err)
+	}
+	s.running = []int{7, 8}
+	s.turnOpen = true
+	if n, left, _ := RestartCodexAppWhenIdle(context.Background(), 20*time.Millisecond); n != 0 || !left || len(s.ended) != 0 {
+		t.Fatalf("a turn running: ended %v, left %v", s.ended, left)
+	}
+	s.turnOpen = false
+	if n, left, err := RestartCodexAppWhenIdle(context.Background(), time.Second); n != 2 || left || err != nil || !slices.Equal(s.ended, []int{7, 8}) {
+		t.Fatalf("ended %v (%d), left %v, %v", s.ended, n, left, err)
+	}
+	s.endErr = proc.ErrDenied
+	if _, left, _ := RestartCodexAppWhenIdle(context.Background(), time.Second); !left {
+		t.Fatal("an app-server not ended isn't said")
+	}
+}

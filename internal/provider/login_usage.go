@@ -378,6 +378,10 @@ func loginQuota(ctx context.Context, l Login) SubscriptionQuota {
 	var renew codexRenew
 	switch {
 	case l.Agent == "claude": // Claude Code reads its own (claudeWindows)
+	case l.Active && leftAlone(l.Agent):
+		// read for the Codex app's hold alone (codexHoldReading): the
+		// token as Codex keeps it, never renewed nor written by magpie
+		tok, accountID, err = codexTokenAsKept(codexHome())
 	case l.Active:
 		tok, accountID, err = codexToken(ctx, codexHome())
 		renew = func(ctx context.Context, stale string) (string, string, error) {
@@ -445,9 +449,39 @@ func codexSignInRead(l Login, tok string, err error) error {
 // credits left isn't (the Codex app keeps sending, and the backend
 // answers). False when that isn't known.
 func CodexUsedUp(ctx context.Context) bool {
+	if leftAlone("codex") {
+		return codexReadingHeld(codexHoldReading(ctx))
+	}
 	// read as LoginUsage has it, fetched at most once a minute: the agent
 	// package asks on every catalog sync
 	return codexReadingHeld(LoginUsage(ctx, "codex"))
+}
+
+// CodexHoldMatters is set by the agent package: whether Codex is wired to
+// magpie beside its ChatGPT sign-in, so that magpie becomes its provider
+// while the Codex app holds the account (codex.out), or is its provider
+// for that already. Nil or false: what the app holds changes nothing.
+var CodexHoldMatters func() bool
+
+// codexHoldReading is the reading CodexUsedUp goes by for a Codex switched
+// off or removed in magpie (leftAlone), which LoginUsage reads nothing
+// of: the account Codex is signed in to alone, only while Codex takes
+// magpie's models (CodexHoldMatters), at most once a minute (loginReading),
+// its sign-in never renewed (loginQuota). The Codex app greys Send for
+// every model, magpie's too, while it holds the account, and turning
+// Codex off in magpie once its allowance ran out left the app so for good:
+// nothing read, magpie never became its provider, and one that was
+// stopped being it (sherlock_23333 on X).
+func codexHoldReading(ctx context.Context) map[string]SubscriptionQuota {
+	if settings.AccountDiscoveryOff() || CodexHoldMatters == nil || !CodexHoldMatters() {
+		return nil
+	}
+	for _, l := range Logins("codex") {
+		if l.Active {
+			return map[string]SubscriptionQuota{l.User: loginReading(ctx, l).q}
+		}
+	}
+	return nil
 }
 
 // CodexUsedUpKnown is CodexUsedUp over what was read already, asking no

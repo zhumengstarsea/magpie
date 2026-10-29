@@ -447,6 +447,10 @@ type settingsJSON struct {
 	// magpie listed it, is its one GPT Image (gateway.ListedDrawer, #1865)
 	ImageGenShown  string     `json:"imageGenShown,omitempty"`
 	ImageGenModels []modelRef `json:"imageGenModels"`
+	// the ImageGen the user picked is one unticked in its provider's
+	// editor since (provider.HiddenDrawers): it still draws, and is
+	// listed, as picked, with the row saying it is hidden
+	ImageGenHidden bool `json:"imageGenHidden,omitempty"`
 	// the web search APIs a model's search goes to when no provider can
 	// search (#419), their keys masked; the ones that can be added; and
 	// the provider that searches first, if one does
@@ -493,6 +497,8 @@ type settingsJSON struct {
 	// the ChatGPT accounts signed in, each of which can have a daily
 	// warm-up time of its own (#957)
 	CodexUsers []string `json:"codexUsers,omitempty"`
+	// and the Claude accounts, which Warm up now picks from
+	ClaudeUsers []string `json:"claudeUsers,omitempty"`
 	// the Codexes here that kept the background compaction's table (and
 	// its share) out of the config at the last sync: too old for it
 	// (before 0.163.0-alpha.8), or of no known version (codex_async.go)
@@ -673,7 +679,7 @@ func settingsState() settingsJSON {
 		s.LANPublic = gateway.PublicURLs(s.LANURLs)
 	}
 	s.CodexWarmed, s.ClaudeWarmed = latest(provider.CodexWarmed()), latest(provider.ClaudeWarmed())
-	s.CodexUsers = codexUsers()
+	s.CodexUsers, s.ClaudeUsers = loginUsers("codex"), loginUsers("claude")
 	s.CodexAsyncHeld = agent.CodexAsyncHeld()
 	s.WorkBuddy, s.WorkBuddyCheckins = provider.HasWorkBuddy(), provider.WorkBuddyCheckins()
 	s.Trae, s.TraeCheckins = provider.HasTrae(), provider.TraeCheckins()
@@ -719,7 +725,12 @@ func settingsState() settingsJSON {
 		if !p.On() || p.DecideOnly() {
 			continue
 		}
+		// those unticked in its editor left out, but the one picked here
+		// (321sssrt on X): a hidden pick still draws, and shows as picked
 		for _, m := range gateway.Drawers(p) {
+			if p.DrawerHidden(m.ID) && gateway.ListedDrawer(s.ImageGen) != p.ID+"/"+m.ID {
+				continue
+			}
 			name := m.Name
 			if name == "" {
 				name = m.ID
@@ -727,9 +738,17 @@ func settingsState() settingsJSON {
 			s.ImageGenModels = append(s.ImageGenModels, modelRef{ID: p.ID + "/" + m.ID, Name: name, Provider: p.ID, PName: p.Name, Icon: p.Icon, VendorPicks: gateway.VendorPicksDrawer(p)})
 		}
 	}
+	// the routing groups with a member that draws (7up6666 on X): a
+	// group picked here draws on its members in its routing's order
+	for _, e := range provider.Served() {
+		if e.Group != "" && gateway.GroupDraws(e.ID) {
+			s.ImageGenModels = append(s.ImageGenModels, modelRef{ID: e.ID, Name: e.Name, PName: e.Group})
+		}
+	}
 	if v := gateway.ListedDrawer(s.ImageGen); v != s.ImageGen {
 		s.ImageGenShown = v
 	}
+	s.ImageGenHidden = gateway.DrawerHidden(s.ImageGen)
 	// the Codex subagents row's warning: magpie's multi-agent V1 doesn't reach
 	// Codex where its own multi_agent_v2 is on in the config magpie routes, and
 	// magpie writes nothing there — the setting is the user's to turn off
@@ -850,7 +869,7 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/", devPage(revalidated(http.FileServer(http.FS(staticFS())))))
 	devRoutes(mux)
-	pluginPageRoutes(mux)
+	pluginPageRoutes(mux, isWeb(w))
 	// boot.js hands the page the saved language and theme before it paints:
 	// they came only with the settings, so the tabs showed English first
 	mux.HandleFunc("GET /boot.js", func(rw http.ResponseWriter, r *http.Request) {
@@ -863,6 +882,9 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		}
 		if s.ReduceMotion {
 			boot["reduceMotion"] = true
+		}
+		if s.NoBird {
+			boot["noBird"] = true
 		}
 		// a browser tab keeps its own font choice (fonts.js)
 		if !isWeb(w) {
@@ -1221,6 +1243,7 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 	sessionRoutes(mux, w)
 	sessionManageRoutes(mux, w)
 	backupRoutes(mux, w)
+	uninstallRoutes(mux, w)
 	archiveRoutes(mux)
 	libraryRoutes(mux, w)
 	updateRoutes(mux, w)
@@ -1304,6 +1327,10 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		// nor whether animations are stilled (#3813)
 		if _, sent := fields["reduceMotion"]; !sent {
 			in.ReduceMotion = cur.ReduceMotion
+		}
+		// nor whether the loading bird is kept off
+		if _, sent := fields["noBird"]; !sent {
+			in.NoBird = cur.NoBird
 		}
 		// nor whether a value masked for the first time is told (Must2333)
 		if _, sent := fields["maskAlert"]; !sent {
@@ -1793,6 +1820,20 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 			return
 		}
 		writeJSON(rw, settingsState())
+	})
+	// Warm up now: one Codex or Claude account's warm-up sent at once, and
+	// why it failed
+	mux.HandleFunc("POST /api/warm-now", func(rw http.ResponseWriter, r *http.Request) {
+		var in struct{ Agent, User string }
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			fail(rw, err)
+			return
+		}
+		if err := provider.WarmNow(r.Context(), in.Agent, in.User); err != nil {
+			fail(rw, err)
+			return
+		}
+		writeJSON(rw, map[string]bool{"ok": true})
 	})
 	// whether a Codex account spends one of its resets by itself once its
 	// week is used up, the Usage card's toggle, set on its own
@@ -2400,6 +2441,20 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		}
 		rw.WriteHeader(http.StatusNoContent)
 	})
+	// the folder of the reports saved of requests held too long before
+	// routing (gateway.HeldDir), from such a request's row on Routing
+	mux.HandleFunc("POST /api/gateway/held/reveal", func(rw http.ResponseWriter, r *http.Request) {
+		dir := gateway.HeldDir()
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			fail(rw, err)
+			return
+		}
+		if err := w.OpenFolder(dir); err != nil {
+			fail(rw, err)
+			return
+		}
+		rw.WriteHeader(http.StatusNoContent)
+	})
 	mux.HandleFunc("POST /api/window/{action}", func(rw http.ResponseWriter, r *http.Request) {
 		switch r.PathValue("action") {
 		case "hide":
@@ -2426,6 +2481,7 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		rw.WriteHeader(http.StatusNoContent)
 	})
 	agentModelsAPI(mux)
+	speedsAPI(mux)
 	devListen(mux)
 	return noFramedAPI(held(mux))
 }
@@ -2768,6 +2824,12 @@ func fail(rw http.ResponseWriter, err error) {
 		out["code"] = "runtime_unavailable"
 		out["offline"] = string(unavailable.Offline)
 	}
+	// an app's import link that nothing here opens, or that opens a
+	// program which is gone, said in the reader's language
+	var noHandler *agent.NoLinkHandlerError
+	if errors.As(err, &noHandler) {
+		out["code"], out["app"], out["exe"], out["said"] = "no_link_handler", noHandler.App, noHandler.Exe, linkSaid[noHandler.Exe != ""]
+	}
 	var noModels *agent.NoModelsError
 	if errors.As(err, &noModels) {
 		out["code"] = "no_models"
@@ -2818,10 +2880,10 @@ func tilde(p string) string {
 	return p
 }
 
-// codexUsers is the ChatGPT accounts signed in, by name, each once.
-func codexUsers() []string {
+// loginUsers is agent's accounts signed in, by name, each once.
+func loginUsers(agent string) []string {
 	var out []string
-	for _, l := range provider.Logins("codex") {
+	for _, l := range provider.Logins(agent) {
 		if l.User != "" && !slices.ContainsFunc(out, func(u string) bool { return strings.EqualFold(u, l.User) }) {
 			out = append(out, l.User)
 		}
@@ -2889,6 +2951,14 @@ func countClient(m map[string]string, client, as string) (map[string]string, err
 var bunSaid = map[string]string{
 	"windows": "Bun, which runs plugins, can't start on this version of Windows: it needs Windows 10 version 1809 or later, or Windows Server 2019 or later. Update Windows to use plugins, or set MAGPIE_BUN to a bun that runs here.",
 	"cpu":     "Bun, which runs plugins, can't start on this computer's processor: it needs an x64 processor with SSE4.2 (Intel or AMD from 2008 on; in a virtual machine, a CPU type that passes it through). Run magpie on such a processor to use plugins, or set MAGPIE_BUN to a bun that runs here.",
+}
+
+// linkSaid is what the page says for an app's import link that nothing
+// here opens, by whether it names a program that is gone: an i18n.js key
+// like bunSaid's, with {app} and {exe} filled from the reply
+var linkSaid = map[bool]string{
+	false: "Nothing on this computer opens {app}'s links, so {app} didn't open: open {app} once or install it again, then click Add magpie again",
+	true:  "Nothing on this computer opens {app}'s links, so {app} didn't open: open {app} once or install it again, then click Add magpie again ({exe})",
 }
 
 // appOutJSON is Codex on magpie while its ChatGPT account is used up: the

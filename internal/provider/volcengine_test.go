@@ -167,3 +167,36 @@ func TestVolcengineModelLists(t *testing.T) {
 		}
 	}
 }
+
+// The plans' models are their docs' (套餐概览 1925114 and 2366394, 快速开始
+// 1928261, read 10-29): kimi-k3.1-pro and deepseek-v4.1-flash-economy
+// came, doubao-seed-2.1-turbo and kimi-k2.7-code went, minimax-m3 stays
+// until it goes offline, and the Agent Plan draws with Seedream 5.0 Flash
+// too. A user's own pick of a model the plan dropped is still theirs.
+func TestVolcenginePlanModelsAsDocumented(t *testing.T) {
+	pr := Preset("volcengine")
+	coding, agent := pr.Regions[0], pr.Regions[1]
+	for _, r := range []Region{coding, agent} {
+		for _, id := range []string{"kimi-k3.1-pro", "deepseek-v4.1-flash-economy", "minimax-m3", "kimi-k3", "deepseek-v4.1-flash"} {
+			if !slices.Contains(r.Models, id) {
+				t.Errorf("%s: %s missing from %v", r.ID, id, r.Models)
+			}
+		}
+		for _, id := range []string{"doubao-seed-2.1-turbo", "kimi-k2.7-code"} {
+			if slices.Contains(r.Models, id) {
+				t.Errorf("%s: %s is offline but listed", r.ID, id)
+			}
+		}
+	}
+	if !slices.Contains(agent.Drawers, "doubao-seedream-5.0-flash") || !slices.Contains(agent.Drawers, "doubao-seedream-5-0-pro") {
+		t.Errorf("Agent Plan drawers %v", agent.Drawers)
+	}
+	p, err := FromPreset("volcengine")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Models = []string{"kimi-k2.7-code", "kimi-k3.1-pro"}
+	if got := modelIDs(p.Exposed()); !slices.Equal(got, p.Models) {
+		t.Fatalf("a user's picks %v exposed as %v", p.Models, got)
+	}
+}

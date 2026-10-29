@@ -386,6 +386,20 @@ func traceRoutes(mux *http.ServeMux) {
 		rememberTitleHistory(day, routes)
 		writeJSON(rw, map[string]any{"days": days, "routes": pricedRoutes(routes), "cut": cut})
 	})
+	// the report saved of a request held too long before routing, for its
+	// row's Copy Report: the app's log goes only to stderr, which its user
+	// can't reach. A magpie serving the gateway for this one (OwnerTrace)
+	// saves it in the same folder.
+	mux.HandleFunc("GET /api/gateway/held/{name}", func(rw http.ResponseWriter, r *http.Request) {
+		text, err := gateway.HeldReport(r.PathValue("name"))
+		if err != nil {
+			rw.Header().Set("Content-Type", "application/json")
+			rw.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(rw).Encode(map[string]string{"error": "This report is no longer kept: magpie keeps the last 5."})
+			return
+		}
+		writeJSON(rw, map[string]string{"text": text})
+	})
 	// an account's rest lifted by hand: verified with its vendor, say
 	mux.HandleFunc("POST /api/gateway/unrest", func(rw http.ResponseWriter, r *http.Request) {
 		var in struct {

@@ -49,9 +49,13 @@ type Settings struct {
 	// ReduceMotion stills magpie's animations as the system's Reduce
 	// Motion does, for a computer or phone that the moving Routing page
 	// keeps busy (#3813).
-	ReduceMotion bool   `json:"reduceMotion,omitempty"`
-	Lang         string `json:"lang,omitempty"` // system | en | zh
-	Tray         string `json:"tray,omitempty"` // what clicking the tray icon opens: panel | window
+	ReduceMotion bool `json:"reduceMotion,omitempty"`
+	// NoBird keeps magpie's bird off the loading skeletons and the
+	// Plugins page's README, for a small server where its watch for them
+	// is work enough to matter (Yayoi_no_yume on X). Off means shown.
+	NoBird bool   `json:"noBird,omitempty"`
+	Lang   string `json:"lang,omitempty"` // system | en | zh
+	Tray   string `json:"tray,omitempty"` // what clicking the tray icon opens: panel | window
 	// SessionTerminal is the Mac app that opens a resumed session, by bundle
 	// id. "" and "system" follow the .command file association. This
 	// computer's own (KeepOwn): another Mac may not have that app.

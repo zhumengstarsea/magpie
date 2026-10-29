@@ -76,7 +76,9 @@
    it routes to together on a line of its own */
 .rt-accts li.rt-sub { flex-wrap: wrap; row-gap: 4px; cursor: pointer; user-select: none; }
 .rt-accts li.rt-sub .n { white-space: nowrap; }
-.rt-accts li.rt-sub .n:empty, .rt-accts li.rt-sub em:empty { display: none; }
+.rt-accts li.rt-sub .n:empty, .rt-accts li.rt-sub em:empty, .rt-accts li.rt-sub i:empty { display: none; }
+/* a route's heading, when more than one route is on the stage: its provider's logo */
+.rt-accts li.rt-sub > .ic { flex: none; }
 .rt-accts li.rt-sub .chev { display: inline-flex; color: var(--muted); transition: transform .2s; }
 .rt-accts li.rt-sub .chev svg { color: inherit; }
 .rt-accts li.rt-sub:hover .chev { color: var(--fg); }
