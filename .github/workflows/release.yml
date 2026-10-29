@@ -5,13 +5,12 @@ name: Release
 # from, and the signing secrets live only there.
 
 on:
-  push:
-    tags:
-      - 'v*'
+  
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g., 0.1.0 — no v prefix; the v tag must exist)'
+        description: "Version to release (e.g., 0.1.0 \u2014 no v prefix; the v tag\
+          \ must exist)"
         required: true
         type: string
 
