@@ -1,11 +1,6 @@
 name: Docker 镜像构建
 
 on:
-  push:
-    branches: [main]
-    tags: ['v*']
-  pull_request:
-    paths: [Dockerfile, .dockerignore, .github/workflows/docker.yml]
   workflow_dispatch:
 
 env:

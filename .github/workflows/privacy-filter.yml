@@ -1,16 +1,9 @@
 # Builds pf-serve, the program that runs Settings → Privacy's local
 # masking model (native/privacy-filter, internal/pii), for each system.
-# A change to it is built on every push; a pf-v* tag publishes the zips as
-# a prerelease of this repo, never Latest, whose sha256s internal/pii pins.
+# Builds are started manually in this fork.
 name: privacy-filter
 
 on:
-  push:
-    branches: [main, "pf/**"]
-    paths: ["native/privacy-filter/**", ".github/workflows/privacy-filter.yml"]
-    tags: ["pf-v*"]
-  pull_request:
-    paths: ["native/privacy-filter/**", ".github/workflows/privacy-filter.yml"]
   workflow_dispatch:
 
 permissions:

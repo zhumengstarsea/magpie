@@ -40,16 +40,20 @@ downgrade an already installed newer build. A failed update check keeps its
 error reason, but removes the configured feed address from the Version row,
 its tooltip and the update API (`checkError` in `internal/gui/update.go`).
 
-The fork's branch synchronization leaves `master` untouched and mirrors other
-upstream branches. `main` has one exception: `scripts/guard-main-workflows.py`
-excludes pushes to `main` in every upstream workflow, preserving other events
-and filters. `scripts/sync-upstream-branches.sh` signs that workflow-only tree
-as a child of the upstream tip and reuses it until upstream changes. It builds
-through a temporary Git index, without checking out `main` or editing the
-running `master` checkout. Pushes use a force-with-lease against the branch
-snapshot; an intervening remote update fails rather than being overwritten.
-No workflow is disabled repository-wide, so `master` keeps its existing tests
-and release jobs. Verification: `python3 scripts/test_main_workflows.py`.
+`master` remains the default custom branch. Branch synchronization mirrors
+`lingqiqi5211/moepie` into matching branches except its `up`, and mirrors
+`yetone/magpie`'s `main` into this fork's `up`. Other historical yetone
+branches are retained, not pulled as part of the moepie mirror. Mirrored
+branches keep manual workflow triggers only: the script's `--manual-only`
+mode preserves manual inputs and jobs, and the sync script signs
+that workflow-only tree as a child of the source tip, reusing it when source
+and tree match. Temporary Git indexes leave the checked-out files alone.
+Pushes use force-with-lease against the destination snapshot. The five open
+moepie PR branches retain their reviewed commits; their push filters do not
+match those branch names. All workflows are manual-only, including on `master`:
+pushes, tags, pull requests and schedules do not start them automatically.
+Actions remain enabled repository-wide for manual runs.
+Verification: `python3 scripts/test_main_workflows.py`.
 
 ## Responsibilities and sources of truth
 

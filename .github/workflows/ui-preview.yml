@@ -13,8 +13,6 @@ name: 界面预览
 # write, never runs the PR's code.
 
 on:
-  pull_request_target:
-    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
     inputs:
       pr:

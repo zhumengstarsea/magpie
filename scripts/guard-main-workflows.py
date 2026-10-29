@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build main's upstream tree with push triggers excluding main."""
+"""Build a workflow-only override without touching the checked-out files."""
 
 import json
 import os
@@ -90,13 +90,32 @@ def exclude_main(text):
     raise ValueError("Unsupported push trigger")
 
 
+def manual_only(text):
+    """Keep existing manual inputs but remove every automatic trigger."""
+    root = yaml.compose(text, Loader=yaml.SafeLoader)
+    events = pair(root, "on")
+    if events is None:
+        raise ValueError("Workflow has no on trigger")
+    if isinstance(events, MappingNode):
+        kept = [(key, value) for key, value in events.value if key.value == "workflow_dispatch"]
+        if len(kept) == len(events.value) == 1:
+            return text
+    else:
+        kept = []
+    if not kept:
+        kept = [(ScalarNode("tag:yaml.org,2002:str", "workflow_dispatch"),
+                 ScalarNode("tag:yaml.org,2002:null", ""))]
+    replacement = yaml.serialize(MappingNode("tag:yaml.org,2002:map", kept)).rstrip()
+    return replace_node(text, events, "\n" + "\n".join("  " + line for line in replacement.splitlines()))
+
+
 def git(*args, data=None, env=None):
     return subprocess.run(
         ["git", *args], input=data, env=env, check=True, stdout=subprocess.PIPE
     ).stdout
 
 
-def guarded_tree(ref):
+def guarded_tree(ref, manual=False):
     entries = git("ls-tree", "-rz", ref, "--", ".github/workflows").split(b"\0")
     changes = []
     for entry in entries:
@@ -111,7 +130,8 @@ def guarded_tree(ref):
             raise ValueError(f"Workflow must be a regular file: {path}")
         original = git("cat-file", "blob", oid)
         try:
-            updated = exclude_main(original.decode("utf-8")).encode("utf-8")
+            transform = manual_only if manual else exclude_main
+            updated = transform(original.decode("utf-8")).encode("utf-8")
         except (ValueError, yaml.YAMLError) as error:
             raise ValueError(f"{path}: {error}") from error
         if updated != original:
@@ -130,6 +150,9 @@ def guarded_tree(ref):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        sys.exit("Usage: guard-main-workflows.py <upstream-ref>")
-    print(guarded_tree(sys.argv[1]))
+    args = sys.argv[1:]
+    manual = "--manual-only" in args
+    args = [arg for arg in args if arg != "--manual-only"]
+    if len(args) != 1:
+        sys.exit("Usage: guard-main-workflows.py [--manual-only] <upstream-ref>")
+    print(guarded_tree(args[0], manual=manual))

@@ -5,11 +5,7 @@ run-name: 同步上游 ${{ inputs.version && format('v{0}', inputs.version) || (
 # follow yetone/magpie-releases (39fe4324c9d00a29531ff605f8d862f79f0d5565).
 # macOS Developer ID signing and notarisation remain optional.
 on:
-  schedule:
-    # Beijing: 00:00, 06:00, 12:00, 18:00 (UTC+8).
-    - cron: '0 4,10,16,22 * * *'
-  push:
-    tags: ['v*']
+  # All automatic triggers are paused; run this workflow manually.
   workflow_dispatch:
     inputs:
       ref:

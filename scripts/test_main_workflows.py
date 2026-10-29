@@ -21,6 +21,26 @@ def events(text):
 
 
 class MainWorkflowTests(unittest.TestCase):
+    def test_manual_only_keeps_typed_inputs_and_jobs(self):
+        before = "name: Release\non:\n  push:\n    branches: [main]\n  schedule:\n    - cron: '0 */6 * * *'\n  workflow_run:\n    workflows: [Test]\n    types: [completed]\n  workflow_dispatch:\n    inputs:\n      publish:\n        type: boolean\n        default: true\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps: [{run: echo ok}]\n"
+        after = guard.manual_only(before)
+        self.assertEqual(list(events(after)), ["workflow_dispatch"])
+        parsed = yaml.safe_load(after)
+        self.assertIs(parsed[True]["workflow_dispatch"]["inputs"]["publish"]["default"], True)
+        self.assertEqual(parsed["jobs"], yaml.safe_load(before)["jobs"])
+        self.assertEqual(guard.manual_only(after), after)
+
+    def test_manual_only_handles_short_forms(self):
+        for trigger in ("push", "[push, pull_request]", "{push: null, pull_request_target: null}"):
+            after = guard.manual_only(f"on: {trigger}\njobs: {{}}\n")
+            self.assertEqual(events(after), {"workflow_dispatch": ""})
+
+    def test_manual_only_removes_other_dispatches_and_preserves_expression(self):
+        before = "on:\n  repository_dispatch:\n    types: [build]\n  pull_request_target:\n  workflow_dispatch:\n    inputs:\n      ref:\n        type: string\njobs:\n  build:\n    if: ${{ github.event_name == 'workflow_dispatch' }}\n    runs-on: ubuntu-latest\n    steps: [{run: echo ok}]\n"
+        after = guard.manual_only(before)
+        self.assertEqual(events(after), {"workflow_dispatch": {"inputs": {"ref": {"type": "string"}}}})
+        self.assertEqual(yaml.safe_load(after)["jobs"], yaml.safe_load(before)["jobs"])
+
     def check_trigger(self, before):
         after = guard.exclude_main(before)
         push = events(after)["push"]
